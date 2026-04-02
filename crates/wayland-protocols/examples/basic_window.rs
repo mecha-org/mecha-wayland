@@ -97,7 +97,15 @@ fn main() -> io::Result<()> {
 
     shm.inner
         .create_pool(&mut conn, &pool_obj, fd, size as i32)?;
-    pool_obj.create_buffer(&mut conn, &buffer, 0, WIDTH, HEIGHT, stride, 1)?;
+    pool_obj.create_buffer(
+        &mut conn,
+        &buffer,
+        0,
+        WIDTH,
+        HEIGHT,
+        stride,
+        WlShmFormat::Xrgb8888,
+    )?;
     compositor.create_surface(&mut conn, &surface)?;
     wm_base
         .inner

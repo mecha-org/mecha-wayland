@@ -1,8 +1,8 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 use anyhow::Result;
 use launcher::{profile_function, profile_scope};
-use renderer::{MonoSprite, Quad, Rect, Renderer, TextSystem};
 use renderer::primitives::RenderablePrimitive as _;
+use renderer::{MonoSprite, Quad, Rect, Renderer, TextSystem};
 use std::time::{Duration, Instant};
 use wayland_protocols::connection::Connection;
 use wayland_protocols::wl_callback::SyncCallback;
@@ -85,19 +85,34 @@ fn main() -> Result<()> {
 
     tracing::info!("sync complete, binding globals");
 
-    let (comp_name, comp_ver) = registry.find("wl_compositor").expect("wl_compositor missing");
+    let (comp_name, comp_ver) = registry
+        .find("wl_compositor")
+        .expect("wl_compositor missing");
     let (xdg_name, _) = registry.find("xdg_wm_base").expect("xdg_wm_base missing");
-    let (dmabuf_name, dmabuf_ver) =
-        registry.find("zwp_linux_dmabuf_v1").expect("zwp_linux_dmabuf_v1 missing");
+    let (dmabuf_name, dmabuf_ver) = registry
+        .find("zwp_linux_dmabuf_v1")
+        .expect("zwp_linux_dmabuf_v1 missing");
 
     let compositor = WlCompositor::new(conn.alloc_id());
     let wm_inner = XdgWmBase::new(conn.alloc_id());
     let dmabuf_inner = ZwpLinuxDmabufV1::new(conn.alloc_id());
 
-    registry.inner.bind(&mut conn, comp_name, "wl_compositor", comp_ver.min(4), &compositor)?;
-    registry.inner.bind(&mut conn, xdg_name, "xdg_wm_base", 1, &wm_inner)?;
     registry.inner.bind(
-        &mut conn, dmabuf_name, "zwp_linux_dmabuf_v1", dmabuf_ver.min(4), &dmabuf_inner,
+        &mut conn,
+        comp_name,
+        "wl_compositor",
+        comp_ver.min(4),
+        &compositor,
+    )?;
+    registry
+        .inner
+        .bind(&mut conn, xdg_name, "xdg_wm_base", 1, &wm_inner)?;
+    registry.inner.bind(
+        &mut conn,
+        dmabuf_name,
+        "zwp_linux_dmabuf_v1",
+        dmabuf_ver.min(4),
+        &dmabuf_inner,
     )?;
 
     let mut wm_base = WmBase::new(wm_inner);
@@ -108,7 +123,9 @@ fn main() -> Result<()> {
     let top_inner = XdgToplevel::new(conn.alloc_id());
 
     compositor.create_surface(&mut conn, &surface)?;
-    wm_base.inner.get_xdg_surface(&mut conn, &xdg_inner, &surface)?;
+    wm_base
+        .inner
+        .get_xdg_surface(&mut conn, &xdg_inner, &surface)?;
 
     let mut xdg_surf = XdgSurf::new(xdg_inner);
     let mut toplevel = Toplevel::new(top_inner);
@@ -168,9 +185,24 @@ fn main() -> Result<()> {
                 dmabuf.inner.create_params(&mut conn, &params)?;
                 let mod_hi = (frame.modifier >> 32) as u32;
                 let mod_lo = frame.modifier as u32;
-                params.add(&mut conn, frame.fd, 0, frame.offset, frame.stride, mod_hi, mod_lo)?;
+                params.add(
+                    &mut conn,
+                    frame.fd,
+                    0,
+                    frame.offset,
+                    frame.stride,
+                    mod_hi,
+                    mod_lo,
+                )?;
                 let buf = WlBuffer::new(conn.alloc_id());
-                params.create_immed(&mut conn, &buf, WIDTH as i32, HEIGHT as i32, frame.format, 0)?;
+                params.create_immed(
+                    &mut conn,
+                    &buf,
+                    WIDTH as i32,
+                    HEIGHT as i32,
+                    frame.format,
+                    ZwpLinuxBufferParamsV1Flags::None,
+                )?;
                 params.destroy(&mut conn)?;
                 wl_buf = Some(buf);
             }
@@ -183,37 +215,47 @@ fn main() -> Result<()> {
 
             {
                 profile_scope!("renderer");
-            scene.clear_primitives();
-            scene.background = (r * 0.15, g * 0.15, b * 0.15);
+                scene.clear_primitives();
+                scene.background = (r * 0.15, g * 0.15, b * 0.15);
 
-            Quad {
-                bounds:    Rect { x: 50.0, y: 50.0, w: 200.0, h: 100.0 },
-                color:     [r, g, b, 1.0],
-                clip_rect: None,
-            }
-            .add_to_scene(&mut scene);
+                Quad {
+                    bounds: Rect {
+                        x: 50.0,
+                        y: 50.0,
+                        w: 200.0,
+                        h: 100.0,
+                    },
+                    color: [r, g, b, 1.0],
+                    clip_rect: None,
+                }
+                .add_to_scene(&mut scene);
 
-            Quad {
-                bounds:    Rect { x: 0.0, y: (HEIGHT - 80) as f32, w: WIDTH as f32, h: 80.0 },
-                color:     [1.0, 0.0, 0.0, 0.8],
-                clip_rect: None,
-            }
-            .add_to_scene(&mut scene);
+                Quad {
+                    bounds: Rect {
+                        x: 0.0,
+                        y: (HEIGHT - 80) as f32,
+                        w: WIDTH as f32,
+                        h: 80.0,
+                    },
+                    color: [1.0, 0.0, 0.0, 0.8],
+                    clip_rect: None,
+                }
+                .add_to_scene(&mut scene);
 
-            text_sys.draw_text(
-                &mut scene,
-                renderer.gl(),
-                "Hello, Wayland!",
-                font_id,
-                24.0,
-                [1.0, 1.0, 1.0, 1.0],
-                [60.0, 110.0],
-            )?;
+                text_sys.draw_text(
+                    &mut scene,
+                    renderer.gl(),
+                    "Hello, Wayland!",
+                    font_id,
+                    24.0,
+                    [1.0, 1.0, 1.0, 1.0],
+                    [60.0, 110.0],
+                )?;
 
-            renderer.begin_frame(&render_surface, scene.background);
-            renderer.render_primitive::<Quad>(&scene, &render_surface)?;
-            renderer.render_primitive::<MonoSprite>(&scene, &render_surface)?;
-            renderer.end_frame();
+                renderer.begin_frame(&render_surface, scene.background);
+                renderer.render_primitive::<Quad>(&scene, &render_surface)?;
+                renderer.render_primitive::<MonoSprite>(&scene, &render_surface)?;
+                renderer.end_frame();
             }
 
             {

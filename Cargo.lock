@@ -985,6 +985,7 @@ name = "wayland-protocols"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "criterion",
  "io-uring",
  "libc",

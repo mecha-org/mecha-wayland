@@ -202,33 +202,59 @@ impl Event {
 }
 
 impl Arg {
+    fn rust_enum_name(&self, current_iface: &str) -> Option<String> {
+        self.enum_type.as_ref().map(|e| {
+            if e.contains('.') {
+                // Global enum (e.g., "wl_output.transform" -> "WlOutputTransform")
+                to_pascal_case(&e.replace('.', "_"))
+            } else {
+                // Local enum (e.g., "anchor" -> "ZwlrLayerSurfaceV1Anchor")
+                to_pascal_case(&format!("{}_{}", current_iface, e))
+            }
+        })
+    }
+
     /// Rust type for an event struct field.
-    fn rust_type(&self) -> &str {
+    fn rust_type(&self, current_iface: &str) -> String {
+        // If it is an enum, return the enum name
+        if let Some(enum_name) = self.rust_enum_name(current_iface) {
+            return enum_name;
+        }
+
+        // Otherwise, fall back to standard types
         match self.arg_type.as_str() {
-            "int" | "fixed" => "i32",
-            "uint" | "object" | "new_id" => "u32",
-            "string" => "String",
-            "array" => "Vec<u8>",
-            "fd" => "std::os::unix::io::OwnedFd",
-            _ => "u32",
+            "int" | "fixed" => "i32".to_string(),
+            "uint" | "object" | "new_id" => "u32".to_string(),
+            "string" => "String".to_string(),
+            "array" => "Vec<u8>".to_string(),
+            "fd" => "std::os::unix::io::OwnedFd".to_string(),
+            _ => "u32".to_string(),
         }
     }
 
     /// Rust type for a request method parameter.
-    fn param_type(&self) -> &str {
+    fn param_type(&self, current_iface: &str) -> String {
+        if let Some(enum_name) = self.rust_enum_name(current_iface) {
+            return enum_name;
+        }
+
         match self.arg_type.as_str() {
-            "int" | "fixed" => "i32",
-            "uint" => "u32",
-            "object" | "new_id" => "impl crate::object::Object",
-            "string" => "&str",
-            "array" => "&[u8]",
-            "fd" => "std::os::unix::io::OwnedFd",
-            _ => "u32",
+            "int" | "fixed" => "i32".to_string(),
+            "uint" => "u32".to_string(),
+            "object" | "new_id" => "impl crate::object::Object".to_string(),
+            "string" => "&str".to_string(),
+            "array" => "&[u8]".to_string(),
+            "fd" => "std::os::unix::io::OwnedFd".to_string(),
+            _ => "u32".to_string(),
         }
     }
 
     /// Encode expression for a named parameter.
-    fn encode(&self, param: &str) -> String {
+    fn encode(&self, param: &str, current_iface: &str) -> String {
+        if self.rust_enum_name(current_iface).is_some() {
+            return format!("crate::wire::write_u32(&mut args, {}.bits());", param);
+        }
+
         match self.arg_type.as_str() {
             "uint" => format!("crate::wire::write_u32(&mut args, {});", param),
             "object" | "new_id" => {
@@ -278,6 +304,17 @@ fn to_pascal_case(s: &str) -> String {
             }
         })
         .collect()
+}
+
+fn to_valid_enum_variant(s: &str) -> String {
+    let pascal = to_pascal_case(s);
+
+    // if the string starts with a digit, prefix with 'D'.
+    if pascal.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("D{}", pascal)
+    } else {
+        pascal
+    }
 }
 
 // ── Named return types ─────────────────────────────────────────────────────────
@@ -369,8 +406,8 @@ fn build_request_body(iface_name: &str, req: &Request) -> RequestBody {
             if !params.is_empty() {
                 params.push_str(", ");
             }
-            params.push_str(&format!("{}: {}", pname, arg.param_type()));
-            encode_lines.push(arg.encode(&pname));
+            params.push_str(&format!("{}: {}", pname, arg.param_type(iface_name)));
+            encode_lines.push(arg.encode(&pname, iface_name));
         }
     }
 
@@ -412,7 +449,7 @@ fn build_request_body(iface_name: &str, req: &Request) -> RequestBody {
 
 /// Decodes event args into variable-binding statements.
 /// Each decode stmt has 16-space indent.
-fn build_decode_stmts(args: &[&Arg]) -> DecodeResult {
+fn build_decode_stmts(iface_name: &str, args: &[&Arg]) -> DecodeResult {
     let mut tracker = OffsetTracker::new();
     let mut field_names: Vec<String> = Vec::new();
     let mut stmts = String::new();
@@ -427,6 +464,27 @@ fn build_decode_stmts(args: &[&Arg]) -> DecodeResult {
         }
 
         let cur_off = tracker.current();
+
+        if let Some(enum_name) = arg.rust_enum_name(iface_name) {
+            stmts.push_str(&format!(
+                "                let {}_val = crate::wire::read_u32(body, {});\n",
+                var, cur_off
+            ));
+            stmts.push_str(&format!(
+                "                let {} = match {}::from_bits({}_val) {{\n",
+                var, enum_name, var
+            ));
+            stmts.push_str(&format!("                    Some(v) => v,\n"));
+            stmts.push_str(&format!(
+                "                    None => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, \"Unknown enum variant\")),\n"
+            ));
+            stmts.push_str(&format!("                }};\n"));
+
+            if let Some(off_stmt) = tracker.advance_fixed(i) {
+                stmts.push_str(&off_stmt);
+            }
+            continue; // Skip the standard match below
+        }
 
         match arg.arg_type.as_str() {
             "uint" | "object" | "new_id" => {
@@ -678,7 +736,13 @@ fn emit_handler_traits(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow:
             let struct_name = format!("{}{}Event", iface_pascal, to_pascal_case(&evt.name));
             let fields: String = args
                 .iter()
-                .map(|a| format!("    pub {}: {},\n", escape_keyword(&a.name), a.rust_type()))
+                .map(|a| {
+                    format!(
+                        "    pub {}: {},\n",
+                        escape_keyword(&a.name),
+                        a.rust_type(&iface.name)
+                    )
+                })
                 .collect();
             write!(f, "{}", snippet_event_struct(&struct_name, &fields))?;
         }
@@ -760,7 +824,7 @@ fn emit_handler_traits(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow:
                     let (decode_stmts, field_names) = if args.is_empty() {
                         (String::new(), Vec::new())
                     } else {
-                        let dr = build_decode_stmts(&args);
+                        let dr = build_decode_stmts(&iface.name, &args);
                         (dr.stmts, dr.field_names)
                     };
 
@@ -798,6 +862,86 @@ fn emit_handler_traits(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow:
     Ok(())
 }
 
+fn emit_enums(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow::Result<()> {
+    // Helper closure to parse both hex and decimal strings
+    let parse_val = |s: &str| -> anyhow::Result<u32> {
+        if let Some(hex) = s.strip_prefix("0x") {
+            Ok(u32::from_str_radix(hex, 16)?)
+        } else {
+            Ok(s.parse::<u32>()?)
+        }
+    };
+
+    for iface in interfaces {
+        for item in &iface.items {
+            if let InterfaceItem::Enum(en) = item {
+                let enum_name = to_pascal_case(&format!("{}_{}", iface.name, en.name));
+                let is_bitfield = en.bitfield.unwrap_or(false);
+
+                if is_bitfield {
+                    // Generate Bitflags
+                    writeln!(f, "::bitflags::bitflags! {{")?;
+                    writeln!(f, "    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")?;
+                    writeln!(f, "    pub struct {}: u32 {{", enum_name)?;
+
+                    let mut has_zero = false;
+                    for entry in &en.items {
+                        if let EnumItem::Entry(e) = entry {
+                            let entry_name = to_valid_enum_variant(&e.name);
+                            let val = parse_val(&e.value)?;
+
+                            if val == 0 {
+                                has_zero = true;
+                            }
+                            writeln!(f, "        const {} = {};", entry_name, val)?;
+                        }
+                    }
+                    if !has_zero {
+                        writeln!(f, "        const None = 0;")?;
+                    }
+                    writeln!(f, "    }}")?;
+                    writeln!(f, "}}\n")?;
+                } else {
+                    // Generate Standard Enum
+                    writeln!(f, "#[repr(u32)]")?;
+                    // Added `Hash` to match bitflags derive list
+                    writeln!(f, "#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]")?;
+                    writeln!(f, "pub enum {} {{", enum_name)?;
+                    for entry in &en.items {
+                        if let EnumItem::Entry(e) = entry {
+                            let entry_name = to_valid_enum_variant(&e.name);
+                            let val = parse_val(&e.value)?;
+                            writeln!(f, "    {} = {},", entry_name, val)?;
+                        }
+                    }
+                    writeln!(f, "}}")?;
+
+                    // Inject helper methods so both bitflags and enums share the same API
+                    writeln!(f, "impl {} {{", enum_name)?;
+                    writeln!(f, "    pub fn bits(&self) -> u32 {{ *self as u32 }}")?;
+
+                    // Added `from_bits` to match bitflags for easy decoding later
+                    writeln!(f, "    pub fn from_bits(val: u32) -> Option<Self> {{")?;
+                    writeln!(f, "        match val {{")?;
+                    for entry in &en.items {
+                        if let EnumItem::Entry(e) = entry {
+                            let entry_name = to_valid_enum_variant(&e.name);
+                            let val = parse_val(&e.value)?;
+                            writeln!(f, "            {} => Some(Self::{}),", val, entry_name)?;
+                        }
+                    }
+                    writeln!(f, "            _ => None,")?;
+                    writeln!(f, "        }}")?;
+                    writeln!(f, "    }}")?;
+
+                    writeln!(f, "}}\n")?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn generate_protocol(f: &mut impl Write, filename: &str) -> anyhow::Result<()> {
     println!("cargo:rerun-if-changed={}", filename);
 
@@ -806,6 +950,7 @@ fn generate_protocol(f: &mut impl Write, filename: &str) -> anyhow::Result<()> {
     let protocol: Protocol = from_str(&xml_content)?;
     let interfaces = protocol.interfaces();
 
+    emit_enums(f, &interfaces)?;
     emit_const_modules(f, &interfaces)?;
     emit_handler_traits(f, &interfaces)?;
 

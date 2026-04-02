@@ -9,6 +9,7 @@ tracing-subscriber = { workspace = true }
 nix = { workspace = true }
 io-uring = { workspace = true }
 libc = { workspace = true }
+bitflags = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

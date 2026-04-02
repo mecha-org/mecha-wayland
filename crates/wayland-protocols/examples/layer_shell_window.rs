@@ -104,18 +104,16 @@ fn main() -> io::Result<()> {
 
     shm.inner
         .create_pool(&mut conn, &pool_obj, fd, size as i32)?;
-    pool_obj.create_buffer(&mut conn, &buffer, 0, WIDTH, HEIGHT, stride, 1)?;
+    pool_obj.create_buffer(
+        &mut conn,
+        &buffer,
+        0,
+        WIDTH,
+        HEIGHT,
+        stride,
+        WlShmFormat::Xrgb8888,
+    )?;
     compositor.create_surface(&mut conn, &surface)?;
-
-    // zwlr_layer_shell_v1 uses fixed uint values from the protocol enum.
-    const LAYER_OVERLAY: u32 = 3;
-    const LAYER_BACKGROUND: u32 = 0;
-    const LAYER_BOTTOM: u32 = 1;
-    const LAYER_TOP: u32 = 2;
-    const ANCHOR_TOP: u32 = 1;
-    const ANCHOR_BOTTOM: u32 = 2;
-    const ANCHOR_LEFT: u32 = 4;
-    const ANCHOR_RIGHT: u32 = 8;
 
     match output.as_ref() {
         Some(output_obj) => layer_shell.inner.get_layer_surface(
@@ -123,7 +121,7 @@ fn main() -> io::Result<()> {
             &layer_surface_inner,
             &surface,
             output_obj,
-            LAYER_OVERLAY,
+            ZwlrLayerShellV1Layer::Overlay,
             "basic-overlay",
         )?,
         None => {
@@ -133,16 +131,17 @@ fn main() -> io::Result<()> {
                 &layer_surface_inner,
                 &surface,
                 &NullObject,
-                LAYER_OVERLAY,
+                ZwlrLayerShellV1Layer::Overlay,
                 "basic-overlay",
             )?
         }
     }
 
     let mut layer_surface = LayerSurface::new(layer_surface_inner);
-    layer_surface
-        .inner
-        .set_anchor(&mut conn, ANCHOR_TOP | ANCHOR_BOTTOM)?;
+    layer_surface.inner.set_anchor(
+        &mut conn,
+        ZwlrLayerSurfaceV1Anchor::Top | ZwlrLayerSurfaceV1Anchor::Bottom,
+    )?;
     layer_surface
         .inner
         .set_size(&mut conn, WIDTH as u32, HEIGHT as u32)?;

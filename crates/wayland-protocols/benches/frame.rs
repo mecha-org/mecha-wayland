@@ -85,7 +85,15 @@ impl FrameBenchState {
 
         shm.inner
             .create_pool(&mut conn, &pool_obj, fd, size as i32)?;
-        pool_obj.create_buffer(&mut conn, &buffer, 0, WIDTH, HEIGHT, stride, 1)?;
+        pool_obj.create_buffer(
+            &mut conn,
+            &buffer,
+            0,
+            WIDTH,
+            HEIGHT,
+            stride,
+            WlShmFormat::Xrgb8888,
+        )?;
         compositor.create_surface(&mut conn, &surface)?;
         wm_base
             .inner
@@ -141,10 +149,10 @@ impl FrameBenchState {
         self.display.inner.sync(&mut self.conn, &sync)?;
         self.conn.flush()?;
 
-        // 
+        //
         loop {
             let (obj_id, opcode, body) = self.conn.recv_msg()?;
-            
+
             dispatch_to!(self.conn, obj_id, opcode, &body;
 				self.display,
 				self.registry,
@@ -162,7 +170,7 @@ impl FrameBenchState {
             }
 
             // Ack configure : Acknowledge the configure, and commit a new frame. This keeps the event loop running with steady-state frame commits
-            // damage | commit | 
+            // damage | commit |
             if let Some(serial) = self.xdg_surf.pending_ack.take() {
                 self.xdg_surf.inner.ack_configure(&mut self.conn, serial)?;
                 // Surface is pre-attached in setup; benchmark keeps steady-state frame commits.

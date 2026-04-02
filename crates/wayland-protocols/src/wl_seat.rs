@@ -1,9 +1,5 @@
 use crate::object::Object;
-use crate::{WlSeat, WlSeatHandler};
-
-const CAP_POINTER: u32 = 1;
-const CAP_KEYBOARD: u32 = 2;
-const CAP_TOUCH: u32 = 4;
+use crate::{WlSeat, WlSeatCapability, WlSeatHandler};
 
 pub struct Seat {
     pub inner: WlSeat,
@@ -34,11 +30,9 @@ impl Object for Seat {
 
 impl WlSeatHandler for Seat {
     fn on_capabilities(&mut self, event: crate::WlSeatCapabilitiesEvent) {
-        let caps = event.capabilities;
-
-        self.has_pointer = (caps & CAP_POINTER) != 0;
-        self.has_keyboard = (caps & CAP_KEYBOARD) != 0;
-        self.has_touch = (caps & CAP_TOUCH) != 0;
+        self.has_pointer = event.capabilities.contains(WlSeatCapability::Pointer);
+        self.has_keyboard = event.capabilities.contains(WlSeatCapability::Keyboard);
+        self.has_touch = event.capabilities.contains(WlSeatCapability::Touch);
 
         tracing::info!(
             pointer = self.has_pointer,

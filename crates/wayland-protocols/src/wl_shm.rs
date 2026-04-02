@@ -16,7 +16,7 @@ impl Object for ShmHandler {
 
 impl WlShmHandler for ShmHandler {
     fn on_format(&mut self, event: WlShmFormatEvent) {
-        tracing::debug!(format = event.format, "wl_shm::format");
+        tracing::debug!(format = ?event.format, "wl_shm::format");
     }
 }
 

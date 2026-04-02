@@ -215,14 +215,20 @@ impl Arg {
     }
 
     /// Rust type for an event struct field.
-    fn rust_type(&self) -> &str {
+    fn rust_type(&self, current_iface: &str) -> String {
+        // If it is an enum, return the enum name
+        if let Some(enum_name) = self.rust_enum_name(current_iface) {
+            return enum_name;
+        }
+
+        // Otherwise, fall back to standard types
         match self.arg_type.as_str() {
-            "int" | "fixed" => "i32",
-            "uint" | "object" | "new_id" => "u32",
-            "string" => "String",
-            "array" => "Vec<u8>",
-            "fd" => "std::os::unix::io::OwnedFd",
-            _ => "u32",
+            "int" | "fixed" => "i32".to_string(),
+            "uint" | "object" | "new_id" => "u32".to_string(),
+            "string" => "String".to_string(),
+            "array" => "Vec<u8>".to_string(),
+            "fd" => "std::os::unix::io::OwnedFd".to_string(),
+            _ => "u32".to_string(),
         }
     }
 
@@ -443,7 +449,7 @@ fn build_request_body(iface_name: &str, req: &Request) -> RequestBody {
 
 /// Decodes event args into variable-binding statements.
 /// Each decode stmt has 16-space indent.
-fn build_decode_stmts(args: &[&Arg]) -> DecodeResult {
+fn build_decode_stmts(iface_name: &str, args: &[&Arg]) -> DecodeResult {
     let mut tracker = OffsetTracker::new();
     let mut field_names: Vec<String> = Vec::new();
     let mut stmts = String::new();
@@ -458,6 +464,27 @@ fn build_decode_stmts(args: &[&Arg]) -> DecodeResult {
         }
 
         let cur_off = tracker.current();
+
+        if let Some(enum_name) = arg.rust_enum_name(iface_name) {
+            stmts.push_str(&format!(
+                "                let {}_val = crate::wire::read_u32(body, {});\n",
+                var, cur_off
+            ));
+            stmts.push_str(&format!(
+                "                let {} = match {}::from_bits({}_val) {{\n",
+                var, enum_name, var
+            ));
+            stmts.push_str(&format!("                    Some(v) => v,\n"));
+            stmts.push_str(&format!(
+                "                    None => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, \"Unknown enum variant\")),\n"
+            ));
+            stmts.push_str(&format!("                }};\n"));
+
+            if let Some(off_stmt) = tracker.advance_fixed(i) {
+                stmts.push_str(&off_stmt);
+            }
+            continue; // Skip the standard match below
+        }
 
         match arg.arg_type.as_str() {
             "uint" | "object" | "new_id" => {
@@ -709,7 +736,13 @@ fn emit_handler_traits(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow:
             let struct_name = format!("{}{}Event", iface_pascal, to_pascal_case(&evt.name));
             let fields: String = args
                 .iter()
-                .map(|a| format!("    pub {}: {},\n", escape_keyword(&a.name), a.rust_type()))
+                .map(|a| {
+                    format!(
+                        "    pub {}: {},\n",
+                        escape_keyword(&a.name),
+                        a.rust_type(&iface.name)
+                    )
+                })
                 .collect();
             write!(f, "{}", snippet_event_struct(&struct_name, &fields))?;
         }
@@ -791,7 +824,7 @@ fn emit_handler_traits(f: &mut impl Write, interfaces: &[&Interface]) -> anyhow:
                     let (decode_stmts, field_names) = if args.is_empty() {
                         (String::new(), Vec::new())
                     } else {
-                        let dr = build_decode_stmts(&args);
+                        let dr = build_decode_stmts(&iface.name, &args);
                         (dr.stmts, dr.field_names)
                     };
 

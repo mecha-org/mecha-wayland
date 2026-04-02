@@ -43,7 +43,7 @@ impl WlPointerHandler for Pointer {
     fn on_button(&mut self, event: crate::WlPointerButtonEvent) {
         tracing::debug!(
             button = event.button,
-            state = event.state,
+            state = ?event.state,
             x = self.x,
             y = self.y,
             "mouse button"
@@ -51,6 +51,6 @@ impl WlPointerHandler for Pointer {
     }
 
     fn on_axis(&mut self, event: crate::WlPointerAxisEvent) {
-        tracing::trace!(axis = event.axis, value = event.value, "mouse wheel scroll");
+        tracing::trace!(axis = ?event.axis, value = event.value, "mouse wheel scroll");
     }
 }

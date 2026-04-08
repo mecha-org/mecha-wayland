@@ -21,7 +21,7 @@ pub use gpu_image::{GpuImage, GpuImageProcessor, GpuTextureId};
 pub use primitives::{AttribDesc, Image, MonoSprite, Quad, Rect, RenderablePrimitive};
 pub use scene::{PrimitiveId, Scene};
 pub use surface::{DmaBufSurface, RenderableSurface};
-pub use text::TextSystem;
+pub use text::{TextMetrics, TextSystem};
 
 // ── EGL extension types ────────────────────────────────────────────────────
 

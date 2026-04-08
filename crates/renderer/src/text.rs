@@ -4,6 +4,17 @@ use crate::atlas::{AtlasKey, GlyphAtlas};
 use crate::primitives::{MonoSprite, Rect};
 use crate::scene::{PrimitiveId, Scene};
 
+pub struct TextMetrics {
+    pub width:   f32,
+    pub ascent:  f32, // distance from baseline to top (positive)
+    pub descent: f32, // distance from baseline to bottom (negative)
+}
+
+impl TextMetrics {
+    /// Total height from top of ascenders to bottom of descenders.
+    pub fn height(&self) -> f32 { self.ascent - self.descent }
+}
+
 pub struct TextSystem {
     fonts:      Vec<fontdue::Font>,
     pub atlas:  GlyphAtlas,
@@ -22,6 +33,16 @@ impl TextSystem {
         let id = self.fonts.len() as u32;
         self.fonts.push(font);
         Ok(id)
+    }
+
+    /// Returns width and line metrics for `text` at `px`. Does not touch the atlas.
+    pub fn measure_text(&self, text: &str, font_id: u32, px: f32) -> TextMetrics {
+        let font  = &self.fonts[font_id as usize];
+        let width = text.chars()
+            .map(|ch| font.metrics_indexed(font.lookup_glyph_index(ch), px).advance_width)
+            .sum();
+        let lm = font.horizontal_line_metrics(px).unwrap();
+        TextMetrics { width, ascent: lm.ascent, descent: lm.descent }
     }
 
     /// Lay out `text` and push one [`MonoSprite`] per glyph into `scene`.

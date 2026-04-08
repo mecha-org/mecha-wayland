@@ -19,13 +19,14 @@ impl Asset for ImageAsset {
     fn load(path: Self::Params) -> Result<Self> {
         let file = std::fs::File::open(&path)
             .with_context(|| format!("failed to open image: {}", path.display()))?;
+        let file = std::io::BufReader::new(file);
 
         let decoder = png::Decoder::new(file);
         let mut reader = decoder
             .read_info()
             .with_context(|| format!("failed to read PNG info: {}", path.display()))?;
 
-        let mut pixels = vec![0u8; reader.output_buffer_size()];
+        let mut pixels = vec![0u8; reader.output_buffer_size().unwrap()];
         let info = reader
             .next_frame(&mut pixels)
             .with_context(|| format!("failed to decode PNG frame: {}", path.display()))?;

@@ -2,11 +2,11 @@
 use anyhow::Result;
 use launcher::{profile_function, profile_scope};
 use renderer::primitives::RenderablePrimitive as _;
-use renderer::{GpuImage, Image, MonoSprite, Quad, Rect, Renderer, TextSystem};
+use renderer::{GpuImage, Image, Quad, Rect as RenderRect, Renderer, TextMetrics, TextSystem};
+use std::time::{Duration, Instant};
 use utils::asset_manager::AssetManager;
 use utils::font::FontAsset;
 use utils::image::ImageAsset;
-use std::time::{Duration, Instant};
 use wayland_protocols::connection::Connection;
 use wayland_protocols::wl_callback::SyncCallback;
 use wayland_protocols::wl_display::Display;
@@ -17,25 +17,45 @@ use wayland_protocols::xdg_wm_base::WmBase;
 use wayland_protocols::zwp_linux_dmabuf::DmaBuf;
 use wayland_protocols::*;
 
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
-    let h = h % 360.0;
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-    let (r1, g1, b1) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-    (r1 + m, g1 + m, b1 + m)
+use layout::{
+    AlignItems, Dimension, Display as FlexDisplay, Edges, FlexDirection, JustifyContent, Layout,
+    LengthPercentage, LengthPercentageAuto, Measure, Position, Rect as LayoutRect, Size, Style,
+};
+
+struct Widget {
+    measured: Option<TextMetrics>,
+}
+
+impl Measure for Widget {
+    fn measure(
+        &self,
+        _known: Size<Option<f32>>,
+        _available: Size<layout::AvailableSpace>,
+    ) -> Size<f32> {
+        match &self.measured {
+            Some(m) => Size {
+                width: m.width,
+                height: m.height(),
+            },
+            None => Size::ZERO,
+        }
+    }
+}
+
+fn no_measure() -> Widget {
+    Widget { measured: None }
+}
+fn measured(m: TextMetrics) -> Widget {
+    Widget { measured: Some(m) }
+}
+
+fn to_rect(r: LayoutRect) -> RenderRect {
+    RenderRect {
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+    }
 }
 
 fn main() -> Result<()> {
@@ -47,24 +67,21 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "profile")]
     let _puffin_server = {
-        puffin::set_scopes_on(true); // Tell puffin to start recording
+        puffin::set_scopes_on(true);
         let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
-
-        // Keep the server handle alive for the whole process lifetime.
         match puffin_http::Server::new(&server_addr) {
             Ok(server) => {
-                eprintln!(
-                    "Puffin HTTP server running on {}. Connect with: puffin_viewer --url {}",
-                    server_addr, server_addr
-                );
-                Some(server) // Keep the server alive by binding it to _puffin_server
+                eprintln!("Puffin HTTP server running on {server_addr}");
+                Some(server)
             }
             Err(e) => {
-                eprintln!("Failed to start Puffin server: {}", e);
+                eprintln!("Failed to start Puffin server: {e}");
                 None
             }
         }
     };
+
+    // ── Wayland setup ─────────────────────────────────────────────────────────
 
     let mut conn = Connection::connect()?;
 
@@ -76,8 +93,6 @@ fn main() -> Result<()> {
     display.inner.sync(&mut conn, &sync)?;
     conn.flush()?;
 
-    tracing::info!("waiting for globals");
-
     loop {
         let (obj_id, opcode, body) = conn.recv_msg()?;
         dispatch_to!(conn, obj_id, opcode, &body; display, registry, sync);
@@ -85,8 +100,6 @@ fn main() -> Result<()> {
             break;
         }
     }
-
-    tracing::info!("sync complete, binding globals");
 
     let (comp_name, comp_ver) = registry
         .find("wl_compositor")
@@ -134,19 +147,17 @@ fn main() -> Result<()> {
     let mut toplevel = Toplevel::new(top_inner);
 
     xdg_surf.inner.get_toplevel(&mut conn, &toplevel.inner)?;
-    toplevel.inner.set_title(&mut conn, "hello wayland")?;
-    toplevel.inner.set_app_id(&mut conn, "mecha-wayland")?;
+    toplevel.inner.set_title(&mut conn, "Mecha Launcher")?;
+    toplevel.inner.set_app_id(&mut conn, "mecha-launcher")?;
     surface.commit(&mut conn)?;
     conn.flush()?;
-
-    tracing::info!("surface created, entering event loop");
 
     const WIDTH: u32 = 1028;
     const HEIGHT: u32 = 1080;
 
     let mut renderer = Renderer::new(WIDTH, HEIGHT)?;
     renderer.register::<Quad>()?;
-    renderer.register::<MonoSprite>()?;
+    renderer.register::<renderer::MonoSprite>()?;
     renderer.register::<Image>()?;
 
     let mut assets = AssetManager::new();
@@ -160,35 +171,109 @@ fn main() -> Result<()> {
         .process_pending(&mut renderer.image_processor())
         .into_iter()
         .collect::<anyhow::Result<Vec<_>>>()?;
+
     let logo = logo_handle.get_processed::<GpuImage>(&assets).unwrap();
     let logo_w = logo.width as f32;
     let logo_h = logo.height as f32;
     let logo_tex = logo.id();
+
+    // ── Layout (computed once at startup) ─────────────────────────────────────
+
+    let label_m = text_sys.measure_text("Welcome", font_id, 36.0);
+    let button_m = text_sys.measure_text("Get Started", font_id, 18.0);
+
+    let (mut layout, (logo_id, label_id, button_id)) = Layout::new(
+        Style {
+            display: FlexDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            justify_content: Some(JustifyContent::Center),
+            align_items: Some(AlignItems::Center),
+            size: Size {
+                width: Dimension::percent(1.0),
+                height: Dimension::percent(1.0),
+            },
+            ..Default::default()
+        },
+        no_measure(),
+        |b| {
+            let logo = b.leaf(
+                Style {
+                    position: Position::Absolute,
+                    inset: Edges {
+                        top: LengthPercentageAuto::length(20.0),
+                        right: LengthPercentageAuto::length(20.0),
+                        bottom: LengthPercentageAuto::auto(),
+                        left: LengthPercentageAuto::auto(),
+                    },
+                    size: Size {
+                        width: Dimension::length(logo_w),
+                        height: Dimension::length(logo_h),
+                    },
+                    ..Default::default()
+                },
+                no_measure(),
+            );
+
+            let (_, (label, button)) = b.child(
+                Style {
+                    display: FlexDisplay::Flex,
+                    flex_direction: FlexDirection::Column,
+                    align_items: Some(AlignItems::Center),
+                    gap: Size {
+                        width: LengthPercentage::length(0.0),
+                        height: LengthPercentage::length(24.0),
+                    },
+                    ..Default::default()
+                },
+                no_measure(),
+                |b| {
+                    let label = b.leaf(Default::default(), measured(label_m));
+
+                    let button = b.leaf(
+                        Style {
+                            padding: Edges {
+                                top: LengthPercentage::length(12.0),
+                                right: LengthPercentage::length(28.0),
+                                bottom: LengthPercentage::length(12.0),
+                                left: LengthPercentage::length(28.0),
+                            },
+                            ..Default::default()
+                        },
+                        measured(button_m),
+                    );
+
+                    (label, button)
+                },
+            );
+
+            (logo, label, button)
+        },
+    );
+
+    layout.compute(LayoutRect {
+        x: 0.0,
+        y: 0.0,
+        w: WIDTH as f32,
+        h: HEIGHT as f32,
+    });
 
     let mut scene = renderer.create_scene();
     let render_surface = renderer.create_dmabuf_surface();
     let mut configured = false;
     let mut wl_buf: Option<WlBuffer> = None;
 
-    let start = Instant::now();
-    let mut frame_count: u64 = 0;
+    let mut frame_count = 0u64;
     let mut last_fps_report = Instant::now();
-
-    let mut rect_x = 100.0f32;
-    let mut rect_y = 100.0f32;
-    let mut vel_x = 120.0f32; // Pixels per second (slow)
-    let mut vel_y = 90.0f32;
-    let mut last_update = Instant::now();
 
     loop {
         #[cfg(feature = "profile")]
         puffin::GlobalProfiler::lock().new_frame();
 
         profile_scope!("event_loop");
-        // Drain all pending Wayland events without blocking.
+
         while let Some((obj_id, opcode, body)) = conn.try_recv_msg()? {
             dispatch_to!(conn, obj_id, opcode, &body;
-                        display, registry, dmabuf, wm_base, xdg_surf, toplevel, surface);
+                display, registry, dmabuf, wm_base, xdg_surf, toplevel, surface);
         }
 
         if let Some(serial) = wm_base.pending_pong.take() {
@@ -232,96 +317,62 @@ fn main() -> Result<()> {
 
             let buf = wl_buf.as_ref().unwrap();
 
-            let t = start.elapsed().as_secs_f32();
-            let hue = (t * 72.0) % 360.0;
-            let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
-
-            let rect_w = 200.0;
-            let rect_h = 100.0;
-
-            let now = Instant::now();
-            let mut dt = now.duration_since(last_update).as_secs_f32();
-            if dt > 0.1 {
-                dt = 0.1;
-            } // Prevent huge jumps if the frame stalls
-            last_update = now;
-
-            rect_x += vel_x * dt;
-            rect_y += vel_y * dt;
-
-            let max_x = WIDTH as f32 - rect_w;
-            let max_y = HEIGHT as f32 - 80.0 - rect_h; // Prevent overlapping bottom bar
-
-            // DVD-style bouncing logic
-            if rect_x <= 0.0 {
-                rect_x = 0.0;
-                vel_x = vel_x.abs();
-            } else if rect_x >= max_x {
-                rect_x = max_x;
-                vel_x = -vel_x.abs();
-            }
-
-            if rect_y <= 0.0 {
-                rect_y = 0.0;
-                vel_y = vel_y.abs();
-            } else if rect_y >= max_y {
-                rect_y = max_y;
-                vel_y = -vel_y.abs();
-            }
-
             {
-                profile_scope!("renderer");
+                profile_scope!("render");
+
                 scene.clear_primitives();
-                scene.background = (1.0, 1.0, 1.0);
+                scene.background = (0.97, 0.97, 0.97); // light — logo and text are dark
 
-                // The Moving "Hello, Wayland!" Rectangle
-                Quad {
-                    bounds: Rect {
-                        x: rect_x,
-                        y: rect_y,
-                        w: rect_w,
-                        h: rect_h,
-                    },
-                    color: [r, g, b, 1.0],
+                // ── Logo (top-right) ──────────────────────────────────────────
+                let lr = layout.rect(logo_id);
+                Image {
+                    bounds: to_rect(lr),
+                    texture: logo_tex,
                     clip_rect: None,
                 }
                 .add_to_scene(&mut scene);
 
-                // Static bottom red bar
-                Quad {
-                    bounds: Rect {
-                        x: 0.0,
-                        y: (HEIGHT - 80) as f32,
-                        w: WIDTH as f32,
-                        h: 80.0,
-                    },
-                    color: [1.0, 0.0, 0.0, 0.8],
-                    clip_rect: None,
-                }
-                .add_to_scene(&mut scene);
-
-                // Draw text relatively positioned inside the moving rectangle
+                // ── Label ("Welcome") ─────────────────────────────────────────
+                // rect is exactly the text bounding box; origin is baseline-left
+                let tr = layout.rect(label_id);
+                let lm = layout.data(label_id).measured.as_ref().unwrap();
                 text_sys.draw_text(
                     &mut scene,
                     renderer.gl(),
-                    "Hello, Wayland!",
+                    "Welcome",
                     font_id,
-                    24.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                    [rect_x + 10.0, rect_y + 60.0],
+                    36.0,
+                    [0.1, 0.1, 0.1, 1.0],
+                    [tr.x, tr.y + lm.ascent],
                 )?;
 
-                // Logo in the top-left corner
-                Image {
-                    bounds:    Rect { x: 20.0, y: 20.0, w: logo_w, h: logo_h },
-                    texture:   logo_tex,
+                // ── Button ────────────────────────────────────────────────────
+                let br = layout.rect(button_id);
+                Quad {
+                    bounds: to_rect(br),
+                    color: [0.18, 0.46, 0.96, 1.0],
                     clip_rect: None,
                 }
                 .add_to_scene(&mut scene);
 
+                // center button text within the button rect
+                let bm = layout.data(button_id).measured.as_ref().unwrap();
+                text_sys.draw_text(
+                    &mut scene,
+                    renderer.gl(),
+                    "Get Started",
+                    font_id,
+                    18.0,
+                    [1.0, 1.0, 1.0, 1.0],
+                    [
+                        br.x + (br.w - bm.width) / 2.0,
+                        br.y + (br.h - bm.height()) / 2.0 + bm.ascent,
+                    ],
+                )?;
+
                 renderer.begin_frame(&render_surface, scene.background);
                 renderer.render_primitive::<Quad>(&scene, &render_surface)?;
-                renderer.render_primitive::<MonoSprite>(&scene, &render_surface)?;
+                renderer.render_primitive::<renderer::MonoSprite>(&scene, &render_surface)?;
                 renderer.render_primitive::<Image>(&scene, &render_surface)?;
                 renderer.end_frame();
             }

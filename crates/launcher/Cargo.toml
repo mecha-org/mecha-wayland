@@ -7,6 +7,7 @@ edition = "2024"
 wayland-protocols = { path = "../wayland-protocols" }
 renderer = { path = "../renderer" }
 utils = { path = "../utils" }
+layout = { path = "../layout" }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

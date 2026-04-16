@@ -9,6 +9,7 @@ renderer = { path = "../renderer" }
 utils = { path = "../utils" }
 layout = { path = "../layout" }
 anyhow = { workspace = true }
+glow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 puffin_http = {version = "0.16.1", optional = true}

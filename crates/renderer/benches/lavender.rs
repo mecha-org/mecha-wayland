@@ -13,6 +13,8 @@ pub fn bench_lavender_render(c: &mut Criterion) {
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
 
+    renderer.set_width(WIDTH);
+    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<ClearColor>();
     c.bench_function("lavender_clear_1028x1080", |b| {
         b.iter(|| unsafe {

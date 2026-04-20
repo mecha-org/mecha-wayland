@@ -1,6 +1,6 @@
 use glow::{COLOR_BUFFER_BIT, HasContext};
 
-use crate::commands::{Command, CommandQueue};
+use crate::commands::{Command, CommandQueue, RenderContext};
 
 #[derive(Clone)]
 pub struct ClearColor {
@@ -21,7 +21,7 @@ impl Command for ClearColor {
 pub(crate) struct ClearColorQueue(Option<(f32, f32, f32, f32)>);
 
 impl CommandQueue<ClearColor> for ClearColorQueue {
-    fn init(&mut self, _gl: &glow::Context) {}
+    fn init(&mut self, _ctx: &RenderContext) {}
 
     fn enqueue(&mut self, command: ClearColor) {
         let mut color = (0.0, 0.0, 0.0, 0.0);
@@ -32,11 +32,11 @@ impl CommandQueue<ClearColor> for ClearColorQueue {
         self.0 = Some(color)
     }
 
-    fn process(&mut self, gl: &glow::Context) {
+    fn process(&mut self, ctx: &RenderContext) {
         if let Some(color) = self.0 {
             unsafe {
-                gl.clear_color(color.0, color.1, color.2, color.3);
-                gl.clear(COLOR_BUFFER_BIT);
+                ctx.gl.clear_color(color.0, color.1, color.2, color.3);
+                ctx.gl.clear(COLOR_BUFFER_BIT);
             }
         }
         self.0 = None;

@@ -1,7 +1,7 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 use anyhow::Result;
 use glow::HasContext;
-use renderer::commands::ClearColor;
+use renderer::commands::{ClearColor, DrawRect};
 use renderer::{DmaBuf, Renderer};
 use std::os::unix::io::OwnedFd;
 use wayland_protocols::connection::Connection;
@@ -149,7 +149,10 @@ fn main() -> Result<()> {
     conn.flush()?;
 
     let mut renderer = Renderer::new()?;
+    renderer.set_width(WIDTH);
+    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<ClearColor>();
+    renderer.init_command_queue::<DrawRect>();
 
     let surf_a = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
     let surf_b = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
@@ -211,7 +214,13 @@ fn main() -> Result<()> {
                     b: 0.32,
                     a: 1.0,
                 });
+                renderer.send_command(DrawRect {
+                    color: (1.0, 1.0, 1.0, 1.0),
+                    origin: (264.0, 265.0, 0.0),
+                    size: (500.0, 550.0),
+                });
                 renderer.process_command_queue::<ClearColor>();
+                renderer.process_command_queue::<DrawRect>();
                 unsafe {
                     renderer.gl.finish();
                 }

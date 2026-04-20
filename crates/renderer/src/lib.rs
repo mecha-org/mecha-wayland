@@ -6,7 +6,7 @@ use std::ffi::c_void;
 pub mod dmabuf;
 pub use dmabuf::DmaBuf;
 
-use crate::commands::{Command, CommandQueueRegistry};
+use crate::commands::{Command, CommandQueueRegistry, RenderContext};
 pub mod commands;
 
 // ── EGL platform extension ─────────────────────────────────────────────────
@@ -86,6 +86,8 @@ pub struct Renderer {
     pub(crate) fn_create_image: PfnCreateImageKHR,
     pub(crate) fn_destroy_image: PfnDestroyImageKHR,
     pub(crate) fn_rbo_image: PfnRboImageOES,
+    viewport_width: u32,
+    viewport_height: u32,
 }
 
 // SAFETY: accessed from one thread only.
@@ -203,6 +205,8 @@ impl Renderer {
             fn_create_image,
             fn_destroy_image,
             fn_rbo_image,
+            viewport_width: 0,
+            viewport_height: 0,
         })
     }
 
@@ -230,8 +234,21 @@ impl Renderer {
         backend.destroy(self);
     }
 
+    pub fn set_width(&mut self, width: u32) {
+        self.viewport_width = width;
+    }
+
+    pub fn set_height(&mut self, height: u32) {
+        self.viewport_height = height;
+    }
+
     pub fn init_command_queue<C: Command>(&mut self) {
-        self.command_queue_registry.init_queue::<C>(&self.gl);
+        let ctx = RenderContext {
+            gl: &self.gl,
+            viewport_width: self.viewport_width,
+            viewport_height: self.viewport_height,
+        };
+        self.command_queue_registry.init_queue::<C>(&ctx);
     }
 
     pub fn send_command<C: Command>(&mut self, command: C) {
@@ -239,7 +256,12 @@ impl Renderer {
     }
 
     pub fn process_command_queue<C: Command>(&mut self) {
-        self.command_queue_registry.process::<C>(&self.gl);
+        let ctx = RenderContext {
+            gl: &self.gl,
+            viewport_width: self.viewport_width,
+            viewport_height: self.viewport_height,
+        };
+        self.command_queue_registry.process::<C>(&ctx);
     }
 }
 
@@ -250,8 +272,6 @@ impl Drop for Renderer {
         let _ = self.egl.terminate(self.display);
     }
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 fn open_drm_render_node() -> Result<std::fs::File> {
     for i in 128..=255 {

@@ -6,6 +6,9 @@ use std::ffi::c_void;
 pub mod dmabuf;
 pub use dmabuf::DmaBuf;
 
+use crate::commands::{Command, CommandQueueRegistry};
+pub mod commands;
+
 // ── EGL platform extension ─────────────────────────────────────────────────
 
 // EGL_MESA_platform_gbm — not in the core EGL headers, must be hardcoded.
@@ -20,7 +23,11 @@ type EglGetPlatformDisplayEXT = unsafe extern "system" fn(
 ) -> *mut c_void;
 
 pub(crate) type PfnCreateImageKHR = unsafe extern "C" fn(
-    *const c_void, *const c_void, u32, *const c_void, *const i32,
+    *const c_void,
+    *const c_void,
+    u32,
+    *const c_void,
+    *const i32,
 ) -> *mut c_void;
 
 pub(crate) type PfnDestroyImageKHR = unsafe extern "C" fn(*const c_void, *mut c_void) -> u32;
@@ -56,9 +63,9 @@ pub trait SurfaceBackend: Sized {
 ///
 /// Do not drop without calling `destroy_surface` — backend resources will leak.
 pub struct RenderableSurface<B: SurfaceBackend> {
-    pub width:   u32,
-    pub height:  u32,
-    pub fbo:     glow::Framebuffer,
+    pub width: u32,
+    pub height: u32,
+    pub fbo: glow::Framebuffer,
     pub backend: B,
 }
 
@@ -70,14 +77,15 @@ pub struct RenderableSurface<B: SurfaceBackend> {
 /// responsibility. Use `create_surface` / `destroy_surface` to manage render
 /// targets. All surfaces must be destroyed before dropping the `Renderer`.
 pub struct Renderer {
-    pub _gbm_device:      GbmDevice<std::fs::File>,
-    egl:                  egl::DynamicInstance<egl::EGL1_4>,
-    pub display:          egl::Display,
-    context:              egl::Context,
-    pub gl:               glow::Context,
-    pub(crate) fn_create_image:  PfnCreateImageKHR,
+    pub _gbm_device: GbmDevice<std::fs::File>,
+    egl: egl::DynamicInstance<egl::EGL1_4>,
+    pub display: egl::Display,
+    context: egl::Context,
+    pub gl: glow::Context,
+    pub(crate) command_queue_registry: CommandQueueRegistry,
+    pub(crate) fn_create_image: PfnCreateImageKHR,
     pub(crate) fn_destroy_image: PfnDestroyImageKHR,
-    pub(crate) fn_rbo_image:     PfnRboImageOES,
+    pub(crate) fn_rbo_image: PfnRboImageOES,
 }
 
 // SAFETY: accessed from one thread only.
@@ -184,12 +192,14 @@ impl Renderer {
             )
         };
 
+        let command_queue_registry = CommandQueueRegistry::new();
         Ok(Self {
             _gbm_device: gbm_device,
             egl: egl_lib,
             display,
             context,
             gl,
+            command_queue_registry,
             fn_create_image,
             fn_destroy_image,
             fn_rbo_image,
@@ -204,7 +214,12 @@ impl Renderer {
     ) -> Result<RenderableSurface<B>> {
         let backend = B::allocate(self, width, height)?;
         let fbo = backend.fbo();
-        Ok(RenderableSurface { width, height, fbo, backend })
+        Ok(RenderableSurface {
+            width,
+            height,
+            fbo,
+            backend,
+        })
     }
 
     /// Release all resources owned by `surface`.
@@ -213,6 +228,18 @@ impl Renderer {
     pub fn destroy_surface<B: SurfaceBackend>(&self, surface: RenderableSurface<B>) {
         let RenderableSurface { backend, .. } = surface;
         backend.destroy(self);
+    }
+
+    pub fn init_command_queue<C: Command>(&mut self) {
+        self.command_queue_registry.init_queue::<C>(&self.gl);
+    }
+
+    pub fn send_command<C: Command>(&mut self, command: C) {
+        self.command_queue_registry.enqueue(command);
+    }
+
+    pub fn process_command_queue<C: Command>(&mut self) {
+        self.command_queue_registry.process::<C>(&self.gl);
     }
 }
 

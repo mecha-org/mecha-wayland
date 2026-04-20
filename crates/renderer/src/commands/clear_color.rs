@@ -18,22 +18,27 @@ impl Command for ClearColor {
 }
 
 #[derive(Default)]
-pub(crate) struct ClearColorQueue(f32, f32, f32, f32);
+pub(crate) struct ClearColorQueue(Option<(f32, f32, f32, f32)>);
 
 impl CommandQueue<ClearColor> for ClearColorQueue {
     fn init(&mut self, _gl: &glow::Context) {}
 
     fn enqueue(&mut self, command: ClearColor) {
-        self.0 = command.r;
-        self.1 = command.g;
-        self.2 = command.b;
-        self.3 = command.a;
+        let mut color = (0.0, 0.0, 0.0, 0.0);
+        color.0 = command.r;
+        color.1 = command.g;
+        color.2 = command.b;
+        color.3 = command.a;
+        self.0 = Some(color)
     }
 
     fn process(&mut self, gl: &glow::Context) {
-        unsafe {
-            gl.clear_color(self.0, self.1, self.2, self.3);
-            gl.clear(COLOR_BUFFER_BIT);
+        if let Some(color) = self.0 {
+            unsafe {
+                gl.clear_color(color.0, color.1, color.2, color.3);
+                gl.clear(COLOR_BUFFER_BIT);
+            }
         }
+        self.0 = None;
     }
 }

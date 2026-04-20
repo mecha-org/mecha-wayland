@@ -1,6 +1,7 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 use anyhow::Result;
 use glow::HasContext;
+use renderer::commands::ClearColor;
 use renderer::{DmaBuf, Renderer};
 use std::os::unix::io::OwnedFd;
 use wayland_protocols::connection::Connection;
@@ -21,12 +22,15 @@ const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 // ── Slot: one swap buffer (surface + wl_buffer + state) ──────────────────
 
 #[derive(PartialEq)]
-enum SlotState { Free, InFlight }
+enum SlotState {
+    Free,
+    InFlight,
+}
 
 struct Slot {
-    surf:   renderer::RenderableSurface<DmaBuf>,
+    surf: renderer::RenderableSurface<DmaBuf>,
     wl_buf: WlBuffer,
-    state:  SlotState,
+    state: SlotState,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -34,51 +38,46 @@ struct Slot {
 /// Create a `wl_buffer` bound to a `RenderableSurface<DmaBuf>` via zwp_linux_dmabuf.
 /// The prime_fd is dup'd so the surface retains its own copy.
 fn make_wl_buffer(
-    conn:   &mut Connection,
+    conn: &mut Connection,
     dmabuf: &WlDmaBuf,
-    surf:   &renderer::RenderableSurface<DmaBuf>,
+    surf: &renderer::RenderableSurface<DmaBuf>,
 ) -> Result<WlBuffer> {
     let params = ZwpLinuxBufferParamsV1::new(conn.alloc_id());
     dmabuf.inner.create_params(conn, &params)?;
 
-    let fd: OwnedFd = surf.backend.prime_fd.try_clone()
+    let fd: OwnedFd = surf
+        .backend
+        .prime_fd
+        .try_clone()
         .map_err(|e| anyhow::anyhow!("dup prime_fd: {e}"))?;
     let modifier = surf.backend.modifier;
     params.add(
         conn,
         fd,
-        0,                          // plane_idx
-        0,                          // offset
+        0, // plane_idx
+        0, // offset
         surf.backend.stride,
-        (modifier >> 32) as u32,    // modifier_hi
+        (modifier >> 32) as u32,         // modifier_hi
         (modifier & 0xffff_ffff) as u32, // modifier_lo
     )?;
 
     let wl_buf = WlBuffer::new(conn.alloc_id());
-    params.create_immed(conn, &wl_buf, WIDTH as i32, HEIGHT as i32, DRM_FORMAT_ARGB8888, 0)?;
+    params.create_immed(
+        conn,
+        &wl_buf,
+        WIDTH as i32,
+        HEIGHT as i32,
+        DRM_FORMAT_ARGB8888,
+        0,
+    )?;
 
     Ok(wl_buf)
 }
-
-/// Clear the surface's FBO with lavender and finish before handing to compositor.
-fn render_lavender(renderer: &Renderer, surf: &renderer::RenderableSurface<DmaBuf>) {
-    unsafe {
-        renderer.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(surf.fbo));
-        renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-        renderer.gl.clear_color(0.902, 0.902, 0.980, 1.0); // #E6E6FA
-        renderer.gl.clear(glow::COLOR_BUFFER_BIT);
-        renderer.gl.finish(); // block until GPU done — compositor reads immediately after commit
-    }
-}
-
-// ── Main ──────────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-
-    // ── Wayland setup ─────────────────────────────────────────────────────
 
     let mut conn = Connection::connect()?;
 
@@ -149,31 +148,33 @@ fn main() -> Result<()> {
     surface.commit(&mut conn)?;
     conn.flush()?;
 
-    // ── Renderer + swap chain setup ───────────────────────────────────────
+    let mut renderer = Renderer::new()?;
+    renderer.init_command_queue::<ClearColor>();
 
-    let renderer = Renderer::new()?;
-
-    // Two DMA-BUF surfaces for double-buffering — managed entirely in main.
     let surf_a = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
     let surf_b = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
 
-    // Bind each surface to a persistent wl_buffer.
     let wl_buf_a = make_wl_buffer(&mut conn, &dmabuf, &surf_a)?;
     let wl_buf_b = make_wl_buffer(&mut conn, &dmabuf, &surf_b)?;
     conn.flush()?;
 
     let mut slots = [
-        Slot { surf: surf_a, wl_buf: wl_buf_a, state: SlotState::Free },
-        Slot { surf: surf_b, wl_buf: wl_buf_b, state: SlotState::Free },
+        Slot {
+            surf: surf_a,
+            wl_buf: wl_buf_a,
+            state: SlotState::Free,
+        },
+        Slot {
+            surf: surf_b,
+            wl_buf: wl_buf_b,
+            state: SlotState::Free,
+        },
     ];
 
     let mut presented = false;
 
-    // ── Event loop ────────────────────────────────────────────────────────
-
     loop {
         while let Some((obj_id, opcode, body)) = conn.try_recv_msg()? {
-            // Check for wl_buffer.release (opcode 0) on any in-flight slot.
             for slot in slots.iter_mut() {
                 if obj_id == slot.wl_buf.object_id() && opcode == 0 {
                     tracing::info!(buf_id = obj_id, "wl_buffer released — slot now free");
@@ -193,14 +194,27 @@ fn main() -> Result<()> {
             xdg_surf.inner.ack_configure(&mut conn, serial)?;
 
             if !presented {
-                // Acquire first free slot and render lavender into it.
                 let slot = slots
                     .iter_mut()
                     .find(|s| s.state == SlotState::Free)
                     .expect("no free slot on first frame");
 
-                render_lavender(&renderer, &slot.surf);
-
+                unsafe {
+                    renderer
+                        .gl
+                        .bind_framebuffer(glow::FRAMEBUFFER, Some(slot.surf.fbo));
+                    renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                }
+                renderer.send_command(ClearColor {
+                    r: 0.32,
+                    g: 0.32,
+                    b: 0.32,
+                    a: 1.0,
+                });
+                renderer.process_command_queue::<ClearColor>();
+                unsafe {
+                    renderer.gl.finish();
+                }
                 surface.attach(&mut conn, &slot.wl_buf, 0, 0)?;
                 surface.damage(&mut conn, 0, 0, WIDTH as i32, HEIGHT as i32)?;
                 surface.commit(&mut conn)?;

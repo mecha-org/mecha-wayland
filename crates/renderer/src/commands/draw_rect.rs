@@ -103,6 +103,10 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 gl.use_program(Some(program));
 
+                let vbo = gl.create_buffer().unwrap();
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+                let mut vertices = vec![];
+
                 while let Some(cmd) = self.queue.pop_front() {
                     let (px, py, z) = cmd.origin;
                     let (pw, ph) = cmd.size;
@@ -110,42 +114,44 @@ impl CommandQueue<DrawRect> for RectQueue {
                     let y0 = to_ndc_y(py);
                     let x1 = to_ndc_x(px + pw);
                     let y1 = to_ndc_y(py + ph);
+
                     // Interleaved: [x, y, z, r, g, b, a] per vertex. Coords in NDC.
                     #[rustfmt::skip]
-                    let verts: [f32; 28] = [
+                    vertices.extend([
                         x0, y0, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
                         x1, y0, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
                         x1, y1, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
+
+                        x0, y0, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
+                        x1, y1, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
                         x0, y1, z,  cmd.color.0, cmd.color.1, cmd.color.2, cmd.color.3,
-                    ];
-
-                    let vbo = gl.create_buffer().unwrap();
-                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-                    gl.buffer_data_u8_slice(
-                        glow::ARRAY_BUFFER,
-                        bytemuck::cast_slice(&verts),
-                        glow::STATIC_DRAW,
-                    );
-
-                    let stride = 7 * std::mem::size_of::<f32>() as i32;
-
-                    gl.enable_vertex_attrib_array(0);
-                    gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
-
-                    gl.enable_vertex_attrib_array(1);
-                    gl.vertex_attrib_pointer_f32(
-                        1,
-                        4,
-                        glow::FLOAT,
-                        false,
-                        stride,
-                        3 * size_of::<f32>() as i32,
-                    );
-
-                    gl.draw_arrays(glow::TRIANGLE_FAN, 0, 4);
-                    gl.delete_buffer(vbo);
+                    ]);
                 }
 
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    bytemuck::cast_slice(&vertices),
+                    glow::STATIC_DRAW,
+                );
+
+                let stride = 7 * std::mem::size_of::<f32>() as i32;
+
+                gl.enable_vertex_attrib_array(0);
+                gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
+
+                gl.enable_vertex_attrib_array(1);
+                gl.vertex_attrib_pointer_f32(
+                    1,
+                    4,
+                    glow::FLOAT,
+                    false,
+                    stride,
+                    3 * size_of::<f32>() as i32,
+                );
+                let count = (vertices.len() / 7) as i32;
+                gl.draw_arrays(glow::TRIANGLES, 0, count);
+
+                gl.delete_buffer(vbo);
                 gl.use_program(None);
             }
         }

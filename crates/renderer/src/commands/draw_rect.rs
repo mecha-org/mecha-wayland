@@ -32,7 +32,8 @@ pub(crate) struct RectQueue {
     vbo: Option<NativeBuffer>,
     ibo: Option<NativeBuffer>,
 
-    queue: Vec<DrawRect>,
+    opaque: Vec<DrawRect>,
+    translucent: Vec<DrawRect>,
 }
 
 impl CommandQueue<DrawRect> for RectQueue {
@@ -132,11 +133,15 @@ impl CommandQueue<DrawRect> for RectQueue {
     }
 
     fn enqueue(&mut self, command: DrawRect) {
-        self.queue.push(command);
+        if command.color.3 >= 1.0 {
+            self.opaque.push(command);
+        } else {
+            self.translucent.push(command);
+        }
     }
 
     fn process(&mut self, ctx: &RenderContext) {
-        if self.queue.is_empty() {
+        if self.opaque.is_empty() && self.translucent.is_empty() {
             return;
         }
         if let Some(program) = self.shader_program {
@@ -146,11 +151,10 @@ impl CommandQueue<DrawRect> for RectQueue {
 
             unsafe {
                 gl.bind_vertex_array(self.vao);
-                gl.enable(glow::BLEND);
-                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.use_program(Some(program));
+
                 let u_viewport_resolution_loc =
                     gl.get_uniform_location(program, "uViewportResolution");
-                gl.use_program(Some(program));
                 gl.uniform_2_f32(u_viewport_resolution_loc.as_ref(), vp_w, vp_h);
 
                 gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
@@ -165,12 +169,6 @@ impl CommandQueue<DrawRect> for RectQueue {
                 );
 
                 gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
-                gl.buffer_sub_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    0,
-                    bytemuck::cast_slice(&self.queue),
-                );
-
                 gl.enable_vertex_attrib_array(1);
                 gl.vertex_attrib_pointer_f32(
                     1,
@@ -204,9 +202,42 @@ impl CommandQueue<DrawRect> for RectQueue {
                 );
                 gl.vertex_attrib_divisor(3, 1);
 
-                let count = self.queue.len() as i32;
-                gl.draw_arrays_instanced(glow::TRIANGLES, 0, 6, count);
-                self.queue.clear();
+                gl.enable(glow::DEPTH_TEST);
+                gl.depth_func(glow::LESS);
+
+                // Pass 1: opaque, front-to-back, depth write on, blending off
+                if !self.opaque.is_empty() {
+                    let mut sorted: Vec<DrawRect> = self.opaque.drain(..).collect();
+                    sorted.sort_unstable_by(|a, b| b.origin.2.total_cmp(&a.origin.2));
+                    gl.depth_mask(true);
+                    gl.disable(glow::BLEND);
+                    gl.buffer_sub_data_u8_slice(
+                        glow::ARRAY_BUFFER,
+                        0,
+                        bytemuck::cast_slice(&sorted),
+                    );
+                    gl.draw_arrays_instanced(glow::TRIANGLES, 0, 6, sorted.len() as i32);
+                }
+
+                // Pass 2: translucent, back-to-front, depth write off, blending on
+                if !self.translucent.is_empty() {
+                    let mut sorted: Vec<DrawRect> = self.translucent.drain(..).collect();
+                    sorted.sort_unstable_by(|a, b| a.origin.2.total_cmp(&b.origin.2));
+                    gl.depth_mask(false);
+                    gl.enable(glow::BLEND);
+                    gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                    gl.buffer_sub_data_u8_slice(
+                        glow::ARRAY_BUFFER,
+                        0,
+                        bytemuck::cast_slice(&sorted),
+                    );
+                    gl.draw_arrays_instanced(glow::TRIANGLES, 0, 6, sorted.len() as i32);
+                }
+
+                // Restore state
+                gl.depth_mask(true);
+                gl.disable(glow::DEPTH_TEST);
+                gl.disable(glow::BLEND);
 
                 gl.use_program(None);
             }

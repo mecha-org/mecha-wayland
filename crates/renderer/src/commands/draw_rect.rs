@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use glow::{HasContext, NativeProgram};
+use glow::{HasContext, NativeBuffer, NativeProgram};
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
@@ -21,6 +21,7 @@ impl Command for DrawRect {
 #[derive(Default)]
 pub(crate) struct RectQueue {
     shader_program: Option<NativeProgram>,
+    vbo: Option<NativeBuffer>,
     queue: VecDeque<DrawRect>,
 }
 
@@ -80,6 +81,14 @@ impl CommandQueue<DrawRect> for RectQueue {
             gl.delete_shader(vs);
             gl.delete_shader(fs);
             self.shader_program = Some(program);
+
+            self.vbo = Some(gl.create_buffer().expect("glCreateBuffer"));
+            gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
+
+            let size = 1024 * 1024;
+            gl.buffer_data_size(glow::ARRAY_BUFFER, size, glow::DYNAMIC_DRAW);
+
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
         }
     }
 
@@ -103,8 +112,6 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 gl.use_program(Some(program));
 
-                let vbo = gl.create_buffer().unwrap();
-                gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
                 let mut vertices = vec![];
 
                 while let Some(cmd) = self.queue.pop_front() {
@@ -128,12 +135,8 @@ impl CommandQueue<DrawRect> for RectQueue {
                     ]);
                 }
 
-                gl.buffer_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    bytemuck::cast_slice(&vertices),
-                    glow::STATIC_DRAW,
-                );
-
+                gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
+                gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(&vertices));
                 let stride = 7 * std::mem::size_of::<f32>() as i32;
 
                 gl.enable_vertex_attrib_array(0);
@@ -151,7 +154,6 @@ impl CommandQueue<DrawRect> for RectQueue {
                 let count = (vertices.len() / 7) as i32;
                 gl.draw_arrays(glow::TRIANGLES, 0, count);
 
-                gl.delete_buffer(vbo);
                 gl.use_program(None);
             }
         }

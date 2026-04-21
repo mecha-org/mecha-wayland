@@ -215,9 +215,14 @@ fn main() -> Result<()> {
                     a: 1.0,
                 });
                 renderer.send_command(DrawRect {
-                    color: (1.0, 1.0, 1.0, 1.0),
-                    origin: (264.0, 265.0, 0.0),
-                    size: (500.0, 550.0),
+                    color: (0.9, 0.2, 0.2, 1.0),
+                    origin: (214.0, 240.0, 0.0),
+                    size: (600.0, 600.0),
+                });
+                renderer.send_command(DrawRect {
+                    color: (0.2, 0.4, 1.0, 1.0),
+                    origin: (414.0, 440.0, 1.0),
+                    size: (200.0, 200.0),
                 });
                 renderer.process_command_queue::<ClearColor>();
                 renderer.process_command_queue::<DrawRect>();

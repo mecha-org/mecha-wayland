@@ -32,6 +32,8 @@ pub fn bench_solid_rect(c: &mut Criterion) {
                     .gl
                     .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
                 renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                renderer.gl.clear_depth_f32(0.0);
+                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
                 renderer.send_command(DrawRect {
                     color: (0.2, 0.6, 1.0, 1.0),
                     origin: (0.0, 0.0, 0.0),
@@ -65,6 +67,8 @@ pub fn bench_translucent_rect(c: &mut Criterion) {
                     .gl
                     .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
                 renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                renderer.gl.clear_depth_f32(0.0);
+                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
                 renderer.send_command(DrawRect {
                     color: (0.2, 0.6, 1.0, 0.5),
                     origin: (0.0, 0.0, 0.0),
@@ -101,6 +105,8 @@ pub fn bench_solid_stacked(c: &mut Criterion) {
                     .gl
                     .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
                 renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                renderer.gl.clear_depth_f32(0.0);
+                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
                 for i in 0..N {
                     renderer.send_command(DrawRect {
                         color: (0.2, 0.6, 1.0, 1.0),
@@ -139,6 +145,8 @@ pub fn bench_translucent_stacked(c: &mut Criterion) {
                     .gl
                     .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
                 renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                renderer.gl.clear_depth_f32(0.0);
+                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
                 for i in 0..N {
                     renderer.send_command(DrawRect {
                         color: (0.2, 0.6, 1.0, 0.5),
@@ -178,6 +186,8 @@ pub fn bench_mixed_stacked(c: &mut Criterion) {
                     .gl
                     .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
                 renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
+                renderer.gl.clear_depth_f32(0.0);
+                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
                 for i in 0..N {
                     let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
                     renderer.send_command(DrawRect {

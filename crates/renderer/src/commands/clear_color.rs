@@ -1,4 +1,4 @@
-use glow::{COLOR_BUFFER_BIT, HasContext};
+use glow::{COLOR_BUFFER_BIT, DEPTH_BUFFER_BIT, HasContext};
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
@@ -36,7 +36,8 @@ impl CommandQueue<ClearColor> for ClearColorQueue {
         if let Some(color) = self.0 {
             unsafe {
                 ctx.gl.clear_color(color.0, color.1, color.2, color.3);
-                ctx.gl.clear(COLOR_BUFFER_BIT);
+                ctx.gl.clear_depth_f32(0.0);
+                ctx.gl.clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
             }
         }
         self.0 = None;

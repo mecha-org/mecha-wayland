@@ -203,7 +203,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.vertex_attrib_divisor(3, 1);
 
                 gl.enable(glow::DEPTH_TEST);
-                gl.depth_func(glow::LESS);
+                gl.depth_func(glow::GREATER);
 
                 // Pass 1: opaque, front-to-back, depth write on, blending off
                 if !self.opaque.is_empty() {

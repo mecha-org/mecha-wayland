@@ -1,4 +1,4 @@
-use glow::{HasContext, NativeBuffer, NativeProgram, NativeVertexArray};
+use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation, NativeVertexArray};
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
@@ -31,6 +31,8 @@ pub(crate) struct RectQueue {
     vao: Option<NativeVertexArray>,
     vbo: Option<NativeBuffer>,
     ibo: Option<NativeBuffer>,
+
+    u_viewport_resolution_loc: Option<NativeUniformLocation>,
 
     opaque: Vec<DrawRect>,
     translucent: Vec<DrawRect>,
@@ -122,13 +124,50 @@ impl CommandQueue<DrawRect> for RectQueue {
                 bytemuck::cast_slice(&vertices),
                 glow::STATIC_DRAW,
             );
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(
+                0,
+                2,
+                glow::FLOAT,
+                false,
+                (2 * size_of::<f32>()) as i32,
+                0,
+            );
 
             self.ibo = Some(gl.create_buffer().expect("glCreateBuffer"));
             gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
             let size = 1024 * 1024;
             gl.buffer_data_size(glow::ARRAY_BUFFER, size, glow::DYNAMIC_DRAW);
 
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, size_of::<DrawRect>() as i32, 0);
+            gl.vertex_attrib_divisor(1, 1);
+
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(
+                2,
+                3,
+                glow::FLOAT,
+                false,
+                size_of::<DrawRect>() as i32,
+                4 * size_of::<f32>() as i32,
+            );
+            gl.vertex_attrib_divisor(2, 1);
+
+            gl.enable_vertex_attrib_array(3);
+            gl.vertex_attrib_pointer_f32(
+                3,
+                2,
+                glow::FLOAT,
+                false,
+                size_of::<DrawRect>() as i32,
+                7 * size_of::<f32>() as i32,
+            );
+            gl.vertex_attrib_divisor(3, 1);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
+
+            self.u_viewport_resolution_loc =
+                gl.get_uniform_location(program, "uViewportResolution");
         }
     }
 
@@ -151,56 +190,10 @@ impl CommandQueue<DrawRect> for RectQueue {
 
             unsafe {
                 gl.bind_vertex_array(self.vao);
+                gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
                 gl.use_program(Some(program));
 
-                let u_viewport_resolution_loc =
-                    gl.get_uniform_location(program, "uViewportResolution");
-                gl.uniform_2_f32(u_viewport_resolution_loc.as_ref(), vp_w, vp_h);
-
-                gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
-                gl.enable_vertex_attrib_array(0);
-                gl.vertex_attrib_pointer_f32(
-                    0,
-                    2,
-                    glow::FLOAT,
-                    false,
-                    (2 * size_of::<f32>()) as i32,
-                    0,
-                );
-
-                gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
-                gl.enable_vertex_attrib_array(1);
-                gl.vertex_attrib_pointer_f32(
-                    1,
-                    4,
-                    glow::FLOAT,
-                    false,
-                    size_of::<DrawRect>() as i32,
-                    0,
-                );
-                gl.vertex_attrib_divisor(1, 1);
-
-                gl.enable_vertex_attrib_array(2);
-                gl.vertex_attrib_pointer_f32(
-                    2,
-                    3,
-                    glow::FLOAT,
-                    false,
-                    size_of::<DrawRect>() as i32,
-                    4 * size_of::<f32>() as i32,
-                );
-                gl.vertex_attrib_divisor(2, 1);
-
-                gl.enable_vertex_attrib_array(3);
-                gl.vertex_attrib_pointer_f32(
-                    3,
-                    2,
-                    glow::FLOAT,
-                    false,
-                    size_of::<DrawRect>() as i32,
-                    7 * size_of::<f32>() as i32,
-                );
-                gl.vertex_attrib_divisor(3, 1);
+                gl.uniform_2_f32(self.u_viewport_resolution_loc.as_ref(), vp_w, vp_h);
 
                 gl.enable(glow::DEPTH_TEST);
                 gl.depth_func(glow::GREATER);

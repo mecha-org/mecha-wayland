@@ -32,7 +32,7 @@ pub(crate) struct RectQueue {
     vbo: Option<NativeBuffer>,
     ibo: Option<NativeBuffer>,
 
-    u_viewport_resolution_loc: Option<NativeUniformLocation>,
+    u_viewport_inv_res_loc: Option<NativeUniformLocation>,
 
     opaque: Vec<DrawRect>,
     translucent: Vec<DrawRect>,
@@ -50,12 +50,12 @@ impl CommandQueue<DrawRect> for RectQueue {
                 layout(location = 3) in vec2 aSize;
                 out vec4 vColor;
 
-                uniform vec2 uViewportResolution;
+                uniform vec2 uViewportInvRes;
 
                 void main() {
                   vec2 center = aOrigin.xy + aSize * 0.5;
                   vec2 pixelPos = vec2(aPos.x, -aPos.y) * aSize + center;
-                  vec2 ndc = (pixelPos / uViewportResolution) * 2.0 - 1.0;
+                  vec2 ndc = pixelPos * uViewportInvRes - 1.0;
                   ndc.y = -ndc.y;
                   gl_Position = vec4(ndc, aOrigin.z, 1.0);
                   vColor = aColor;
@@ -110,14 +110,11 @@ impl CommandQueue<DrawRect> for RectQueue {
             self.vbo = Some(gl.create_buffer().expect("glCreateBuffer"));
             gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
             #[rustfmt::skip]
-            let vertices: [f32; 12] = [
-                -0.5,  0.5,
-                 0.5,  0.5,
-                 0.5, -0.5,
-
-                 0.5, -0.5,
-                -0.5, -0.5,
-                -0.5,  0.5,
+            let vertices: [f32; 8] = [
+                -0.5,  0.5,   // TL
+                 0.5,  0.5,   // TR
+                -0.5, -0.5,   // BL
+                 0.5, -0.5,   // BR
             ];
             gl.buffer_data_u8_slice(
                 glow::ARRAY_BUFFER,
@@ -166,8 +163,8 @@ impl CommandQueue<DrawRect> for RectQueue {
             gl.vertex_attrib_divisor(3, 1);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
 
-            self.u_viewport_resolution_loc =
-                gl.get_uniform_location(program, "uViewportResolution");
+            self.u_viewport_inv_res_loc =
+                gl.get_uniform_location(program, "uViewportInvRes");
         }
     }
 
@@ -193,7 +190,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
                 gl.use_program(Some(program));
 
-                gl.uniform_2_f32(self.u_viewport_resolution_loc.as_ref(), vp_w, vp_h);
+                gl.uniform_2_f32(self.u_viewport_inv_res_loc.as_ref(), 2.0 / vp_w, 2.0 / vp_h);
 
                 gl.enable(glow::DEPTH_TEST);
                 gl.depth_func(glow::GREATER);
@@ -209,7 +206,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                         0,
                         bytemuck::cast_slice(&sorted),
                     );
-                    gl.draw_arrays_instanced(glow::TRIANGLES, 0, 6, sorted.len() as i32);
+                    gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, sorted.len() as i32);
                 }
 
                 // Pass 2: translucent, back-to-front, depth write off, blending on
@@ -224,7 +221,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                         0,
                         bytemuck::cast_slice(&sorted),
                     );
-                    gl.draw_arrays_instanced(glow::TRIANGLES, 0, 6, sorted.len() as i32);
+                    gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, sorted.len() as i32);
                 }
 
                 // Restore state

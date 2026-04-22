@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{BenchmarkId, Criterion};
 use glow::HasContext;
 use renderer::{DmaBuf, Renderer, commands::DrawRect};
 
@@ -20,27 +20,24 @@ pub fn bench_solid_rect(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let mut group = c.benchmark_group("solid_rect");
     for &(w, h) in SIZES {
         group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| unsafe {
-                renderer
-                    .gl
-                    .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-                renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                renderer.gl.clear_depth_f32(0.0);
-                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 1.0),
-                    origin: (0.0, 0.0, 0.0),
-                    size: (w as f32, h as f32),
-                });
-                renderer.process_command_queue::<DrawRect>();
-                renderer.gl.finish();
+            b.iter(|| {
+                renderer.active_surface(&surface);
+                unsafe {
+                    renderer.gl.clear_depth_f32(0.0);
+                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 1.0),
+                        origin: (0.0, 0.0, 0.0),
+                        size: (w as f32, h as f32),
+                    });
+                    renderer.process_command_queue::<DrawRect>();
+                    renderer.gl.finish();
+                }
             });
         });
     }
@@ -55,27 +52,24 @@ pub fn bench_translucent_rect(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let mut group = c.benchmark_group("translucent_rect");
     for &(w, h) in SIZES {
         group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| unsafe {
-                renderer
-                    .gl
-                    .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-                renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                renderer.gl.clear_depth_f32(0.0);
-                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 0.5),
-                    origin: (0.0, 0.0, 0.0),
-                    size: (w as f32, h as f32),
-                });
-                renderer.process_command_queue::<DrawRect>();
-                renderer.gl.finish();
+            b.iter(|| {
+                renderer.active_surface(&surface);
+                unsafe {
+                    renderer.gl.clear_depth_f32(0.0);
+                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 0.5),
+                        origin: (0.0, 0.0, 0.0),
+                        size: (w as f32, h as f32),
+                    });
+                    renderer.process_command_queue::<DrawRect>();
+                    renderer.gl.finish();
+                }
             });
         });
     }
@@ -91,8 +85,6 @@ pub fn bench_solid_stacked(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
@@ -100,22 +92,21 @@ pub fn bench_solid_stacked(c: &mut Criterion) {
     let mut group = c.benchmark_group("solid_stacked_N100");
     for &(w, h) in SIZES {
         group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| unsafe {
-                renderer
-                    .gl
-                    .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-                renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                renderer.gl.clear_depth_f32(0.0);
-                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                for i in 0..N {
-                    renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (w as f32, h as f32),
-                    });
+            b.iter(|| {
+                renderer.active_surface(&surface);
+                unsafe {
+                    renderer.gl.clear_depth_f32(0.0);
+                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                    for i in 0..N {
+                        renderer.send_command(DrawRect {
+                            color: (0.2, 0.6, 1.0, 1.0),
+                            origin: (0.0, 0.0, i as f32 * z_step),
+                            size: (w as f32, h as f32),
+                        });
+                    }
+                    renderer.process_command_queue::<DrawRect>();
+                    renderer.gl.finish();
                 }
-                renderer.process_command_queue::<DrawRect>();
-                renderer.gl.finish();
             });
         });
     }
@@ -131,8 +122,6 @@ pub fn bench_translucent_stacked(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
@@ -140,22 +129,21 @@ pub fn bench_translucent_stacked(c: &mut Criterion) {
     let mut group = c.benchmark_group("translucent_stacked_N100");
     for &(w, h) in SIZES {
         group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| unsafe {
-                renderer
-                    .gl
-                    .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-                renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                renderer.gl.clear_depth_f32(0.0);
-                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                for i in 0..N {
-                    renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (w as f32, h as f32),
-                    });
+            b.iter(|| {
+                renderer.active_surface(&surface);
+                unsafe {
+                    renderer.gl.clear_depth_f32(0.0);
+                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                    for i in 0..N {
+                        renderer.send_command(DrawRect {
+                            color: (0.2, 0.6, 1.0, 0.5),
+                            origin: (0.0, 0.0, i as f32 * z_step),
+                            size: (w as f32, h as f32),
+                        });
+                    }
+                    renderer.process_command_queue::<DrawRect>();
+                    renderer.gl.finish();
                 }
-                renderer.process_command_queue::<DrawRect>();
-                renderer.gl.finish();
             });
         });
     }
@@ -172,8 +160,6 @@ pub fn bench_mixed_stacked(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
@@ -181,23 +167,22 @@ pub fn bench_mixed_stacked(c: &mut Criterion) {
     let mut group = c.benchmark_group("mixed_stacked_N100");
     for &(w, h) in SIZES {
         group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| unsafe {
-                renderer
-                    .gl
-                    .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-                renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                renderer.gl.clear_depth_f32(0.0);
-                renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                for i in 0..N {
-                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
-                    renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, alpha),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (w as f32, h as f32),
-                    });
+            b.iter(|| {
+                renderer.active_surface(&surface);
+                unsafe {
+                    renderer.gl.clear_depth_f32(0.0);
+                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                    for i in 0..N {
+                        let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                        renderer.send_command(DrawRect {
+                            color: (0.2, 0.6, 1.0, alpha),
+                            origin: (0.0, 0.0, i as f32 * z_step),
+                            size: (w as f32, h as f32),
+                        });
+                    }
+                    renderer.process_command_queue::<DrawRect>();
+                    renderer.gl.finish();
                 }
-                renderer.process_command_queue::<DrawRect>();
-                renderer.gl.finish();
             });
         });
     }
@@ -214,30 +199,27 @@ pub fn bench_solid_growing(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("solid_growing_N100");
     group.bench_function("size_16_to_1024", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 1.0),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 1.0),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();
@@ -251,30 +233,27 @@ pub fn bench_translucent_growing(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("translucent_growing_N100");
     group.bench_function("size_16_to_1024", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 0.5),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 0.5),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();
@@ -288,31 +267,28 @@ pub fn bench_mixed_growing(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("mixed_growing_N100");
     group.bench_function("size_16_to_1024", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, alpha),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, alpha),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();
@@ -328,30 +304,27 @@ pub fn bench_solid_shrinking(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("solid_shrinking_N100");
     group.bench_function("size_1024_to_16", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 1.0),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 1.0),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();
@@ -365,30 +338,27 @@ pub fn bench_translucent_shrinking(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("translucent_shrinking_N100");
     group.bench_function("size_1024_to_16", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, 0.5),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, 0.5),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();
@@ -402,31 +372,28 @@ pub fn bench_mixed_shrinking(c: &mut Criterion) {
     let surface = renderer
         .create_surface::<DmaBuf>(WIDTH, HEIGHT)
         .expect("create_surface failed");
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<DrawRect>();
 
     let z_step = 1.0 / N as f32;
 
     let mut group = c.benchmark_group("mixed_shrinking_N100");
     group.bench_function("size_1024_to_16", |b| {
-        b.iter(|| unsafe {
-            renderer
-                .gl
-                .bind_framebuffer(glow::FRAMEBUFFER, Some(black_box(surface.fbo)));
-            renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-            for i in 0..N {
-                let t = i as f32 / (N - 1) as f32;
-                let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.6, 1.0, alpha),
-                    origin: (0.0, 0.0, i as f32 * z_step),
-                    size: (s, s),
-                });
+        b.iter(|| {
+            renderer.active_surface(&surface);
+            unsafe {
+                for i in 0..N {
+                    let t = i as f32 / (N - 1) as f32;
+                    let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
+                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    renderer.send_command(DrawRect {
+                        color: (0.2, 0.6, 1.0, alpha),
+                        origin: (0.0, 0.0, i as f32 * z_step),
+                        size: (s, s),
+                    });
+                }
+                renderer.process_command_queue::<DrawRect>();
+                renderer.gl.finish();
             }
-            renderer.process_command_queue::<DrawRect>();
-            renderer.gl.finish();
         });
     });
     group.finish();

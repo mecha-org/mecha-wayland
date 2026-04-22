@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, bail};
 use gbm::{AsRaw, Device as GbmDevice};
+use glow::HasContext;
 use khronos_egl as egl;
 use std::ffi::c_void;
 
@@ -55,6 +56,29 @@ pub trait SurfaceBackend: Sized {
 
     /// The framebuffer object to bind when drawing into this surface.
     fn fbo(&self) -> glow::Framebuffer;
+
+    /// Read all RGBA pixels from this surface into a `Vec<u8>`.
+    ///
+    /// The buffer is `width * height * 4` bytes, RGBA order, row 0 at the bottom
+    /// (OpenGL convention). The surface's FBO is bound temporarily; call
+    /// `active_surface` again before the next draw. This default implementation
+    /// works for all backends — override only if a more efficient path exists.
+    fn read_pixels(&self, renderer: &Renderer, width: u32, height: u32) -> Vec<u8> {
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        unsafe {
+            renderer.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo()));
+            renderer.gl.read_pixels(
+                0,
+                0,
+                width as i32,
+                height as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixels)),
+            );
+        }
+        pixels
+    }
 }
 
 // ── RenderableSurface<B> ───────────────────────────────────────────────────
@@ -70,6 +94,14 @@ pub struct RenderableSurface<B: SurfaceBackend> {
     pub height: u32,
     pub fbo: glow::Framebuffer,
     pub backend: B,
+}
+
+impl<B: SurfaceBackend> RenderableSurface<B> {
+    /// Read all RGBA pixels from this surface into a `Vec<u8>`.
+    /// Forwards to [`SurfaceBackend::read_pixels`] with the surface dimensions.
+    pub fn read_pixels(&self, renderer: &Renderer) -> Vec<u8> {
+        self.backend.read_pixels(renderer, self.width, self.height)
+    }
 }
 
 // ── Renderer ───────────────────────────────────────────────────────────────
@@ -243,6 +275,19 @@ impl Renderer {
 
     pub fn set_height(&mut self, height: u32) {
         self.viewport_height = height;
+    }
+
+    /// Bind `surface` as the current draw target, set the GL viewport to its
+    /// dimensions, and update the renderer's internal viewport so command queues
+    /// use the correct pixel sizes. Call once per frame before `send_command` /
+    /// `process_command_queue`. Replaces the manual bind + viewport pattern.
+    pub fn active_surface<B: SurfaceBackend>(&mut self, surface: &RenderableSurface<B>) {
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(surface.fbo));
+            self.gl.viewport(0, 0, surface.width as i32, surface.height as i32);
+        }
+        self.viewport_width = surface.width;
+        self.viewport_height = surface.height;
     }
 
     pub fn init_command_queue<C: Command>(&mut self) {

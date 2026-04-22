@@ -150,8 +150,6 @@ fn main() -> Result<()> {
     conn.flush()?;
 
     let mut renderer = Renderer::new()?;
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
     renderer.init_command_queue::<ClearColor>();
     renderer.init_command_queue::<DrawRect>();
     renderer.init_command_queue::<DrawQuad>();
@@ -203,12 +201,7 @@ fn main() -> Result<()> {
 
         if configured {
             if let Some(slot) = slots.iter_mut().find(|s| s.state == SlotState::Free) {
-                unsafe {
-                    renderer
-                        .gl
-                        .bind_framebuffer(glow::FRAMEBUFFER, Some(slot.surf.fbo));
-                    renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-                }
+                renderer.active_surface(&slot.surf);
                 renderer.send_command(ClearColor {
                     r: 0.32,
                     g: 0.32,

@@ -6,6 +6,9 @@ use std::ffi::c_void;
 pub mod dmabuf;
 pub use dmabuf::DmaBuf;
 
+pub mod image_surface;
+pub use image_surface::ImageSurface;
+
 use crate::commands::{Command, CommandQueueRegistry, RenderContext};
 pub mod commands;
 

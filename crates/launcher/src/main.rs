@@ -1,9 +1,10 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 use anyhow::Result;
 use glow::HasContext;
-use renderer::commands::{ClearColor, DrawRect};
+use renderer::commands::{ClearColor, DrawQuad, DrawRect};
 use renderer::{DmaBuf, Renderer};
 use std::os::unix::io::OwnedFd;
+use std::time::Instant;
 use wayland_protocols::connection::Connection;
 use wayland_protocols::object::Object as _;
 use wayland_protocols::wl_callback::SyncCallback;
@@ -153,6 +154,7 @@ fn main() -> Result<()> {
     renderer.set_height(HEIGHT);
     renderer.init_command_queue::<ClearColor>();
     renderer.init_command_queue::<DrawRect>();
+    renderer.init_command_queue::<DrawQuad>();
 
     let surf_a = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
     let surf_b = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
@@ -174,13 +176,14 @@ fn main() -> Result<()> {
         },
     ];
 
-    let mut presented = false;
+    let mut configured = false;
+    let mut fps_frame_count: u32 = 0;
+    let mut fps_timer = Instant::now();
 
     loop {
         while let Some((obj_id, opcode, body)) = conn.try_recv_msg()? {
             for slot in slots.iter_mut() {
                 if obj_id == slot.wl_buf.object_id() && opcode == 0 {
-                    tracing::info!(buf_id = obj_id, "wl_buffer released — slot now free");
                     slot.state = SlotState::Free;
                 }
             }
@@ -195,13 +198,11 @@ fn main() -> Result<()> {
 
         if let Some(serial) = xdg_surf.pending_ack.take() {
             xdg_surf.inner.ack_configure(&mut conn, serial)?;
+            configured = true;
+        }
 
-            if !presented {
-                let slot = slots
-                    .iter_mut()
-                    .find(|s| s.state == SlotState::Free)
-                    .expect("no free slot on first frame");
-
+        if configured {
+            if let Some(slot) = slots.iter_mut().find(|s| s.state == SlotState::Free) {
                 unsafe {
                     renderer
                         .gl
@@ -214,18 +215,25 @@ fn main() -> Result<()> {
                     b: 0.32,
                     a: 1.0,
                 });
-                renderer.send_command(DrawRect {
+                renderer.send_command(DrawQuad {
                     color: (0.9, 0.2, 0.2, 1.0),
+                    border_color: (1.0, 1.0, 1.0, 1.0),
                     origin: (214.0, 240.0, 0.0),
                     size: (600.0, 600.0),
+                    border_radius: 16.0,
+                    border_thickness: 3.0,
                 });
-                renderer.send_command(DrawRect {
-                    color: (0.2, 0.4, 1.0, 1.0),
+                renderer.send_command(DrawQuad {
+                    color: (0.2 * 0.9, 0.4, 1.0, 1.0),
+                    border_color: (1.0, 1.0, 1.0, 1.0),
                     origin: (414.0, 440.0, 1.0),
                     size: (200.0, 200.0),
+                    border_radius: 12.0,
+                    border_thickness: 3.0,
                 });
                 renderer.process_command_queue::<ClearColor>();
                 renderer.process_command_queue::<DrawRect>();
+                renderer.process_command_queue::<DrawQuad>();
                 unsafe {
                     renderer.gl.finish();
                 }
@@ -234,8 +242,13 @@ fn main() -> Result<()> {
                 surface.commit(&mut conn)?;
 
                 slot.state = SlotState::InFlight;
-                presented = true;
-                tracing::info!("lavender frame committed");
+                fps_frame_count += 1;
+                let elapsed = fps_timer.elapsed();
+                if elapsed.as_secs_f32() >= 1.0 {
+                    tracing::info!(fps = fps_frame_count, "FPS");
+                    fps_frame_count = 0;
+                    fps_timer = Instant::now();
+                }
             }
         }
 

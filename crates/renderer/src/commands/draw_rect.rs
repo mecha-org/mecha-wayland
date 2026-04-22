@@ -193,7 +193,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.uniform_2_f32(self.u_viewport_inv_res_loc.as_ref(), 2.0 / vp_w, 2.0 / vp_h);
 
                 gl.enable(glow::DEPTH_TEST);
-                gl.depth_func(glow::GREATER);
+                gl.depth_func(glow::GEQUAL);
 
                 // Pass 1: opaque, front-to-back, depth write on, blending off
                 if !self.opaque.is_empty() {
@@ -215,7 +215,10 @@ impl CommandQueue<DrawRect> for RectQueue {
                     sorted.sort_unstable_by(|a, b| a.origin.2.total_cmp(&b.origin.2));
                     gl.depth_mask(false);
                     gl.enable(glow::BLEND);
-                    gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                    gl.blend_func_separate(
+                        glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
+                        glow::ZERO, glow::ONE,
+                    );
                     gl.buffer_sub_data_u8_slice(
                         glow::ARRAY_BUFFER,
                         0,

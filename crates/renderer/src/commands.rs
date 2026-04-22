@@ -1,7 +1,10 @@
-use crate::commands::{clear_color::ClearColorQueue, draw_rect::RectQueue};
+use crate::commands::{clear_color::ClearColorQueue, draw_quad::QuadQueue, draw_rect::RectQueue};
 
 mod clear_color;
 pub use clear_color::ClearColor;
+
+mod draw_quad;
+pub use draw_quad::DrawQuad;
 
 mod draw_rect;
 pub use draw_rect::DrawRect;
@@ -15,6 +18,8 @@ pub struct RenderContext<'a> {
 pub trait Command: Clone {
     fn get_queue_from_registry(registry: &mut CommandQueueRegistry)
     -> &mut impl CommandQueue<Self>;
+
+    fn on_enqueue(_registry: &mut CommandQueueRegistry, _command: &Self) {}
 }
 
 pub trait CommandQueue<C: Command>: Default {
@@ -33,6 +38,7 @@ impl CommandQueueRegistry {
     }
 
     pub fn enqueue<C: Command>(&mut self, command: C) {
+        C::on_enqueue(self, &command);
         C::get_queue_from_registry(self).enqueue(command);
     }
 
@@ -45,4 +51,5 @@ impl CommandQueueRegistry {
 pub struct CommandQueueRegistry {
     clear_color_queue: ClearColorQueue,
     draw_rect_queue: RectQueue,
+    draw_quad_queue: QuadQueue,
 }

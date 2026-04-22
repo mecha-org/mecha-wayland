@@ -21,9 +21,6 @@ fn main() {
 fn render() -> Result<()> {
     let mut renderer = Renderer::new()?;
 
-    renderer.set_width(WIDTH);
-    renderer.set_height(HEIGHT);
-
     let surface = renderer.create_surface::<ImageSurface>(WIDTH, HEIGHT)?;
 
     // DrawQuad::on_enqueue pushes opaque inner rects into the DrawRect queue,
@@ -32,10 +29,7 @@ fn render() -> Result<()> {
     renderer.init_command_queue::<DrawRect>();
     renderer.init_command_queue::<DrawQuad>();
 
-    unsafe {
-        renderer.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(surface.fbo));
-        renderer.gl.viewport(0, 0, WIDTH as i32, HEIGHT as i32);
-    }
+    renderer.active_surface(&surface);
 
     renderer.send_command(ClearColor { r: 0.1, g: 0.1, b: 0.1, a: 1.0 });
     renderer.send_command(DrawQuad {
@@ -53,21 +47,8 @@ fn render() -> Result<()> {
 
     unsafe { renderer.gl.finish() };
 
-    // Read pixels back to CPU. GL origin is bottom-left.
-    let mut pixels = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
-    unsafe {
-        renderer.gl.read_pixels(
-            0,
-            0,
-            WIDTH as i32,
-            HEIGHT as i32,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelPackData::Slice(Some(&mut pixels)),
-        );
-    }
-
-    // Flip vertically: GL bottom-left → PNG top-left origin.
+    // GL origin is bottom-left; flip vertically before encoding as PNG.
+    let mut pixels = surface.read_pixels(&renderer);
     let row = (WIDTH * 4) as usize;
     for y in 0..HEIGHT as usize / 2 {
         let top = y * row;

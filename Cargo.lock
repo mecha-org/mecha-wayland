@@ -494,6 +494,7 @@ dependencies = [
  "anyhow",
  "glow",
  "layout",
+ "png",
  "puffin",
  "puffin_http",
  "renderer",

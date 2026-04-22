@@ -15,6 +15,12 @@ tracing-subscriber = { workspace = true }
 puffin_http = {version = "0.16.1", optional = true}
 puffin = {version = "0.19.1", optional = true}
 
+[build-dependencies]
+renderer = { path = "../renderer" }
+glow     = { workspace = true }
+png      = { workspace = true }
+anyhow   = { workspace = true }
+
 [features]
 default = []
 profile = ["dep:puffin", "dep:puffin_http"]

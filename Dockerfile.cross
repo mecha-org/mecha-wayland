@@ -1,0 +1,41 @@
+# Ubuntu 24.04 (Noble) ships glibc 2.39 for amd64, which satisfies the minimum
+# required by Rust 1.85+ toolchains built on Fedora 42 / modern distros.
+# The cross-rs :main image is Ubuntu 20.04 (glibc 2.31) and causes GLIBC version
+# mismatches when running build scripts compiled by a newer host toolchain.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install the aarch64 cross-compilation toolchain plus native (x86_64) dev libs.
+#
+# Native libs are needed because build scripts (build.rs) are compiled for the
+# host (x86_64) inside the container. The launcher's build.rs pulls in `renderer`
+# as a build-dep, which transitively links against libgbm — so we need both the
+# amd64 and arm64 copies: amd64 for build scripts, arm64 for the final binary.
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+        gcc \
+        libc6-dev \
+        libgbm-dev \
+        binutils-aarch64-linux-gnu \
+        gcc-aarch64-linux-gnu \
+        libc6-dev-arm64-cross \
+        ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Add arm64 multiarch and install the only native library this project links
+# at compile time: libgbm (via gbm-sys's #[link(name = "gbm")]) + its dep libdrm.
+# khronos-egl uses dlopen at runtime so it needs no sysroot entry here.
+#
+# Ubuntu 24.04 uses DEB822 sources format. The standard archive (archive.ubuntu.com)
+# only serves amd64/i386; arm64 packages are on ports.ubuntu.com. We restrict
+# the existing entries to amd64 and add ports.ubuntu.com entries for arm64.
+RUN dpkg --add-architecture arm64 \
+ && sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources \
+ && printf '\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble noble-updates noble-backports\nComponents: main restricted universe multiverse\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble-security\nComponents: main restricted universe multiverse\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+        >> /etc/apt/sources.list.d/ubuntu.sources \
+ && apt-get update -qq \
+ && apt-get install -y --no-install-recommends \
+        libgbm-dev:arm64 \
+        libdrm-dev:arm64 \
+ && rm -rf /var/lib/apt/lists/*

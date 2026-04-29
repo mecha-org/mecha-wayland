@@ -1,4 +1,4 @@
-use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation, NativeVertexArray};
+use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
 
 use crate::commands::{Command, CommandQueue, CommandQueueRegistry, DrawRect, RenderContext};
 
@@ -43,13 +43,39 @@ impl Command for DrawQuad {
     }
 }
 
+// Builds an interleaved vertex buffer (17 floats/vertex, 6 vertices/quad) for a batch of quads.
+// Layout per vertex: aPos(2) aColor(4) aBorderColor(4) aOrigin(3) aSize(2) aBorderRadius(1) aBorderThickness(1)
+fn build_quad_verts(quads: &[DrawQuad]) -> Vec<f32> {
+    #[rustfmt::skip]
+    const CORNERS: [(f32, f32); 6] = [
+        (-0.5,  0.5), ( 0.5,  0.5), (-0.5, -0.5),  // triangle 1
+        ( 0.5,  0.5), ( 0.5, -0.5), (-0.5, -0.5),  // triangle 2
+    ];
+    let mut v = Vec::with_capacity(quads.len() * 6 * 17);
+    for q in quads {
+        let (cr, cg, cb, ca) = q.color;
+        let (br, bg, bb, ba) = q.border_color;
+        let (ox, oy, oz) = q.origin;
+        let (sw, sh) = q.size;
+        for (px, py) in CORNERS {
+            v.extend_from_slice(&[
+                px, py,
+                cr, cg, cb, ca,
+                br, bg, bb, ba,
+                ox, oy, oz,
+                sw, sh,
+                q.border_radius,
+                q.border_thickness,
+            ]);
+        }
+    }
+    v
+}
+
 #[derive(Default)]
 pub(crate) struct QuadQueue {
     shader_program: Option<NativeProgram>,
-
-    vao: Option<NativeVertexArray>,
     vbo: Option<NativeBuffer>,
-    ibo: Option<NativeBuffer>,
 
     u_viewport_inv_res_loc: Option<NativeUniformLocation>,
 
@@ -62,21 +88,23 @@ impl CommandQueue<DrawQuad> for QuadQueue {
             let gl = ctx.gl;
             let program = gl.create_program().expect("glCreateProgram");
 
-            let vs_src = r#"#version 300 es
-                layout(location = 0) in vec2 aPos;
-                layout(location = 1) in vec4 aColor;
-                layout(location = 2) in vec4 aBorderColor;
-                layout(location = 3) in vec3 aOrigin;
-                layout(location = 4) in vec2 aSize;
-                layout(location = 5) in float aBorderRadius;
-                layout(location = 6) in float aBorderThickness;
+            // GLSL ES 1.00 — device is GLES 2.0 (Vivante GC7000).
+            // Per-quad data is packed as vertex attributes; all quads draw in one call.
+            let vs_src = r#"#version 100
+                attribute vec2  aPos;
+                attribute vec4  aColor;
+                attribute vec4  aBorderColor;
+                attribute vec3  aOrigin;
+                attribute vec2  aSize;
+                attribute float aBorderRadius;
+                attribute float aBorderThickness;
 
-                out vec4 vColor;
-                out vec4 vBorderColor;
-                out vec2 vLocalPos;
-                out vec2 vSize;
-                out float vBorderRadius;
-                out float vBorderThickness;
+                varying vec4  vColor;
+                varying vec4  vBorderColor;
+                varying vec2  vLocalPos;
+                varying vec2  vSize;
+                varying float vBorderRadius;
+                varying float vBorderThickness;
 
                 uniform vec2 uViewportInvRes;
 
@@ -108,17 +136,15 @@ impl CommandQueue<DrawQuad> for QuadQueue {
                 );
             }
 
-            let fs_src = r#"#version 300 es
+            let fs_src = r#"#version 100
                 precision mediump float;
 
-                in vec4  vColor;
-                in vec4  vBorderColor;
-                in vec2  vLocalPos;
-                in vec2  vSize;
-                in float vBorderRadius;
-                in float vBorderThickness;
-
-                out vec4 fragColor;
+                varying vec4  vColor;
+                varying vec4  vBorderColor;
+                varying vec2  vLocalPos;
+                varying vec2  vSize;
+                varying float vBorderRadius;
+                varying float vBorderThickness;
 
                 float roundedRectSDF(vec2 p, vec2 halfSize, float r) {
                     vec2 q = abs(p) - halfSize + r;
@@ -135,7 +161,7 @@ impl CommandQueue<DrawQuad> for QuadQueue {
 
                     vec4 color = mix(vColor, vBorderColor, inBorder);
                     color.a   *= alpha;
-                    fragColor  = color;
+                    gl_FragColor = color;
                 }
             "#;
 
@@ -153,6 +179,14 @@ impl CommandQueue<DrawQuad> for QuadQueue {
 
             gl.attach_shader(program, vs);
             gl.attach_shader(program, fs);
+            // Bind attribute locations before linking (no layout qualifiers in GLSL ES 1.00).
+            gl.bind_attrib_location(program, 0, "aPos");
+            gl.bind_attrib_location(program, 1, "aColor");
+            gl.bind_attrib_location(program, 2, "aBorderColor");
+            gl.bind_attrib_location(program, 3, "aOrigin");
+            gl.bind_attrib_location(program, 4, "aSize");
+            gl.bind_attrib_location(program, 5, "aBorderRadius");
+            gl.bind_attrib_location(program, 6, "aBorderThickness");
             gl.link_program(program);
             if !gl.get_program_link_status(program) {
                 panic!("shader link error: {}", gl.get_program_info_log(program));
@@ -161,106 +195,7 @@ impl CommandQueue<DrawQuad> for QuadQueue {
             gl.delete_shader(fs);
             self.shader_program = Some(program);
 
-            self.vao = Some(gl.create_vertex_array().expect("glCreateVertexArray"));
-            gl.bind_vertex_array(self.vao);
-
             self.vbo = Some(gl.create_buffer().expect("glCreateBuffer"));
-            gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
-            #[rustfmt::skip]
-            let vertices: [f32; 8] = [
-                -0.5,  0.5,   // TL
-                 0.5,  0.5,   // TR
-                -0.5, -0.5,   // BL
-                 0.5, -0.5,   // BR
-            ];
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytemuck::cast_slice(&vertices),
-                glow::STATIC_DRAW,
-            );
-            gl.enable_vertex_attrib_array(0);
-            gl.vertex_attrib_pointer_f32(
-                0,
-                2,
-                glow::FLOAT,
-                false,
-                (2 * size_of::<f32>()) as i32,
-                0,
-            );
-
-            self.ibo = Some(gl.create_buffer().expect("glCreateBuffer"));
-            gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
-            let size = 1024 * 1024;
-            gl.buffer_data_size(glow::ARRAY_BUFFER, size, glow::DYNAMIC_DRAW);
-
-            let stride = size_of::<DrawQuad>() as i32;
-
-            // aColor — offset 0
-            gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, stride, 0);
-            gl.vertex_attrib_divisor(1, 1);
-
-            // aBorderColor — offset 16
-            gl.enable_vertex_attrib_array(2);
-            gl.vertex_attrib_pointer_f32(
-                2,
-                4,
-                glow::FLOAT,
-                false,
-                stride,
-                4 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(2, 1);
-
-            // aOrigin — offset 32
-            gl.enable_vertex_attrib_array(3);
-            gl.vertex_attrib_pointer_f32(
-                3,
-                3,
-                glow::FLOAT,
-                false,
-                stride,
-                8 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(3, 1);
-
-            // aSize — offset 44
-            gl.enable_vertex_attrib_array(4);
-            gl.vertex_attrib_pointer_f32(
-                4,
-                2,
-                glow::FLOAT,
-                false,
-                stride,
-                11 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(4, 1);
-
-            // aBorderRadius — offset 52
-            gl.enable_vertex_attrib_array(5);
-            gl.vertex_attrib_pointer_f32(
-                5,
-                1,
-                glow::FLOAT,
-                false,
-                stride,
-                13 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(5, 1);
-
-            // aBorderThickness — offset 56
-            gl.enable_vertex_attrib_array(6);
-            gl.vertex_attrib_pointer_f32(
-                6,
-                1,
-                glow::FLOAT,
-                false,
-                stride,
-                14 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(6, 1);
-
-            gl.bind_buffer(glow::ARRAY_BUFFER, None);
 
             self.u_viewport_inv_res_loc = gl.get_uniform_location(program, "uViewportInvRes");
         }
@@ -279,10 +214,27 @@ impl CommandQueue<DrawQuad> for QuadQueue {
             let vp_w = ctx.viewport_width as f32;
             let vp_h = ctx.viewport_height as f32;
 
+            // Interleaved layout per vertex: aPos(2) aColor(4) aBorderColor(4) aOrigin(3) aSize(2) aBorderRadius(1) aBorderThickness(1) = 17 floats
+            const STRIDE: i32 = 17 * size_of::<f32>() as i32;
+
             unsafe {
-                gl.bind_vertex_array(self.vao);
-                gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
                 gl.use_program(Some(program));
+                gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
+
+                gl.enable_vertex_attrib_array(0);
+                gl.enable_vertex_attrib_array(1);
+                gl.enable_vertex_attrib_array(2);
+                gl.enable_vertex_attrib_array(3);
+                gl.enable_vertex_attrib_array(4);
+                gl.enable_vertex_attrib_array(5);
+                gl.enable_vertex_attrib_array(6);
+                gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, STRIDE, 0);
+                gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE,  2 * 4);
+                gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, STRIDE,  6 * 4);
+                gl.vertex_attrib_pointer_f32(3, 3, glow::FLOAT, false, STRIDE, 10 * 4);
+                gl.vertex_attrib_pointer_f32(4, 2, glow::FLOAT, false, STRIDE, 13 * 4);
+                gl.vertex_attrib_pointer_f32(5, 1, glow::FLOAT, false, STRIDE, 15 * 4);
+                gl.vertex_attrib_pointer_f32(6, 1, glow::FLOAT, false, STRIDE, 16 * 4);
 
                 gl.uniform_2_f32(self.u_viewport_inv_res_loc.as_ref(), 2.0 / vp_w, 2.0 / vp_h);
 
@@ -299,14 +251,19 @@ impl CommandQueue<DrawQuad> for QuadQueue {
                     glow::ZERO, glow::ONE,
                 );
 
-                gl.buffer_sub_data_u8_slice(glow::ARRAY_BUFFER, 0, bytemuck::cast_slice(&sorted));
-                gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, sorted.len() as i32);
+                let verts = build_quad_verts(&sorted);
+                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
 
                 // Restore state
                 gl.depth_mask(true);
                 gl.disable(glow::DEPTH_TEST);
                 gl.disable(glow::BLEND);
 
+                for i in 0..=6 {
+                    gl.disable_vertex_attrib_array(i);
+                }
+                gl.bind_buffer(glow::ARRAY_BUFFER, None);
                 gl.use_program(None);
             }
         }

@@ -1,4 +1,4 @@
-use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation, NativeVertexArray};
+use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
@@ -27,10 +27,7 @@ impl Command for DrawRect {
 #[derive(Default)]
 pub(crate) struct RectQueue {
     shader_program: Option<NativeProgram>,
-
-    vao: Option<NativeVertexArray>,
     vbo: Option<NativeBuffer>,
-    ibo: Option<NativeBuffer>,
 
     u_viewport_inv_res_loc: Option<NativeUniformLocation>,
 
@@ -38,17 +35,40 @@ pub(crate) struct RectQueue {
     translucent: Vec<DrawRect>,
 }
 
+// Builds an interleaved vertex buffer (11 floats/vertex, 6 vertices/rect) for a batch of rects.
+// Layout per vertex: aPos(2) aColor(4) aOrigin(3) aSize(2)
+fn build_rect_verts(rects: &[DrawRect]) -> Vec<f32> {
+    #[rustfmt::skip]
+    const CORNERS: [(f32, f32); 6] = [
+        (-0.5,  0.5), ( 0.5,  0.5), (-0.5, -0.5),  // triangle 1
+        ( 0.5,  0.5), ( 0.5, -0.5), (-0.5, -0.5),  // triangle 2
+    ];
+    let mut v = Vec::with_capacity(rects.len() * 6 * 11);
+    for r in rects {
+        let (cr, cg, cb, ca) = r.color;
+        let (ox, oy, oz) = r.origin;
+        let (sw, sh) = r.size;
+        for (px, py) in CORNERS {
+            v.extend_from_slice(&[px, py, cr, cg, cb, ca, ox, oy, oz, sw, sh]);
+        }
+    }
+    v
+}
+
 impl CommandQueue<DrawRect> for RectQueue {
     fn init(&mut self, ctx: &RenderContext) {
         unsafe {
             let gl = ctx.gl;
             let program = gl.create_program().expect("glCreateProgram");
-            let vs_src = r#"#version 300 es
-                layout(location = 0) in vec2 aPos;
-                layout(location = 1) in vec4 aColor;
-                layout(location = 2) in vec3 aOrigin;
-                layout(location = 3) in vec2 aSize;
-                out vec4 vColor;
+
+            // GLSL ES 1.00 — device is GLES 2.0 (Vivante GC7000).
+            // Per-rect data is packed as vertex attributes; all rects draw in one call.
+            let vs_src = r#"#version 100
+                attribute vec2 aPos;
+                attribute vec4 aColor;
+                attribute vec3 aOrigin;
+                attribute vec2 aSize;
+                varying vec4 vColor;
 
                 uniform vec2 uViewportInvRes;
 
@@ -74,12 +94,11 @@ impl CommandQueue<DrawRect> for RectQueue {
                 );
             }
 
-            let fs_src = r#"#version 300 es
+            let fs_src = r#"#version 100
                 precision mediump float;
-                in vec4 vColor;
-                out vec4 fragColor;
+                varying vec4 vColor;
                 void main() {
-                    fragColor = vColor;
+                    gl_FragColor = vColor;
                 }
             "#;
             let fs = gl
@@ -96,6 +115,11 @@ impl CommandQueue<DrawRect> for RectQueue {
 
             gl.attach_shader(program, vs);
             gl.attach_shader(program, fs);
+            // Bind attribute locations before linking (no layout qualifiers in GLSL ES 1.00).
+            gl.bind_attrib_location(program, 0, "aPos");
+            gl.bind_attrib_location(program, 1, "aColor");
+            gl.bind_attrib_location(program, 2, "aOrigin");
+            gl.bind_attrib_location(program, 3, "aSize");
             gl.link_program(program);
             if !gl.get_program_link_status(program) {
                 panic!("shader link error: {}", gl.get_program_info_log(program));
@@ -104,67 +128,9 @@ impl CommandQueue<DrawRect> for RectQueue {
             gl.delete_shader(fs);
             self.shader_program = Some(program);
 
-            self.vao = Some(gl.create_vertex_array().expect("glCreateVertexArray"));
-            gl.bind_vertex_array(self.vao);
-
             self.vbo = Some(gl.create_buffer().expect("glCreateBuffer"));
-            gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
-            #[rustfmt::skip]
-            let vertices: [f32; 8] = [
-                -0.5,  0.5,   // TL
-                 0.5,  0.5,   // TR
-                -0.5, -0.5,   // BL
-                 0.5, -0.5,   // BR
-            ];
-            gl.buffer_data_u8_slice(
-                glow::ARRAY_BUFFER,
-                bytemuck::cast_slice(&vertices),
-                glow::STATIC_DRAW,
-            );
-            gl.enable_vertex_attrib_array(0);
-            gl.vertex_attrib_pointer_f32(
-                0,
-                2,
-                glow::FLOAT,
-                false,
-                (2 * size_of::<f32>()) as i32,
-                0,
-            );
 
-            self.ibo = Some(gl.create_buffer().expect("glCreateBuffer"));
-            gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
-            let size = 1024 * 1024;
-            gl.buffer_data_size(glow::ARRAY_BUFFER, size, glow::DYNAMIC_DRAW);
-
-            gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, size_of::<DrawRect>() as i32, 0);
-            gl.vertex_attrib_divisor(1, 1);
-
-            gl.enable_vertex_attrib_array(2);
-            gl.vertex_attrib_pointer_f32(
-                2,
-                3,
-                glow::FLOAT,
-                false,
-                size_of::<DrawRect>() as i32,
-                4 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(2, 1);
-
-            gl.enable_vertex_attrib_array(3);
-            gl.vertex_attrib_pointer_f32(
-                3,
-                2,
-                glow::FLOAT,
-                false,
-                size_of::<DrawRect>() as i32,
-                7 * size_of::<f32>() as i32,
-            );
-            gl.vertex_attrib_divisor(3, 1);
-            gl.bind_buffer(glow::ARRAY_BUFFER, None);
-
-            self.u_viewport_inv_res_loc =
-                gl.get_uniform_location(program, "uViewportInvRes");
+            self.u_viewport_inv_res_loc = gl.get_uniform_location(program, "uViewportInvRes");
         }
     }
 
@@ -185,10 +151,21 @@ impl CommandQueue<DrawRect> for RectQueue {
             let vp_w = ctx.viewport_width as f32;
             let vp_h = ctx.viewport_height as f32;
 
+            // Interleaved layout per vertex: aPos(2) aColor(4) aOrigin(3) aSize(2) = 11 floats
+            const STRIDE: i32 = 11 * size_of::<f32>() as i32;
+
             unsafe {
-                gl.bind_vertex_array(self.vao);
-                gl.bind_buffer(glow::ARRAY_BUFFER, self.ibo);
                 gl.use_program(Some(program));
+                gl.bind_buffer(glow::ARRAY_BUFFER, self.vbo);
+
+                gl.enable_vertex_attrib_array(0);
+                gl.enable_vertex_attrib_array(1);
+                gl.enable_vertex_attrib_array(2);
+                gl.enable_vertex_attrib_array(3);
+                gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, STRIDE, 0);
+                gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE, 2 * 4);
+                gl.vertex_attrib_pointer_f32(2, 3, glow::FLOAT, false, STRIDE, 6 * 4);
+                gl.vertex_attrib_pointer_f32(3, 2, glow::FLOAT, false, STRIDE, 9 * 4);
 
                 gl.uniform_2_f32(self.u_viewport_inv_res_loc.as_ref(), 2.0 / vp_w, 2.0 / vp_h);
 
@@ -201,12 +178,10 @@ impl CommandQueue<DrawRect> for RectQueue {
                     sorted.sort_unstable_by(|a, b| b.origin.2.total_cmp(&a.origin.2));
                     gl.depth_mask(true);
                     gl.disable(glow::BLEND);
-                    gl.buffer_sub_data_u8_slice(
-                        glow::ARRAY_BUFFER,
-                        0,
-                        bytemuck::cast_slice(&sorted),
-                    );
-                    gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, sorted.len() as i32);
+
+                    let verts = build_rect_verts(&sorted);
+                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                    gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
                 }
 
                 // Pass 2: translucent, back-to-front, depth write off, blending on
@@ -216,15 +191,15 @@ impl CommandQueue<DrawRect> for RectQueue {
                     gl.depth_mask(false);
                     gl.enable(glow::BLEND);
                     gl.blend_func_separate(
-                        glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
-                        glow::ZERO, glow::ONE,
+                        glow::SRC_ALPHA,
+                        glow::ONE_MINUS_SRC_ALPHA,
+                        glow::ZERO,
+                        glow::ONE,
                     );
-                    gl.buffer_sub_data_u8_slice(
-                        glow::ARRAY_BUFFER,
-                        0,
-                        bytemuck::cast_slice(&sorted),
-                    );
-                    gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, sorted.len() as i32);
+
+                    let verts = build_rect_verts(&sorted);
+                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                    gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
                 }
 
                 // Restore state
@@ -232,6 +207,11 @@ impl CommandQueue<DrawRect> for RectQueue {
                 gl.disable(glow::DEPTH_TEST);
                 gl.disable(glow::BLEND);
 
+                gl.disable_vertex_attrib_array(0);
+                gl.disable_vertex_attrib_array(1);
+                gl.disable_vertex_attrib_array(2);
+                gl.disable_vertex_attrib_array(3);
+                gl.bind_buffer(glow::ARRAY_BUFFER, None);
                 gl.use_program(None);
             }
         }

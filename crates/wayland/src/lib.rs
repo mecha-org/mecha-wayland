@@ -12,7 +12,9 @@ pub mod xdg_toplevel;
 pub mod xdg_wm_base;
 pub mod zwp_linux_dmabuf;
 
+// pub mod connection;
 pub mod connection;
+pub mod helpers;
 pub mod object;
 pub mod wire;
 pub mod wlr_layer_shell;

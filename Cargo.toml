@@ -3,8 +3,9 @@ members = [
     "crates/wayland-protocols",
     "crates/launcher",
     "crates/renderer",
-    "crates/utils", 
+    "crates/utils",
     "crates/layout",
+    "crates/assets",
 ]
 resolver = "2"
 
@@ -27,6 +28,8 @@ png = "0.18"
 # codegen (build-dep only)
 quick-xml = { version = "0.39", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+crunch = "0.5"
 
 # graphics
 khronos-egl = { version = "6", features = ["dynamic"] }

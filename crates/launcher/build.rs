@@ -12,8 +12,17 @@ const HEIGHT: u32 = 256;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+
+    if let Err(e) = assets::builder::pack_atlas(
+        &PathBuf::from(&manifest_dir).join("atlas.toml"),
+        &PathBuf::from(&out_dir),
+    ) {
+        println!("cargo:warning=atlas packing failed: {e:?}");
+    }
+
     if let Err(e) = render() {
-        // Non-fatal: emit a warning and let the build continue.
         println!("cargo:warning=build.rs render failed: {e}");
     }
 }
@@ -23,8 +32,6 @@ fn render() -> Result<()> {
 
     let surface = renderer.create_surface::<ImageSurface>(WIDTH, HEIGHT)?;
 
-    // DrawQuad::on_enqueue pushes opaque inner rects into the DrawRect queue,
-    // so DrawRect must be initialised even though we never send one directly.
     renderer.init_command_queue::<ClearColor>();
     renderer.init_command_queue::<DrawRect>();
     renderer.init_command_queue::<DrawQuad>();
@@ -47,7 +54,6 @@ fn render() -> Result<()> {
 
     unsafe { renderer.gl.finish() };
 
-    // GL origin is bottom-left; flip vertically before encoding as PNG.
     let mut pixels = surface.read_pixels(&renderer);
     let row = (WIDTH * 4) as usize;
     for y in 0..HEIGHT as usize / 2 {

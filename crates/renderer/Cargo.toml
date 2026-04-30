@@ -19,6 +19,6 @@ anyhow = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true }
 gbm = { version = "0.18", default-features = false }
+assets   = { path = "../assets" }
 bytemuck = { workspace = true }
-etagere  = { workspace = true }
-fontdue  = { workspace = true }
+png      = { workspace = true }

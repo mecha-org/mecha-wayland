@@ -112,7 +112,6 @@ impl CommandQueue<DrawQuad> for QuadQueue {
                     vec2 center   = aOrigin.xy + aSize * 0.5;
                     vec2 pixelPos = vec2(aPos.x, -aPos.y) * aSize + center;
                     vec2 ndc      = pixelPos * uViewportInvRes - 1.0;
-                    ndc.y         = -ndc.y;
                     gl_Position   = vec4(ndc, aOrigin.z, 1.0);
 
                     vColor           = aColor;

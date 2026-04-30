@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, bail};
 use gbm::{AsRaw, Device as GbmDevice};
 use glow::HasContext;
 use khronos_egl as egl;
+use std::collections::HashMap;
 use std::ffi::c_void;
 
 pub mod dmabuf;
@@ -9,6 +10,10 @@ pub use dmabuf::DmaBuf;
 
 pub mod image_surface;
 pub use image_surface::ImageSurface;
+
+pub mod texture;
+pub use texture::{TextureFormat, TextureId};
+use texture::GpuTexture;
 
 use crate::commands::{Command, CommandQueueRegistry, RenderContext};
 pub mod commands;
@@ -121,6 +126,8 @@ pub struct Renderer {
     pub(crate) fn_create_image: PfnCreateImageKHR,
     pub(crate) fn_destroy_image: PfnDestroyImageKHR,
     pub(crate) fn_rbo_image: PfnRboImageOES,
+    textures: HashMap<TextureId, GpuTexture>,
+    next_texture_id: u32,
     viewport_width: u32,
     viewport_height: u32,
 }
@@ -240,6 +247,8 @@ impl Renderer {
             fn_create_image,
             fn_destroy_image,
             fn_rbo_image,
+            textures: HashMap::new(),
+            next_texture_id: 0,
             viewport_width: 0,
             viewport_height: 0,
         })
@@ -290,11 +299,68 @@ impl Renderer {
         self.viewport_height = surface.height;
     }
 
+    /// Upload pixel data as a GPU texture and return its `TextureId`.
+    /// `data` must be `width * height` bytes for `TextureFormat::R8`.
+    /// The texture is owned by the renderer for its lifetime.
+    pub fn create_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        data: &[u8],
+    ) -> Result<TextureId> {
+        let handle = unsafe {
+            let t = self.gl.create_texture().map_err(|e| anyhow::anyhow!("{e}"))?;
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(t));
+            self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+
+            // GLES 2.0 lacks GL_R8 / GL_RED; GL_LUMINANCE maps the single channel
+            // to RGB (R channel readable as .r in the shader) with alpha = 1.0.
+            let (internal_fmt, pixel_fmt) = match format {
+                TextureFormat::R8 => (glow::LUMINANCE as i32, glow::LUMINANCE),
+            };
+
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                internal_fmt,
+                width as i32,
+                height as i32,
+                0,
+                pixel_fmt,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(data)),
+            );
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            self.gl.bind_texture(glow::TEXTURE_2D, None);
+            t
+        };
+
+        let id = TextureId(self.next_texture_id);
+        self.next_texture_id += 1;
+        self.textures.insert(id, GpuTexture { handle, width, height });
+        Ok(id)
+    }
+
+    /// Decode a grayscale PNG atlas and upload it as an R8 texture.
+    /// Pass `atlas.png_bytes` from a generated atlas constant.
+    pub fn upload_atlas(&mut self, png_bytes: &[u8]) -> Result<TextureId> {
+        let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+        let mut reader = decoder.read_info().context("decode atlas PNG header")?;
+        let mut buf = vec![0u8; reader.output_buffer_size().context("atlas PNG has unknown size")?];
+        let info = reader.next_frame(&mut buf).context("decode atlas PNG frame")?;
+        self.create_texture(info.width, info.height, TextureFormat::R8, &buf[..info.buffer_size()])
+    }
+
     pub fn init_command_queue<C: Command>(&mut self) {
         let ctx = RenderContext {
             gl: &self.gl,
             viewport_width: self.viewport_width,
             viewport_height: self.viewport_height,
+            textures: &self.textures,
         };
         self.command_queue_registry.init_queue::<C>(&ctx);
     }
@@ -308,6 +374,7 @@ impl Renderer {
             gl: &self.gl,
             viewport_width: self.viewport_width,
             viewport_height: self.viewport_height,
+            textures: &self.textures,
         };
         self.command_queue_registry.process::<C>(&ctx);
     }

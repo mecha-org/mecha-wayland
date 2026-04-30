@@ -8,8 +8,10 @@ wayland-protocols = { path = "../wayland-protocols" }
 renderer = { path = "../renderer" }
 utils = { path = "../utils" }
 layout = { path = "../layout" }
+assets = { path = "../assets" }
 anyhow = { workspace = true }
 glow = { workspace = true }
+png = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 puffin_http = {version = "0.16.1", optional = true}
@@ -20,6 +22,7 @@ renderer = { path = "../renderer" }
 glow     = { workspace = true }
 png      = { workspace = true }
 anyhow   = { workspace = true }
+assets   = { path = "../assets", features = ["builder"] }
 
 [features]
 default = []

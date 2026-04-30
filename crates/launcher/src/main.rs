@@ -1,8 +1,12 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 use anyhow::Result;
 use glow::HasContext;
-use renderer::commands::{ClearColor, DrawQuad, DrawRect};
+use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
 use renderer::{DmaBuf, Renderer};
+
+mod atlas {
+    include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
+}
 use std::os::unix::io::OwnedFd;
 use std::time::Instant;
 use wayland_protocols::connection::Connection;
@@ -153,6 +157,10 @@ fn main() -> Result<()> {
     renderer.init_command_queue::<ClearColor>();
     renderer.init_command_queue::<DrawRect>();
     renderer.init_command_queue::<DrawQuad>();
+    renderer.init_command_queue::<DrawMonochromeSprite>();
+    renderer.init_command_queue::<DrawText>();
+
+    let icon_tex = renderer.upload_atlas(atlas::UI.png_bytes)?;
 
     let surf_a = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
     let surf_b = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
@@ -224,9 +232,30 @@ fn main() -> Result<()> {
                     border_radius: 12.0,
                     border_thickness: 3.0,
                 });
+                // White 128×128 icon centered on screen, in front of all quads.
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: icon_tex,
+                    region: (
+                        atlas::UI_ICON.x,
+                        atlas::UI_ICON.y,
+                        atlas::UI_ICON.w,
+                        atlas::UI_ICON.h,
+                    ),
+                    origin: (450.0, 476.0 + (128.0 - 42.0) / 2.0, 1.0),
+                    size: (128.0, 42.0),
+                    color: (1.0, 1.0, 1.0, 1.0),
+                });
+                renderer.send_command(DrawText {
+                    font: &atlas::UI_FONT_INTER_24,
+                    texture_id: icon_tex,
+                    text: "Hello, world!".to_string(),
+                    origin: (214.0, 220.0, 0.5),
+                    color: (1.0, 1.0, 1.0, 1.0),
+                });
                 renderer.process_command_queue::<ClearColor>();
                 renderer.process_command_queue::<DrawRect>();
                 renderer.process_command_queue::<DrawQuad>();
+                renderer.process_command_queue::<DrawMonochromeSprite>();
                 unsafe {
                     renderer.gl.finish();
                 }

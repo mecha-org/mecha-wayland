@@ -188,28 +188,29 @@ impl Connection {
     }
 
     /// Receives (drains) completions from the ring and processes them, returning any Wayland events that were received.
-    pub fn drain(&mut self, io: &mut Ring, len: usize) -> io::Result<()> {
-        let mut idx = 0;
-
-        while idx < len {
-            // 1. Process send completions first, which frees up send buffers.
+    pub fn drain(&mut self, io: &mut Ring, _: usize) -> io::Result<()> {
+        // 1. Process send completions first, which frees up send buffers.
+        loop {
             let send_msg = self.send_sub.try_recv();
-            if send_msg.is_some() {
-                self.drain_send_completion(send_msg.unwrap())?;
-
-                idx += 1;
+            if send_msg.is_none() {
+                break;
             }
+            self.drain_send_completion(send_msg.unwrap())?;
+        }
 
-            // 2. Process recv message
+        // 2. Process recv message
+        loop {
             let recv_msg = self.recv_sub.try_recv();
-            if recv_msg.is_some() {
-                self.drain_recv_completion(recv_msg.unwrap())?;
 
-                self.arm_persistent_recv(io)?;
-                // Re-arm for the next chunk of data.
-
-                idx += 1;
+            if recv_msg.is_none() {
+                break;
             }
+
+            self.drain_recv_completion(recv_msg.unwrap())?;
+
+            // Re-arm for the next chunk of data.
+
+            self.arm_persistent_recv(io)?;
         }
 
         Ok(())

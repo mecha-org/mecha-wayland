@@ -12,7 +12,6 @@ path = "benches/mod.rs"
 harness = false
 
 [dependencies]
-utils = { path = "../utils" }
 khronos-egl = { workspace = true }
 glow = { workspace = true }
 anyhow = { workspace = true }

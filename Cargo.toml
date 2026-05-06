@@ -3,8 +3,6 @@ members = [
     "crates/wayland-protocols",
     "crates/launcher",
     "crates/renderer",
-    "crates/utils",
-    "crates/layout",
     "crates/assets",
     "crates/event-manager",
 ]
@@ -38,5 +36,4 @@ glow = "0.17"
 
 # renderer extras
 bytemuck = { version = "1", features = ["derive"] }
-etagere  = "0.3"
 fontdue  = "0.9"

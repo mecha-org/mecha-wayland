@@ -6,6 +6,7 @@ members = [
     "crates/utils",
     "crates/layout",
     "crates/assets",
+    "crates/event-manager",
 ]
 resolver = "2"
 

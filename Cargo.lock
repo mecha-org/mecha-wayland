@@ -384,6 +384,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-manager"
+version = "0.1.0"
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -630,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "event-manager",
  "glow",
  "layout",
  "png 0.18.1",

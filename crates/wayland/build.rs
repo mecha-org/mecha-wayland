@@ -395,11 +395,11 @@ fn build_request_body(iface_name: &str, req: &Request) -> RequestBody {
 
     let send_call = if has_fds {
         format!(
-            "conn.send_msg_with_fds(self.object_id(), {}, &args, fds)",
+            "conn.send_with_fds(io, self.object_id(), {}, &args, fds)",
             opcode_path
         )
     } else {
-        format!("conn.send_msg(self.object_id(), {}, &args)", opcode_path)
+        format!("conn.send(io, self.object_id(), {}, &args)", opcode_path)
     };
 
     RequestBody {
@@ -565,7 +565,7 @@ fn snippet_request_method(
 ) -> String {
     let pub_kw = if is_pub { "pub " } else { "" };
     format!(
-        r#"    {pub_kw}fn {method_name}(&self, conn: &mut crate::connection::Connection{extra_params}) -> std::io::Result<()> {{
+        r#"    {pub_kw}fn {method_name}(&self, conn: &mut crate::connection::Connection, io: &mut io_runtime::ring::Ring{extra_params}) -> std::io::Result<()> {{
         tracing::debug!(object_id = self.object_id(), opcode = {log_path}, "{iface_name}.{req_name}");
 {body_stmts}        {send_call}
     }}

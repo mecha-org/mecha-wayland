@@ -2,19 +2,19 @@
 
 use std::io;
 use tracing::{debug, info};
-use wayland_protocols::connection::Connection;
-use wayland_protocols::wl_callback::SyncCallback;
-use wayland_protocols::wl_display::Display;
-use wayland_protocols::wl_pointer::Pointer;
-use wayland_protocols::wl_registry::Registry;
-use wayland_protocols::wl_seat::Seat;
-use wayland_protocols::wl_shm::{ShmHandler, alloc_shm_file};
-use wayland_protocols::wl_touch::Touch;
-use wayland_protocols::xdg_surface::XdgSurf;
-use wayland_protocols::xdg_toplevel::Toplevel;
-use wayland_protocols::xdg_wm_base::WmBase;
+use wayland::connection::Connection;
+use wayland::wl_callback::SyncCallback;
+use wayland::wl_display::Display;
+use wayland::wl_pointer::Pointer;
+use wayland::wl_registry::Registry;
+use wayland::wl_seat::Seat;
+use wayland::wl_shm::{ShmHandler, alloc_shm_file};
+use wayland::wl_touch::Touch;
+use wayland::xdg_surface::XdgSurf;
+use wayland::xdg_toplevel::Toplevel;
+use wayland::xdg_wm_base::WmBase;
 
-use wayland_protocols::*;
+use wayland::*;
 
 fn main() -> io::Result<()> {
     tracing_subscriber::fmt()

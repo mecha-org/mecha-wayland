@@ -1,7 +1,8 @@
-use crossbeam::channel::{Receiver, unbounded};
 use io_uring::{IoUring, opcode, types};
 use std::{any::Any, collections::HashMap, io};
 use tracing::{event, trace};
+
+use crate::channel::{Receiver, unbounded};
 
 type OpTag = u16;
 // ── Token encoding ────────────────────────────────────────────────────────────
@@ -99,9 +100,6 @@ pub struct IoSubscription {
 impl IoSubscription {
     pub fn try_recv(&self) -> Option<(Token, CompletionResult)> {
         self.receiver.try_recv().ok()
-    }
-    pub fn recv(&self) -> Option<(Token, CompletionResult)> {
-        self.receiver.recv().ok()
     }
 }
 

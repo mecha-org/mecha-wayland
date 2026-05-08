@@ -1,7 +1,12 @@
 use io_runtime::{event::EventManager, ring::Ring};
 use std::io;
 use wayland::{
-    connection::Connection, wl_callback::SyncCallback, wl_display::Display, wl_registry::Registry,
+    connection::Connection,
+    object::{self, WlObjectProxy},
+    registry::ObjectRegistry,
+    wl_callback::WlCallback,
+    wl_display::{WlDisplay, WlDisplayProxy},
+    wl_registry::{WlRegistry, WlRegistryProxy},
 };
 // use wayland_protocols::{
 //     connection::Connection, wl_callback::SyncCallback, wl_display::Display, wl_registry::Registry,
@@ -15,22 +20,26 @@ use wayland::{
 pub struct Runtime {
     io: Ring,
     conn: Connection,
-    display: Display,
-    registry: Registry,
+    display: WlDisplayProxy,
+    registry: WlRegistryProxy,
+    objects: ObjectRegistry,
 }
 
 impl Runtime {
     pub fn new() -> io::Result<Self> {
         let mut io = Ring::new()?;
-        let mut conn = Connection::connect(&mut io)?;
-        let display = Display::new(1);
-        let registry = Registry::new(conn.alloc_id());
+        let conn = Connection::connect(&mut io)?;
+        let mut objects = ObjectRegistry::new();
+
+        let display = objects.create::<WlDisplay>();
+        let registry = objects.create::<WlRegistry>();
 
         Ok(Self {
             io,
             conn,
             display,
             registry,
+            objects,
         })
     }
 
@@ -39,19 +48,25 @@ impl Runtime {
         let conn = &mut rt.conn;
         let io = &mut rt.io;
         let display = &mut rt.display;
-        let registry = &mut rt.registry;
+        let registry = rt.registry;
+        let objects = &mut rt.objects;
 
         // request for globals
-        let sync = SyncCallback::new(conn.alloc_id());
-        display.inner.get_registry(conn, io, &registry.inner)?;
-        display.inner.sync(conn, io, &sync)?;
+        let sync = objects.create::<WlCallback>();
+        display.get_registry(conn, io, registry.object_id())?;
+        display.sync(conn, io, &sync)?;
 
         loop {
             println!("Waiting for events...");
             let len = io.wait_and_dispatch(1)?;
             println!("Dispatched {len} events");
 
-            let msg = conn.drain(io, len)?;
+            let events = conn.drain(io, len)?;
+            objects.dispatch_all(events)?;
+
+            if sync.on_done().is_some() {
+                break;
+            }
         }
 
         Ok(())

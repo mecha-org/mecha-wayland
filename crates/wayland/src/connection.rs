@@ -98,13 +98,13 @@ impl Connection {
         self.stream.as_raw_fd()
     }
 
-    #[inline]
-    pub fn alloc_id(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        debug!(id, "allocated object id");
-        id
-    }
+    // #[inline]
+    // pub fn alloc_id(&mut self) -> u32 {
+    //     let id = self.next_id;
+    //     self.next_id += 1;
+    //     debug!(id, "allocated object id");
+    //     id
+    // }
 
     // ---- Submission handling ---- //
 
@@ -188,7 +188,9 @@ impl Connection {
     }
 
     /// Receives (drains) completions from the ring and processes them, returning any Wayland events that were received.
-    pub fn drain(&mut self, io: &mut Ring, _: usize) -> io::Result<()> {
+    pub fn drain(&mut self, io: &mut Ring, _: usize) -> io::Result<Vec<WlEvent>> {
+        let mut events = Vec::new();
+
         // 1. Process send completions first, which frees up send buffers.
         loop {
             let send_msg = self.send_sub.try_recv();
@@ -206,14 +208,14 @@ impl Connection {
                 break;
             }
 
-            self.drain_recv_completion(recv_msg.unwrap())?;
+            events.extend(self.drain_recv_completion(recv_msg.unwrap())?);
 
             // Re-arm for the next chunk of data.
 
             self.arm_persistent_recv(io)?;
         }
 
-        Ok(())
+        Ok(events)
     }
 
     fn drain_send_completion(&mut self, send_msg: (Token, CompletionResult)) -> io::Result<()> {
@@ -231,7 +233,10 @@ impl Connection {
         Ok(())
     }
 
-    fn drain_recv_completion(&mut self, recv_msg: (Token, CompletionResult)) -> io::Result<()> {
+    fn drain_recv_completion(
+        &mut self,
+        recv_msg: (Token, CompletionResult),
+    ) -> io::Result<Vec<WlEvent>> {
         let (token, result) = recv_msg;
         if result < 0 {
             return Err(io::Error::from_raw_os_error(-result));
@@ -245,8 +250,7 @@ impl Connection {
         self.process_recv_msg(result as usize)?;
 
         // TODO: decode Wayland events from recv_buf and publish them to the event manager
-        self.decode_wl_events()?;
-        Ok(())
+        self.decode_wl_events()
     }
 
     fn process_recv_msg(&mut self, result_bytes: usize) -> io::Result<()> {

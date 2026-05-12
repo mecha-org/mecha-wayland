@@ -1,15 +1,9 @@
 #![allow(unused_variables, unused_mut, dead_code)]
 
-mod renderer_events;
-
 use anyhow::Result;
-use event_manager::{EventManager, Schedule};
-use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawText};
+use glow::HasContext;
+use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
 use renderer::{DmaBuf, Renderer};
-use renderer_events::{
-    BeginFrame, BeginFramePayload, EndFrame, EndFramePayload, Init, InitPayload,
-    RendererCommand, RendererComponent, Update,
-};
 
 mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
@@ -84,10 +78,49 @@ fn make_wl_buffer(
     Ok(wl_buf)
 }
 
+struct AppState {
+    counter: Counter,
+}
+
+// -- Counter Module --
+#[derive(Default)]
+pub struct Counter {
+    count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CounterIncremented;
+
+#[derive(Debug, Clone)]
+pub struct CounterDecremented;
+
+impl app::event::Event for CounterDecremented {}
+impl app::event::Event for CounterIncremented {}
+
+macro_rules! counter_module {
+    () => {
+        app::module::Module::new()
+            .on(|c: &mut Counter, _: &CounterDecremented| {
+                if c.count > 1 {
+                    c.count -= 1;
+                }
+            })
+            .on(|c: &mut Counter, _: &CounterIncremented| {
+                c.count += 1;
+            })
+    };
+}
+// -- Counter Module Ends --
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    let state = AppState {
+        counter: Counter::default(),
+    };
+    let mut app = app::App::new(state).register_module(|app| &mut app.counter, counter_module!());
 
     let mut conn = Connection::connect()?;
 
@@ -158,46 +191,41 @@ fn main() -> Result<()> {
     surface.commit(&mut conn)?;
     conn.flush()?;
 
-    // ── Event manager setup ───────────────────────────────────────────────
+    // ── Renderer setup ────────────────────────────────────────────────────
 
-    let mut em = EventManager::new(
-        Schedule::new()
-            .add_label(Init)
-            .add_label(BeginFrame)
-            .add_label(Update)
-            .add_label(EndFrame),
-    );
+    let mut renderer = Renderer::new()?;
+    renderer.init_command_queue::<ClearColor>();
+    renderer.init_command_queue::<DrawRect>();
+    renderer.init_command_queue::<DrawQuad>();
+    renderer.init_command_queue::<DrawMonochromeSprite>();
+    renderer.init_command_queue::<DrawText>();
 
-    let renderer = em.register(RendererComponent(Renderer::new()?));
-    renderer.subscribe::<RendererCommand<InitPayload>>();
-    renderer.subscribe::<RendererCommand<BeginFramePayload>>();
-    renderer.subscribe::<RendererCommand<EndFramePayload>>();
-    renderer.subscribe::<RendererCommand<ClearColor>>();
-    renderer.subscribe::<RendererCommand<DrawQuad>>();
-    renderer.subscribe::<RendererCommand<DrawMonochromeSprite>>();
-    renderer.subscribe::<RendererCommand<DrawText>>();
+    let icon_tex = renderer.upload_atlas(atlas::UI.png_bytes)?;
 
-    let ctx = em.context();
-    ctx.send(RendererCommand(InitPayload));
-    em.tick();
-
-    let icon_tex = renderer.borrow_mut().0.upload_atlas(atlas::UI.png_bytes)?;
-
-    let surf_a = renderer.borrow_mut().0.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
-    let surf_b = renderer.borrow_mut().0.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
+    let surf_a = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
+    let surf_b = renderer.create_surface::<DmaBuf>(WIDTH, HEIGHT)?;
 
     let wl_buf_a = make_wl_buffer(&mut conn, &dmabuf, &surf_a)?;
     let wl_buf_b = make_wl_buffer(&mut conn, &dmabuf, &surf_b)?;
     conn.flush()?;
 
     let mut slots = [
-        Slot { surf: surf_a, wl_buf: wl_buf_a, state: SlotState::Free },
-        Slot { surf: surf_b, wl_buf: wl_buf_b, state: SlotState::Free },
+        Slot {
+            surf: surf_a,
+            wl_buf: wl_buf_a,
+            state: SlotState::Free,
+        },
+        Slot {
+            surf: surf_b,
+            wl_buf: wl_buf_b,
+            state: SlotState::Free,
+        },
     ];
 
     let mut configured = false;
     let mut fps_frame_count: u32 = 0;
     let mut fps_timer = Instant::now();
+    let mut counter_timer = Instant::now();
 
     loop {
         while let Some((obj_id, opcode, body)) = conn.try_recv_msg()? {
@@ -211,6 +239,11 @@ fn main() -> Result<()> {
                 display, registry, wm_base, xdg_surf, toplevel, surface);
         }
 
+        if counter_timer.elapsed().as_secs() >= 1 {
+            app.dispatch(CounterIncremented);
+            counter_timer = Instant::now();
+        }
+
         if let Some(serial) = wm_base.pending_pong.take() {
             wm_base.inner.pong(&mut conn, serial)?;
         }
@@ -222,50 +255,95 @@ fn main() -> Result<()> {
 
         if configured {
             if let Some(slot) = slots.iter_mut().find(|s| s.state == SlotState::Free) {
-                let ctx = em.context();
-                ctx.send(RendererCommand(BeginFramePayload {
-                    fbo: slot.surf.fbo,
-                    width: slot.surf.width,
-                    height: slot.surf.height,
-                }));
-                ctx.send(RendererCommand(ClearColor { r: 0.32, g: 0.32, b: 0.32, a: 1.0 }));
-                ctx.send(RendererCommand(DrawQuad {
-                    color: (0.9, 0.2, 0.2, 1.0),
-                    border_color: (1.0, 1.0, 1.0, 1.0),
-                    origin: (214.0, 240.0, 0.0),
-                    size: (600.0, 600.0),
-                    border_radius: 16.0,
-                    border_thickness: 3.0,
-                }));
-                ctx.send(RendererCommand(DrawQuad {
-                    color: (0.2 * 0.9, 0.4, 1.0, 1.0),
-                    border_color: (1.0, 1.0, 1.0, 1.0),
-                    origin: (414.0, 440.0, 1.0),
-                    size: (200.0, 200.0),
-                    border_radius: 12.0,
-                    border_thickness: 3.0,
-                }));
-                ctx.send(RendererCommand(DrawMonochromeSprite {
-                    texture_id: icon_tex,
-                    region: (
-                        atlas::UI_ICON.x,
-                        atlas::UI_ICON.y,
-                        atlas::UI_ICON.w,
-                        atlas::UI_ICON.h,
-                    ),
-                    origin: (450.0, 476.0 + (128.0 - 42.0) / 2.0, 1.0),
-                    size: (128.0, 42.0),
-                    color: (1.0, 1.0, 1.0, 1.0),
-                }));
-                ctx.send(RendererCommand(DrawText {
+                // BeginFrame
+                unsafe {
+                    renderer
+                        .gl
+                        .bind_framebuffer(glow::FRAMEBUFFER, Some(slot.surf.fbo));
+                    renderer
+                        .gl
+                        .viewport(0, 0, slot.surf.width as i32, slot.surf.height as i32);
+                }
+                renderer.set_width(slot.surf.width);
+                renderer.set_height(slot.surf.height);
+
+                renderer.send_command(ClearColor {
+                    r: 0.32,
+                    g: 0.32,
+                    b: 0.32,
+                    a: 1.0,
+                });
+
+                // Card
+                renderer.send_command(DrawQuad {
+                    color: (0.16, 0.16, 0.18, 1.0),
+                    border_color: (0.30, 0.30, 0.35, 1.0),
+                    origin: (314.0, 360.0, 0.0),
+                    size: (400.0, 360.0),
+                    border_radius: 20.0,
+                    border_thickness: 2.0,
+                });
+
+                // Title
+                renderer.send_command(DrawText {
                     font: &atlas::UI_FONT_INTER_24,
                     texture_id: icon_tex,
-                    text: "Hello, world!".to_string(),
-                    origin: (214.0, 220.0, 0.5),
+                    text: "Counter".to_string(),
+                    origin: (330.0, 408.0, 0.5),
                     color: (1.0, 1.0, 1.0, 1.0),
-                }));
-                ctx.send(RendererCommand(EndFramePayload));
-                em.tick();
+                });
+
+                // Count value
+                renderer.send_command(DrawText {
+                    font: &atlas::UI_FONT_INTER_100,
+                    texture_id: icon_tex,
+                    text: format!("{}", app.state.counter.count),
+                    origin: (464.0, 548.0, 0.5),
+                    color: (1.0, 1.0, 1.0, 1.0),
+                });
+
+                // Minus button
+                renderer.send_command(DrawQuad {
+                    color: (0.2, 0.4, 0.9, 1.0),
+                    border_color: (0.4, 0.6, 1.0, 1.0),
+                    origin: (374.0, 598.0, 1.0),
+                    size: (110.0, 52.0),
+                    border_radius: 12.0,
+                    border_thickness: 2.0,
+                });
+                renderer.send_command(DrawText {
+                    font: &atlas::UI_FONT_INTER_24,
+                    texture_id: icon_tex,
+                    text: "-".to_string(),
+                    origin: (419.0, 634.0, 0.4),
+                    color: (1.0, 1.0, 1.0, 1.0),
+                });
+
+                // Plus button
+                renderer.send_command(DrawQuad {
+                    color: (0.2, 0.7, 0.3, 1.0),
+                    border_color: (0.4, 0.9, 0.5, 1.0),
+                    origin: (544.0, 598.0, 1.0),
+                    size: (110.0, 52.0),
+                    border_radius: 12.0,
+                    border_thickness: 2.0,
+                });
+                renderer.send_command(DrawText {
+                    font: &atlas::UI_FONT_INTER_24,
+                    texture_id: icon_tex,
+                    text: "+".to_string(),
+                    origin: (589.0, 634.0, 0.5),
+                    color: (1.0, 1.0, 1.0, 1.0),
+                });
+
+                // EndFrame
+                renderer.process_command_queue::<ClearColor>();
+                renderer.process_command_queue::<DrawRect>();
+                renderer.process_command_queue::<DrawQuad>();
+                renderer.process_command_queue::<DrawMonochromeSprite>();
+                unsafe {
+                    renderer.gl.finish();
+                }
 
                 surface.attach(&mut conn, &slot.wl_buf, 0, 0)?;
                 surface.damage(&mut conn, 0, 0, WIDTH as i32, HEIGHT as i32)?;
@@ -293,9 +371,8 @@ fn main() -> Result<()> {
     // ── Cleanup ───────────────────────────────────────────────────────────
 
     let [slot_a, slot_b] = slots;
-    let rc = renderer.borrow_mut();
-    rc.0.destroy_surface(slot_a.surf);
-    rc.0.destroy_surface(slot_b.surf);
+    renderer.destroy_surface(slot_a.surf);
+    renderer.destroy_surface(slot_b.surf);
 
     Ok(())
 }

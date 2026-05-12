@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-event-manager = { path = "../event-manager" }
 wayland-protocols = { path = "../wayland-protocols" }
 renderer = { path = "../renderer" }
+app = { path = "../app" }
 assets = { path = "../assets" }
 anyhow = { workspace = true }
 glow = { workspace = true }

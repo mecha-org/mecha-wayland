@@ -14,6 +14,9 @@ pub mod module;
 pub struct Poll;
 impl Event for Poll {}
 
+pub struct Start;
+impl Event for Start {}
+
 pub struct App<S, Modules = HNil> {
     pub state: S,
     pub modules: Modules,
@@ -70,9 +73,12 @@ impl<S, Modules> App<S, Modules> {
 
     pub fn run(&mut self)
     where
+        Modules: DispatchEvent<S, Start> + ProcessHandlers<S, Start>,
+        <Modules as ProcessHandlers<S, Start>>::Out: DispatchProduced<MaxDepth, S, Modules>,
         Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
         <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
     {
+        self.dispatch(Start);
         loop {
             self.dispatch(Poll);
         }

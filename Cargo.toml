@@ -38,3 +38,8 @@ glow = "0.17"
 # renderer extras
 bytemuck = { version = "1", features = ["derive"] }
 fontdue  = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

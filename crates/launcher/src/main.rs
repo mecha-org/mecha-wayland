@@ -1,3 +1,5 @@
+#![recursion_limit = "4096"]
+
 use anyhow::Result;
 use glow::HasContext;
 use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};

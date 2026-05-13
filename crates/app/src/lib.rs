@@ -1,8 +1,10 @@
+#![recursion_limit = "512"]
+
 use frunk::{HCons, HNil};
 use std::marker::PhantomData;
 
 use crate::{
-    event::{DispatchEvent, DispatchProcessed, Event, ProcessHandlers},
+    event::{DispatchEvent, DispatchProduced, Event, MaxDepth, ProcessHandlers},
     module::{IsModule, MountedModule},
 };
 
@@ -51,8 +53,11 @@ impl<S, Modules> App<S, Modules> {
 
     pub fn dispatch<E: Event>(&mut self, event: E)
     where
-        Modules: DispatchEvent<S, E>,
+        Modules: DispatchEvent<S, E> + ProcessHandlers<S, E>,
+        <Modules as ProcessHandlers<S, E>>::Out: DispatchProduced<MaxDepth, S, Modules>,
     {
+        let produced = self.modules.process(&mut self.state, &event);
+        produced.dispatch_produced(&mut self.state, &mut self.modules);
         self.modules.dispatch(&mut self.state, &event);
     }
 
@@ -66,12 +71,10 @@ impl<S, Modules> App<S, Modules> {
     pub fn run(&mut self)
     where
         Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
-        <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProcessed<S, Modules>,
+        <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
     {
         loop {
-            let processed = self.modules.process(&mut self.state, &Poll);
-            processed.dispatch_processed(&mut self.state, &mut self.modules);
-            self.modules.dispatch(&mut self.state, &Poll);
+            self.dispatch(Poll);
         }
     }
 }

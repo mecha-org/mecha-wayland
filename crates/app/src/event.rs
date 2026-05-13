@@ -214,93 +214,113 @@ where
     }
 }
 
-/// Dispatch events to handlers only — no further processing pass.
-/// Used as the terminal step inside `DispatchProcessed` to break the type cycle.
-pub trait DispatchOnly<S, Modules> {
-    fn dispatch_only(self, state: &mut S, modules: &mut Modules);
+pub struct Zero;
+pub struct Succ<N>(std::marker::PhantomData<N>);
+
+macro_rules! depth {
+    () => { Zero };
+    (_ $($rest:tt)*) => { Succ<depth!($($rest)*)> };
 }
 
-impl<S, M> DispatchOnly<S, M> for HNil {
-    fn dispatch_only(self, _: &mut S, _: &mut M) {}
+pub type MaxDepth = depth!(
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+);
+
+pub trait DispatchProduced<D, S, M> {
+    fn dispatch_produced(self, state: &mut S, modules: &mut M);
 }
 
-impl<S, M, Tail> DispatchOnly<S, M> for HCons<HNil, Tail>
+impl<S, M> DispatchProduced<Zero, S, M> for HNil {
+    fn dispatch_produced(self, _: &mut S, _: &mut M) {}
+}
+
+impl<S, M, Tail> DispatchProduced<Zero, S, M> for HCons<HNil, Tail>
 where
-    Tail: DispatchOnly<S, M>,
+    Tail: DispatchProduced<Zero, S, M>,
 {
-    fn dispatch_only(self, state: &mut S, modules: &mut M) {
-        self.tail.dispatch_only(state, modules);
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        self.tail.dispatch_produced(state, modules);
     }
 }
 
-impl<S, M, E, Tail> DispatchOnly<S, M> for HCons<Option<E>, Tail>
+impl<S, M, E, Tail> DispatchProduced<Zero, S, M> for HCons<Option<E>, Tail>
 where
     E: Event,
     M: DispatchEvent<S, E>,
-    Tail: DispatchOnly<S, M>,
+    Tail: DispatchProduced<Zero, S, M>,
 {
-    fn dispatch_only(self, state: &mut S, modules: &mut M) {
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
         if let Some(event) = self.head {
             modules.dispatch(state, &event);
         }
-        self.tail.dispatch_only(state, modules);
+        self.tail.dispatch_produced(state, modules);
     }
 }
 
-impl<S, M, H, T, Tail> DispatchOnly<S, M> for HCons<HCons<H, T>, Tail>
+impl<S, M, H, T, Tail> DispatchProduced<Zero, S, M> for HCons<HCons<H, T>, Tail>
 where
-    HCons<H, T>: DispatchOnly<S, M>,
-    Tail: DispatchOnly<S, M>,
+    HCons<H, T>: DispatchProduced<Zero, S, M>,
+    Tail: DispatchProduced<Zero, S, M>,
 {
-    fn dispatch_only(self, state: &mut S, modules: &mut M) {
-        self.head.dispatch_only(state, modules);
-        self.tail.dispatch_only(state, modules);
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        self.head.dispatch_produced(state, modules);
+        self.tail.dispatch_produced(state, modules);
     }
 }
 
-/// For each produced event: run processors for that event, dispatch their outputs
-/// via `DispatchOnly` (one level deep), then dispatch the event to handlers.
-pub trait DispatchProcessed<S, Modules> {
-    fn dispatch_processed(self, state: &mut S, modules: &mut Modules);
+impl<N, S, M> DispatchProduced<Succ<N>, S, M> for HNil {
+    fn dispatch_produced(self, _: &mut S, _: &mut M) {}
 }
 
-impl<S, M> DispatchProcessed<S, M> for HNil {
-    fn dispatch_processed(self, _: &mut S, _: &mut M) {}
-}
-
-impl<S, M, Tail> DispatchProcessed<S, M> for HCons<HNil, Tail>
+impl<N, S, M, Tail> DispatchProduced<Succ<N>, S, M> for HCons<HNil, Tail>
 where
-    Tail: DispatchProcessed<S, M>,
+    Tail: DispatchProduced<Succ<N>, S, M>,
 {
-    fn dispatch_processed(self, state: &mut S, modules: &mut M) {
-        self.tail.dispatch_processed(state, modules);
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        self.tail.dispatch_produced(state, modules);
     }
 }
 
-impl<S, M, E, Tail> DispatchProcessed<S, M> for HCons<Option<E>, Tail>
+impl<N, S, M, E, Tail> DispatchProduced<Succ<N>, S, M> for HCons<Option<E>, Tail>
 where
     E: Event,
     M: DispatchEvent<S, E> + ProcessHandlers<S, E>,
-    <M as ProcessHandlers<S, E>>::Out: DispatchOnly<S, M>,
-    Tail: DispatchProcessed<S, M>,
+    <M as ProcessHandlers<S, E>>::Out: DispatchProduced<N, S, M>,
+    Tail: DispatchProduced<Succ<N>, S, M>,
 {
-    fn dispatch_processed(self, state: &mut S, modules: &mut M) {
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
         if let Some(event) = self.head {
             let produced = modules.process(state, &event);
-            produced.dispatch_only(state, modules);
+            produced.dispatch_produced(state, modules);
             modules.dispatch(state, &event);
         }
-        self.tail.dispatch_processed(state, modules);
+        self.tail.dispatch_produced(state, modules);
     }
 }
 
-impl<S, M, H, T, Tail> DispatchProcessed<S, M> for HCons<HCons<H, T>, Tail>
+impl<N, S, M, H, T, Tail> DispatchProduced<Succ<N>, S, M> for HCons<HCons<H, T>, Tail>
 where
-    HCons<H, T>: DispatchProcessed<S, M>,
-    Tail: DispatchProcessed<S, M>,
+    HCons<H, T>: DispatchProduced<Succ<N>, S, M>,
+    Tail: DispatchProduced<Succ<N>, S, M>,
 {
-    fn dispatch_processed(self, state: &mut S, modules: &mut M) {
-        self.head.dispatch_processed(state, modules);
-        self.tail.dispatch_processed(state, modules);
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        self.head.dispatch_produced(state, modules);
+        self.tail.dispatch_produced(state, modules);
     }
 }
+

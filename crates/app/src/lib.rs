@@ -2,12 +2,15 @@ use frunk::{HCons, HNil};
 use std::marker::PhantomData;
 
 use crate::{
-    event::{DispatchEvent, Event},
+    event::{DispatchEvent, DispatchProcessed, Event, ProcessHandlers},
     module::{IsModule, MountedModule},
 };
 
 pub mod event;
 pub mod module;
+
+pub struct Poll;
+impl Event for Poll {}
 
 pub struct App<S, Modules = HNil> {
     pub state: S,
@@ -51,5 +54,24 @@ impl<S, Modules> App<S, Modules> {
         Modules: DispatchEvent<S, E>,
     {
         self.modules.dispatch(&mut self.state, &event);
+    }
+
+    pub fn process<E: Event>(&mut self, event: E) -> <Modules as ProcessHandlers<S, E>>::Out
+    where
+        Modules: ProcessHandlers<S, E>,
+    {
+        self.modules.process(&mut self.state, &event)
+    }
+
+    pub fn run(&mut self)
+    where
+        Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
+        <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProcessed<S, Modules>,
+    {
+        loop {
+            let processed = self.modules.process(&mut self.state, &Poll);
+            processed.dispatch_processed(&mut self.state, &mut self.modules);
+            self.modules.dispatch(&mut self.state, &Poll);
+        }
     }
 }

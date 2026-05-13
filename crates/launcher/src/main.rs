@@ -1,5 +1,3 @@
-#![allow(unused_variables, unused_mut, dead_code)]
-
 use anyhow::Result;
 use glow::HasContext;
 use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};

@@ -4,8 +4,9 @@ members = [
     "crates/launcher",
     "crates/renderer",
     "crates/app",
-    "crates/assets",
+    "crates/assets", "crates/counter",
 ]
+default-members = ["crates/counter"]
 resolver = "2"
 
 [workspace.dependencies]

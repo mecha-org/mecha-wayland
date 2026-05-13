@@ -1,4 +1,4 @@
-use crate::event::{Event, TypedHandler};
+use crate::event::{Event, TypedHandler, TypedProcessor};
 use frunk::{HCons, HNil};
 use std::marker::PhantomData;
 
@@ -25,6 +25,20 @@ impl<T, H> Module<T, H> {
         Module {
             handlers: HCons {
                 head: TypedHandler::new(handler),
+                tail: self.handlers,
+            },
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn processor<E, Out, F>(self, f: F) -> Module<T, HCons<TypedProcessor<T, E, Out, F>, H>>
+    where
+        E: Event,
+        F: Fn(&mut T, &E) -> Out + 'static,
+    {
+        Module {
+            handlers: HCons {
+                head: TypedProcessor::new(f),
                 tail: self.handlers,
             },
             _marker: PhantomData,

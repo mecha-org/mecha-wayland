@@ -1,0 +1,20 @@
+[package]
+name = "counter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wayland-protocols = { path = "../wayland-protocols" }
+renderer = { path = "../renderer" }
+app = { path = "../app" }
+frunk = "0.4"
+assets = { path = "../assets" }
+anyhow = { workspace = true }
+glow = { workspace = true }
+png = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+anyhow   = { workspace = true }
+assets   = { path = "../assets", features = ["builder"] }

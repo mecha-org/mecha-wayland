@@ -230,6 +230,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "counter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "app",
+ "assets",
+ "frunk",
+ "glow",
+ "png 0.18.1",
+ "renderer",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

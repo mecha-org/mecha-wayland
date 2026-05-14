@@ -2,26 +2,32 @@
 
 mod ring;
 mod timer;
+mod wayland_module;
+mod wire;
 
 use app::event::Event;
 use ring::Ring;
 use timer::{Timer, TimerEvents, TimerSettings};
+use wayland_module::Wayland;
 
 struct AppState {
     ring: Ring,
     timer: Timer,
     counter: Counter,
+    wayland: Wayland,
 }
 
 impl AppState {
     fn new() -> Self {
         let ring = Ring::default();
         let timer = Timer::new(ring.get_proxy());
+        let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
 
         Self {
             ring,
             timer,
             counter: Counter::default(),
+            wayland,
         }
     }
 }
@@ -54,6 +60,7 @@ fn main() {
         )
         .register_module(|s| &mut s.ring, register_ring!(1))
         .register_module(|s| &mut s.timer, register_timer!())
+        .register_module(|s| &mut s.wayland, register_wayland!())
         .register_module(
             |s| &mut s.counter,
             app::module::Module::new().processor(

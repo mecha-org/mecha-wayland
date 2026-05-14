@@ -15,14 +15,14 @@ pub enum TimerEvents {
 impl Event for TimerEvents {}
 
 pub struct Timer {
-    proxy: SharedRingProxy,
+    ring_proxy: SharedRingProxy,
     active: HashMap<u64, Box<types::Timespec>>,
 }
 
 impl Timer {
-    pub fn new(proxy: SharedRingProxy) -> Self {
+    pub fn new(ring_proxy: SharedRingProxy) -> Self {
         Self {
-            proxy,
+            ring_proxy,
             active: HashMap::new(),
         }
     }
@@ -36,7 +36,7 @@ impl Timer {
 
         let sqe = opcode::Timeout::new(&*ts as *const _).build();
 
-        let token = self.proxy.borrow_mut().push(sqe);
+        let token = self.ring_proxy.borrow_mut().push(sqe);
 
         self.active.insert(token, ts);
 
@@ -45,7 +45,7 @@ impl Timer {
 
     pub fn try_finish(&mut self, event: &IoEvent) -> Option<TimerEvents> {
         match event {
-            IoEvent::Complete { token, result } => {
+            IoEvent::Completed { token, result } => {
                 if self.active.remove(token).is_some() {
                     // Note: io_uring timeouts usually return -ETIME (-62) on success.
                     // If result == 0, it means the timer was canceled.

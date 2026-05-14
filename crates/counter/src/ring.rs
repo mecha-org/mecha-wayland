@@ -9,7 +9,7 @@ pub type SharedRingProxy = Rc<RefCell<RingProxy>>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum IoEvent {
-    Complete { token: u64, result: i32 },
+    Completed { token: u64, result: i32 },
 }
 
 impl Event for IoEvent {}
@@ -86,7 +86,7 @@ impl Ring {
         let mut cq = self.ring.completion();
         cq.sync();
         while let Some(cqe) = cq.next() {
-            self.ready.push_back(IoEvent::Complete {
+            self.ready.push_back(IoEvent::Completed {
                 token: cqe.user_data(),
                 result: cqe.result(),
             });

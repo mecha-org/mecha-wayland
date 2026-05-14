@@ -238,6 +238,8 @@ dependencies = [
  "assets",
  "frunk",
  "glow",
+ "io-uring",
+ "libc",
  "png 0.18.1",
  "renderer",
  "tracing",

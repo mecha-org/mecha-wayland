@@ -272,6 +272,20 @@ where
     }
 }
 
+impl<S, M, E, Tail> DispatchProduced<Zero, S, M> for HCons<Option<Option<E>>, Tail>
+where
+    E: Event,
+    M: DispatchEvent<S, E>,
+    Tail: DispatchProduced<Zero, S, M>,
+{
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        if let Some(Some(event)) = self.head {
+            modules.dispatch(state, &event);
+        }
+        self.tail.dispatch_produced(state, modules);
+    }
+}
+
 impl<S, M, H, T, Tail> DispatchProduced<Zero, S, M> for HCons<HCons<H, T>, Tail>
 where
     HCons<H, T>: DispatchProduced<Zero, S, M>,
@@ -313,6 +327,23 @@ where
     }
 }
 
+impl<N, S, M, E, Tail> DispatchProduced<Succ<N>, S, M> for HCons<Option<Option<E>>, Tail>
+where
+    E: Event,
+    M: DispatchEvent<S, E> + ProcessHandlers<S, E>,
+    <M as ProcessHandlers<S, E>>::Out: DispatchProduced<N, S, M>,
+    Tail: DispatchProduced<Succ<N>, S, M>,
+{
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        if let Some(Some(event)) = self.head {
+            let produced = modules.process(state, &event);
+            produced.dispatch_produced(state, modules);
+            modules.dispatch(state, &event);
+        }
+        self.tail.dispatch_produced(state, modules);
+    }
+}
+
 impl<N, S, M, H, T, Tail> DispatchProduced<Succ<N>, S, M> for HCons<HCons<H, T>, Tail>
 where
     HCons<H, T>: DispatchProduced<Succ<N>, S, M>,
@@ -323,4 +354,3 @@ where
         self.tail.dispatch_produced(state, modules);
     }
 }
-

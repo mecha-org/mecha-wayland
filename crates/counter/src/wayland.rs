@@ -15,17 +15,25 @@ use crate::wire::{HEADER_SIZE, MessageHeader};
 pub mod wl_callback;
 pub mod wl_compositor;
 pub mod wl_display;
+pub mod wl_keyboard;
+pub mod wl_pointer;
 pub mod wl_registry;
+pub mod wl_seat;
 pub mod wl_shm;
 pub mod wl_surface;
+pub mod wl_touch;
 pub mod zwlr_layer_shell;
 
 pub use wl_callback::WlCallback;
 pub use wl_compositor::WlCompositor;
 pub use wl_display::WlDisplay;
+pub use wl_keyboard::{KeyboardEvent, WlKeyboard};
+pub use wl_pointer::{PointerEvent, WlPointer};
 pub use wl_registry::WlRegistry;
+pub use wl_seat::{CAP_KEYBOARD, CAP_POINTER, CAP_TOUCH, SeatEvent, WlSeat};
 pub use wl_shm::WlShm;
 pub use wl_surface::WlSurface;
+pub use wl_touch::{TouchEvent, WlTouch};
 pub use zwlr_layer_shell::{ZwlrLayerShellV1, ZwlrLayerSurfaceV1};
 
 pub struct Initilised;
@@ -91,6 +99,10 @@ pub struct Wayland {
     pub shm: WlShm,
     pub layer_shell: ZwlrLayerShellV1,
     pub layer_surface: ZwlrLayerSurfaceV1,
+    pub seat: WlSeat,
+    pub pointer: WlPointer,
+    pub keyboard: WlKeyboard,
+    pub touch: WlTouch,
 }
 
 impl Wayland {
@@ -120,6 +132,10 @@ impl Wayland {
             shm: WlShm::new(conn.clone()),
             layer_shell: ZwlrLayerShellV1::new(conn.clone()),
             layer_surface: ZwlrLayerSurfaceV1::new(conn.clone()),
+            seat: WlSeat::new(conn.clone()),
+            pointer: WlPointer::new(conn.clone()),
+            keyboard: WlKeyboard::new(conn.clone()),
+            touch: WlTouch::new(conn.clone()),
             conn,
             ring_proxy,
             read_buf: vec![0u8; 4096],
@@ -184,6 +200,13 @@ impl Wayland {
             layer_ver.min(4),
             layer_id,
         );
+
+        if let Some((seat_name, seat_ver)) = self.registry.find("wl_seat") {
+            let seat_id = self.conn.borrow_mut().alloc_id();
+            self.seat.set_id(seat_id);
+            self.registry
+                .bind(seat_name, "wl_seat", seat_ver.min(7), seat_id);
+        }
 
         self.flush_sync(fd);
 
@@ -405,5 +428,30 @@ macro_rules! register_wayland {
             .submodule(|wl| &mut wl.surface, register_wl_surface!())
             .submodule(|wl| &mut wl.shm, register_wl_shm!())
             .submodule(|wl| &mut wl.layer_surface, register_zwlr_layer_surface!())
+            .submodule(|wl| &mut wl.seat, register_wl_seat!())
+            .submodule(|wl| &mut wl.pointer, register_wl_pointer!())
+            .submodule(|wl| &mut wl.keyboard, register_wl_keyboard!())
+            .submodule(|wl| &mut wl.touch, register_wl_touch!())
+            .on(
+                |wl: &mut crate::wayland::Wayland, ev: &crate::wayland::SeatEvent| match ev {
+                    crate::wayland::SeatEvent::Capabilities { capabilities } => {
+                        if (capabilities & crate::wayland::CAP_POINTER) != 0 && wl.pointer.id == 0 {
+                            let id = wl.seat.get_pointer();
+                            wl.pointer.set_id(id);
+                        }
+                        if (capabilities & crate::wayland::CAP_KEYBOARD) != 0 && wl.keyboard.id == 0
+                        {
+                            let id = wl.seat.get_keyboard();
+                            wl.keyboard.set_id(id);
+                        }
+                        if (capabilities & crate::wayland::CAP_TOUCH) != 0 && wl.touch.id == 0 {
+                            let id = wl.seat.get_touch();
+                            wl.touch.set_id(id);
+                        }
+                        wl.flush();
+                    }
+                    _ => {}
+                },
+            )
     };
 }

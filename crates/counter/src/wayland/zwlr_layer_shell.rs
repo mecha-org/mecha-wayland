@@ -130,6 +130,15 @@ impl ZwlrLayerSurfaceV1 {
             .build();
     }
 
+    // opcode 4: set_keyboard_interactivity(interactivity: uint)
+    pub fn set_keyboard_interactivity(&self, id: u32, interactivity: u32) {
+        self.conn
+            .borrow_mut()
+            .message_builder(id, 4)
+            .write_u32(interactivity)
+            .build();
+    }
+
     // opcode 6: ack_configure(serial: uint)
     pub fn ack_configure(&self, id: u32, serial: u32) {
         self.conn

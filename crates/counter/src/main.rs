@@ -2,19 +2,20 @@
 
 mod ring;
 mod timer;
-mod wayland_module;
+mod wayland;
 mod wire;
 
-use app::event::Event;
+use app::{App, event::Event};
 use ring::Ring;
 use timer::{Timer, TimerEvents, TimerSettings};
-use wayland_module::Wayland;
+use wayland::Wayland;
 
 struct AppState {
     ring: Ring,
     timer: Timer,
     counter: Counter,
     wayland: Wayland,
+    surface_id: u32,
 }
 
 impl AppState {
@@ -28,6 +29,7 @@ impl AppState {
             timer,
             counter: Counter::default(),
             wayland,
+            surface_id: 0,
         }
     }
 }
@@ -48,53 +50,66 @@ fn main() {
     let state = AppState::new();
 
     let mut app = app::App::new(state)
-        .register_module(
-            |s| &mut s.timer,
-            app::module::Module::new().on(|s: &mut Timer, _e: &app::Start| {
-                println!("App started");
-                let timer_id = s.start_timer(TimerSettings {
-                    duration: std::time::Duration::from_secs(5),
-                });
-                println!("Timer {} started", timer_id);
-            }),
-        )
         .register_module(|s| &mut s.ring, register_ring!(1))
         .register_module(|s| &mut s.timer, register_timer!())
         .register_module(|s| &mut s.wayland, register_wayland!())
         .register_module(
-            |s| &mut s.counter,
-            app::module::Module::new().processor(
-                |counter: &mut Counter, event: &TimerEvents| -> Option<CounterEvent> {
-                    match event {
-                        TimerEvents::TimerFinished { id } => {
-                            counter.count += 1;
-                            println!("Timer {} finished! Total fired: {}", id, counter.count);
+            |s| s,
+            app::module::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
+                use wayland::zwlr_layer_shell::LAYER_TOP;
 
-                            // Emit the state change event
-                            Some(CounterEvent::Updated {
-                                new_count: counter.count,
-                            })
-                        }
-                    }
-                },
-            ),
+                let surface_id = s.wayland.compositor.create_surface();
+                s.wayland.surface.register(surface_id);
+                s.surface_id = surface_id;
+
+                let layer_surface_id = s.wayland.layer_shell.get_layer_surface(
+                    surface_id, 0,
+                    LAYER_TOP, "counter",
+                );
+                s.wayland.layer_surface.register(layer_surface_id);
+                s.wayland.layer_surface.set_size(layer_surface_id, 256, 256);
+
+                s.wayland.surface.commit(surface_id);
+                s.wayland.flush();
+            }),
         )
         .register_module(
-            |s| &mut s.timer,
-            app::module::Module::new().on(|timer: &mut Timer, event: &CounterEvent| {
-                match event {
-                    CounterEvent::Updated { new_count } => {
-                        println!(
-                            "Counter reached {}. Spawning a follow-up timer...",
-                            new_count
-                        );
+            |s| s,
+            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::zwlr_layer_shell::LayerSurfaceEvent| {
+                use wayland::wl_shm::{alloc_shm_fd, mmap_shm};
+                use wayland::zwlr_layer_shell::LayerSurfaceEvent;
 
-                        // Start a new timer based on the counter's state
-                        timer.start_timer(TimerSettings {
-                            duration: std::time::Duration::from_secs(2),
-                        });
+                let LayerSurfaceEvent::Configured { id, serial, width, height } = ev else { return };
+
+                let w = if *width == 0 { 256i32 } else { *width as i32 };
+                let h = if *height == 0 { 256i32 } else { *height as i32 };
+                let stride = w * 4;
+                let size = (stride * h) as usize;
+
+                let fd = alloc_shm_fd(size);
+                let ptr = mmap_shm(fd, size);
+                // ARGB8888 opaque black: A=0xFF, R=0, G=0, B=0
+                unsafe {
+                    let pixels = std::slice::from_raw_parts_mut(ptr as *mut u32, w as usize * h as usize);
+                    for p in pixels.iter_mut() {
+                        *p = 0xFF000000u32;
                     }
+                    libc::munmap(ptr as *mut libc::c_void, size);
                 }
+
+                s.wayland.layer_surface.ack_configure(*id, *serial);
+
+                let pool_id = s.wayland.shm.create_pool(fd, size as i32);
+                s.wayland.shm.register_pool(pool_id);
+                let buf_id = s.wayland.shm.pool_create_buffer(pool_id, 0, w, h, stride, 0);
+                s.wayland.shm.register_buffer(buf_id);
+                s.wayland.shm.pool_destroy(pool_id);
+
+                s.wayland.surface.attach(s.surface_id, buf_id, 0, 0);
+                s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
+                s.wayland.surface.commit(s.surface_id);
+                // flush via sendmsg since the shm fd is queued
+                s.wayland.flush();
             }),
         );
 

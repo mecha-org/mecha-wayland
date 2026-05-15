@@ -4,7 +4,8 @@ members = [
     "crates/launcher",
     "crates/renderer",
     "crates/app",
-    "crates/assets", "crates/counter",
+    "crates/assets",
+    "crates/counter",
 ]
 default-members = ["crates/counter"]
 resolver = "2"
@@ -37,7 +38,7 @@ glow = "0.17"
 
 # renderer extras
 bytemuck = { version = "1", features = ["derive"] }
-fontdue  = "0.9"
+fontdue = "0.9"
 
 [profile.release]
 opt-level = 3

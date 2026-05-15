@@ -18,5 +18,5 @@ io-uring = { workspace = true }
 libc = { workspace = true }
 
 [build-dependencies]
-anyhow   = { workspace = true }
-assets   = { path = "../assets", features = ["builder"] }
+anyhow = { workspace = true }
+assets = { path = "../assets", features = ["builder"] }

@@ -55,6 +55,14 @@ impl WlSurface {
             .build();
     }
 
+    // opcode 3: frame() -> wl_callback id
+    pub fn frame(&self, surface_id: u32) -> u32 {
+        let mut conn = self.conn.borrow_mut();
+        let cb_id = conn.alloc_id();
+        conn.message_builder(surface_id, 3).write_u32(cb_id).build();
+        cb_id
+    }
+
     // opcode 6: commit()
     pub fn commit(&self, id: u32) {
         self.conn.borrow_mut().message_builder(id, 6).build();

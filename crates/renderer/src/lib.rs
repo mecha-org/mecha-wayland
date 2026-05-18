@@ -378,6 +378,13 @@ impl Renderer {
         };
         self.command_queue_registry.process::<C>(&ctx);
     }
+
+    /// Block until all pending GPU commands have completed. Call this after
+    /// rendering into a DMA-buf surface and before committing it to the
+    /// compositor, so the compositor never reads a partially-rendered buffer.
+    pub fn finish(&self) {
+        unsafe { self.gl.finish() };
+    }
 }
 
 impl Drop for Renderer {

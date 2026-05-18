@@ -36,7 +36,7 @@ impl Timer {
 
         let sqe = opcode::Timeout::new(&*ts as *const _).build();
 
-        let token = self.ring_proxy.borrow_mut().push(sqe);
+        let token = self.ring_proxy.push(sqe);
 
         self.active.insert(token, ts);
 

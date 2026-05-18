@@ -11,6 +11,9 @@ use crate::{
 pub mod event;
 pub mod module;
 
+pub struct PrePoll;
+impl Event for PrePoll {}
+
 pub struct Poll;
 impl Event for Poll {}
 
@@ -75,11 +78,14 @@ impl<S, Modules> App<S, Modules> {
     where
         Modules: DispatchEvent<S, Start> + ProcessHandlers<S, Start>,
         <Modules as ProcessHandlers<S, Start>>::Out: DispatchProduced<MaxDepth, S, Modules>,
+        Modules: DispatchEvent<S, PrePoll> + ProcessHandlers<S, PrePoll>,
+        <Modules as ProcessHandlers<S, PrePoll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
         Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
         <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
     {
         self.dispatch(Start);
         loop {
+            self.dispatch(PrePoll);
             self.dispatch(Poll);
         }
     }

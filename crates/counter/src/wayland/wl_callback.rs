@@ -1,24 +1,27 @@
+use std::collections::HashSet;
+
 use app::event::Event;
 
 use crate::wayland::{SharedConnection, WaylandRawEvent};
 use crate::wire::MessageReader;
 
 #[derive(Debug)]
-pub enum CallbackEvent {
-    Done { callback_data: u32 },
+pub enum WlCallbackEvent {
+    Done { id: u32, callback_data: u32 },
 }
 
-impl Event for CallbackEvent {}
+impl Event for WlCallbackEvent {}
 
 pub struct WlCallback {
     _conn: SharedConnection,
-    id: u32,
+    pub id: u32,
     done: bool,
+    frame_ids: HashSet<u32>,
 }
 
 impl WlCallback {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { _conn: conn, id: 0, done: false }
+        Self { _conn: conn, id: 0, done: false, frame_ids: HashSet::new() }
     }
 
     pub fn set_id(&mut self, id: u32) {
@@ -29,23 +32,25 @@ impl WlCallback {
         self.done
     }
 
-    pub fn process(&mut self, ev: &WaylandRawEvent) -> Option<CallbackEvent> {
-        if ev.sender_id != self.id || ev.opcode != 0 {
+    /// Register a wl_callback object id to listen for frame-done events.
+    /// Each id fires once and is removed from the set automatically.
+    pub fn register_frame(&mut self, id: u32) {
+        self.frame_ids.insert(id);
+    }
+
+    pub fn process(&mut self, ev: &WaylandRawEvent) -> Option<WlCallbackEvent> {
+        if ev.opcode != 0 || !self.frame_ids.remove(&ev.sender_id) {
             return None;
         }
         let mut fds = vec![];
         let mut r = MessageReader::new(&ev.body, &mut fds);
         let callback_data = r.read_u32().unwrap_or(0);
-        let event = CallbackEvent::Done { callback_data };
-        println!("[wl_callback] {:?}", event);
-        Some(event)
+        Some(WlCallbackEvent::Done { id: ev.sender_id, callback_data })
     }
 
+    /// Blocking-path event handler used only during init sync roundtrip.
     pub fn handle_event(&mut self, sender_id: u32, opcode: u16, _body: &[u8]) {
-        if sender_id != self.id {
-            return;
-        }
-        if opcode == 0 {
+        if sender_id == self.id && opcode == 0 {
             self.done = true;
         }
     }
@@ -54,9 +59,10 @@ impl WlCallback {
 #[macro_export]
 macro_rules! register_wl_callback {
     () => {
-        app::module::Module::<crate::wayland::WlCallback>::new()
-            .processor(|c: &mut crate::wayland::WlCallback, ev: &crate::wayland::WaylandRawEvent| {
+        app::module::Module::<crate::wayland::WlCallback>::new().processor(
+            |c: &mut crate::wayland::WlCallback, ev: &crate::wayland::WaylandRawEvent| {
                 c.process(ev)
-            })
+            },
+        )
     };
 }

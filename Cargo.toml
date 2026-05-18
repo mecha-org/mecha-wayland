@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "crates/wayland-protocols",
-    "crates/launcher",
     "crates/renderer",
     "crates/app",
     "crates/assets",

@@ -12,6 +12,7 @@ use io_uring::{opcode, types};
 use crate::ring::{IoEvent, SharedRingProxy};
 use crate::wire::{HEADER_SIZE, MessageHeader};
 
+pub mod wl_buffer;
 pub mod wl_callback;
 pub mod wl_compositor;
 pub mod wl_display;
@@ -23,8 +24,10 @@ pub mod wl_shm;
 pub mod wl_surface;
 pub mod wl_touch;
 pub mod zwlr_layer_shell;
+pub mod zwp_linux_dmabuf;
 
-pub use wl_callback::WlCallback;
+pub use wl_buffer::{WlBuffer, WlBufferEvent};
+pub use wl_callback::{WlCallback, WlCallbackEvent};
 pub use wl_compositor::WlCompositor;
 pub use wl_display::WlDisplay;
 pub use wl_keyboard::{KeyboardEvent, WlKeyboard};
@@ -35,6 +38,7 @@ pub use wl_shm::WlShm;
 pub use wl_surface::WlSurface;
 pub use wl_touch::{TouchEvent, WlTouch};
 pub use zwlr_layer_shell::{ZwlrLayerShellV1, ZwlrLayerSurfaceV1};
+pub use zwp_linux_dmabuf::{ZwpLinuxBufferParamsV1, ZwpLinuxDmabufV1};
 
 pub struct Initilised;
 impl app::event::Event for Initilised {}
@@ -83,11 +87,12 @@ pub type SharedConnection = Rc<RefCell<Connection>>;
 
 pub struct Wayland {
     conn: SharedConnection,
-    ring_proxy: SharedRingProxy,
+    pub ring_proxy: SharedRingProxy,
     read_buf: Vec<u8>,
     read_token: Option<u64>,
     write_in_flight: Vec<u8>,
     write_token: Option<u64>,
+    recv_overflow: Vec<u8>,
 
     pub pending: VecDeque<WaylandRawEvent>,
 
@@ -96,13 +101,16 @@ pub struct Wayland {
     pub callback: WlCallback,
     pub compositor: WlCompositor,
     pub surface: WlSurface,
-    pub shm: WlShm,
+    // pub shm: WlShm,
     pub layer_shell: ZwlrLayerShellV1,
     pub layer_surface: ZwlrLayerSurfaceV1,
     pub seat: WlSeat,
     pub pointer: WlPointer,
     pub keyboard: WlKeyboard,
     pub touch: WlTouch,
+    pub dmabuf: ZwpLinuxDmabufV1,
+    pub buf_params: ZwpLinuxBufferParamsV1,
+    pub wl_buffer: WlBuffer,
 }
 
 impl Wayland {
@@ -129,19 +137,23 @@ impl Wayland {
             callback: WlCallback::new(conn.clone()),
             compositor: WlCompositor::new(conn.clone()),
             surface: WlSurface::new(conn.clone()),
-            shm: WlShm::new(conn.clone()),
+            // shm: WlShm::new(conn.clone()),
             layer_shell: ZwlrLayerShellV1::new(conn.clone()),
             layer_surface: ZwlrLayerSurfaceV1::new(conn.clone()),
             seat: WlSeat::new(conn.clone()),
             pointer: WlPointer::new(conn.clone()),
             keyboard: WlKeyboard::new(conn.clone()),
             touch: WlTouch::new(conn.clone()),
+            dmabuf: ZwpLinuxDmabufV1::new(conn.clone()),
+            buf_params: ZwpLinuxBufferParamsV1::new(conn.clone()),
+            wl_buffer: WlBuffer::new(conn.clone()),
             conn,
             ring_proxy,
             read_buf: vec![0u8; 4096],
             read_token: None,
             write_in_flight: Vec::new(),
             write_token: None,
+            recv_overflow: Vec::new(),
             pending: VecDeque::new(),
         })
     }
@@ -183,17 +195,17 @@ impl Wayland {
             .expect("zwlr_layer_shell_v1 not found");
 
         let comp_id = self.conn.borrow_mut().alloc_id();
-        let shm_id = self.conn.borrow_mut().alloc_id();
+        // let shm_id = self.conn.borrow_mut().alloc_id();
         let layer_id = self.conn.borrow_mut().alloc_id();
 
         self.compositor.set_id(comp_id);
-        self.shm.set_id(shm_id);
+        // self.shm.set_id(shm_id);
         self.layer_shell.set_id(layer_id);
 
         self.registry
             .bind(comp_name, "wl_compositor", comp_ver.min(4), comp_id);
-        self.registry
-            .bind(shm_name, "wl_shm", shm_ver.min(1), shm_id);
+        // self.registry
+        //     .bind(shm_name, "wl_shm", shm_ver.min(1), shm_id);
         self.registry.bind(
             layer_name,
             "zwlr_layer_shell_v1",
@@ -206,6 +218,17 @@ impl Wayland {
             self.seat.set_id(seat_id);
             self.registry
                 .bind(seat_name, "wl_seat", seat_ver.min(7), seat_id);
+        }
+
+        if let Some((dmabuf_name, dmabuf_ver)) = self.registry.find("zwp_linux_dmabuf_v1") {
+            let dmabuf_id = self.conn.borrow_mut().alloc_id();
+            self.dmabuf.set_id(dmabuf_id);
+            self.registry.bind(
+                dmabuf_name,
+                "zwp_linux_dmabuf_v1",
+                dmabuf_ver.min(3),
+                dmabuf_id,
+            );
         }
 
         self.flush_sync(fd);
@@ -235,8 +258,16 @@ impl Wayland {
         } else if Some(*token) == self.read_token {
             self.read_token = None;
             if *result > 0 {
-                let data: Vec<u8> = self.read_buf[..*result as usize].to_vec();
-                self.process_messages(&data);
+                let new_bytes = &self.read_buf[..*result as usize];
+                // Prepend any leftover bytes from the previous read.
+                let data = if self.recv_overflow.is_empty() {
+                    new_bytes.to_vec()
+                } else {
+                    let mut buf = mem::take(&mut self.recv_overflow);
+                    buf.extend_from_slice(new_bytes);
+                    buf
+                };
+                self.process_messages(data);
                 self.submit_read();
             } else if *result == 0 {
                 eprintln!("[Wayland] connection closed by server");
@@ -246,22 +277,29 @@ impl Wayland {
         }
     }
 
-    fn process_messages(&mut self, data: &[u8]) {
+    fn process_messages(&mut self, data: Vec<u8>) {
         let mut offset = 0;
         while offset + HEADER_SIZE <= data.len() {
             let Some(header) = MessageHeader::parse(&data[offset..]) else {
                 break;
             };
-            if data[offset..].len() < header.size as usize {
-                break;
+            let msg_size = header.size as usize;
+            if msg_size < HEADER_SIZE || data[offset..].len() < msg_size {
+                // Incomplete or invalid message — save remainder for next read.
+                self.recv_overflow.extend_from_slice(&data[offset..]);
+                return;
             }
-            let body = data[offset + HEADER_SIZE..offset + header.size as usize].to_vec();
+            let body = data[offset + HEADER_SIZE..offset + msg_size].to_vec();
             self.pending.push_back(WaylandRawEvent {
                 sender_id: header.sender_id,
                 opcode: header.opcode,
                 body,
             });
-            offset += header.size as usize;
+            offset += msg_size;
+        }
+        // Save any partial header bytes for the next read.
+        if offset < data.len() {
+            self.recv_overflow.extend_from_slice(&data[offset..]);
         }
     }
 
@@ -286,7 +324,7 @@ impl Wayland {
             self.write_in_flight.len() as u32,
         )
         .build();
-        let token = self.ring_proxy.borrow_mut().push(sqe);
+        let token = self.ring_proxy.push(sqe);
         self.write_token = Some(token);
     }
 
@@ -302,7 +340,7 @@ impl Wayland {
             self.read_buf.len() as u32,
         )
         .build();
-        let token = self.ring_proxy.borrow_mut().push(sqe);
+        let token = self.ring_proxy.push(sqe);
         self.read_token = Some(token);
     }
 
@@ -411,27 +449,27 @@ macro_rules! register_wayland {
                 wl.init();
                 crate::wayland::Initilised
             })
-            .processor(
+            .on(
                 |wl: &mut crate::wayland::Wayland, ev: &crate::ring::IoEvent| {
                     wl.handle_io(ev);
-                    wl.pending.pop_front()
                 },
             )
-            .processor(
-                |wl: &mut crate::wayland::Wayland, _: &crate::wayland::WaylandRawEvent| {
-                    wl.pending.pop_front()
-                },
-            )
+            .processor(|wl: &mut crate::wayland::Wayland, _: &app::PrePoll| {
+                wl.ring_proxy.set_no_wait(wl.pending.len() > 1);
+                wl.pending.pop_front()
+            })
             .submodule(|wl| &mut wl.display, register_wl_display!())
             .submodule(|wl| &mut wl.registry, register_wl_registry!())
             .submodule(|wl| &mut wl.callback, register_wl_callback!())
             .submodule(|wl| &mut wl.surface, register_wl_surface!())
-            .submodule(|wl| &mut wl.shm, register_wl_shm!())
+            // .submodule(|wl| &mut wl.shm, register_wl_shm!())
             .submodule(|wl| &mut wl.layer_surface, register_zwlr_layer_surface!())
             .submodule(|wl| &mut wl.seat, register_wl_seat!())
             .submodule(|wl| &mut wl.pointer, register_wl_pointer!())
             .submodule(|wl| &mut wl.keyboard, register_wl_keyboard!())
             .submodule(|wl| &mut wl.touch, register_wl_touch!())
+            .submodule(|wl| &mut wl.dmabuf, register_zwp_linux_dmabuf!())
+            .submodule(|wl| &mut wl.wl_buffer, register_wl_buffer!())
             .on(
                 |wl: &mut crate::wayland::Wayland, ev: &crate::wayland::SeatEvent| match ev {
                     crate::wayland::SeatEvent::Capabilities { capabilities } => {

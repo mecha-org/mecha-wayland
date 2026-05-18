@@ -31,6 +31,8 @@ struct AppState {
     wl_buf_ids: [u32; 2],
     buf_in_flight: [bool; 2],
     icon_tex: Option<::renderer::TextureId>,
+    cursor_x: f64,
+    cursor_y: f64,
 }
 
 impl AppState {
@@ -52,18 +54,20 @@ impl AppState {
             wl_buf_ids: [0, 0],
             buf_in_flight: [false, false],
             icon_tex: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
         }
     }
 }
 
 #[derive(Default)]
 struct Counter {
-    count: u32,
+    count: i32,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum CounterEvent {
-    Updated { new_count: u32 },
+    Updated { new_count: i32 },
 }
 
 impl Event for CounterEvent {}
@@ -224,23 +228,80 @@ fn main() {
         )
         .register_module(
             |s| s,
-            app::module::Module::new().on(|_: &mut AppState, ev: &wayland::PointerEvent| {
-                println!("[App] Pointer Event: {:?}", ev);
+            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| {
+                match ev {
+                    wayland::PointerEvent::Motion { surface_x, surface_y, .. } => {
+                        s.cursor_x = *surface_x;
+                        s.cursor_y = *surface_y;
+                    }
+                    wayland::PointerEvent::Button { button: _, state, .. } if *state == 1 => {
+                        if let Some(delta) = hit_button(s.cursor_x, s.cursor_y) {
+                            s.counter.count += delta;
+                            redraw(s);
+                        }
+                    }
+                    _ => {}
+                }
             }),
         )
         .register_module(
             |s| s,
-            app::module::Module::new().on(|_: &mut AppState, ev: &wayland::TouchEvent| {
-                println!("[App] Touch Event: {:?}", ev);
+            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
+                if let wayland::TouchEvent::Down { x, y, .. } = ev {
+                    if let Some(delta) = hit_button(*x, *y) {
+                        s.counter.count += delta;
+                        redraw(s);
+                    }
+                }
             }),
         );
 
     app.run();
 }
 
+fn hit_button(x: f64, y: f64) -> Option<i32> {
+    if y >= 238.0 && y <= 290.0 {
+        if x >= 60.0 && x <= 170.0 {
+            return Some(-1);
+        }
+        if x >= 230.0 && x <= 340.0 {
+            return Some(1);
+        }
+    }
+    None
+}
+
+fn redraw(s: &mut AppState) {
+    let free_idx = if !s.buf_in_flight[0] {
+        0
+    } else if !s.buf_in_flight[1] {
+        1
+    } else {
+        return;
+    };
+
+    let surface = s.dmabuf[free_idx].as_ref().unwrap();
+    s.renderer.active_surface(surface);
+    if let Some(icon_tex) = s.icon_tex {
+        render_counter_ui(&mut s.renderer, s.counter.count, icon_tex);
+        s.renderer.finish();
+    }
+
+    let (w, h) = s.surface_size;
+    s.wayland.surface.attach(s.surface_id, s.wl_buf_ids[free_idx], 0, 0);
+    s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
+
+    let cb_id = s.wayland.surface.frame(s.surface_id);
+    s.wayland.callback.register_frame(cb_id);
+
+    s.wayland.surface.commit(s.surface_id);
+    s.buf_in_flight[free_idx] = true;
+    s.wayland.flush();
+}
+
 fn render_counter_ui(
     renderer: &mut ::renderer::Renderer,
-    count: u32,
+    count: i32,
     icon_tex: ::renderer::TextureId,
 ) {
     use ::renderer::commands::*;

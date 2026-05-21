@@ -9,8 +9,8 @@ use std::rc::Rc;
 
 use io_uring::{opcode, types};
 
-use crate::ring::{IoEvent, IoToken, RingProxy};
 use crate::wire::{HEADER_SIZE, MessageHeader};
+use io_ring::{IoEvent, IoToken, RingProxy};
 
 pub mod wl_buffer;
 pub mod wl_callback;
@@ -451,11 +451,9 @@ macro_rules! register_wayland {
                 wl.init();
                 crate::wayland::Initilised
             })
-            .on(
-                |wl: &mut crate::wayland::Wayland, ev: &crate::ring::IoEvent| {
-                    wl.handle_io(ev);
-                },
-            )
+            .on(|wl: &mut crate::wayland::Wayland, ev: &io_ring::IoEvent| {
+                wl.handle_io(ev);
+            })
             .processor(|wl: &mut crate::wayland::Wayland, _: &app::PrePoll| {
                 if wl.pending.len() > 1 {
                     wl.ring_proxy.skip_next_wait();

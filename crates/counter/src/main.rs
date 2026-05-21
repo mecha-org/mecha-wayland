@@ -4,16 +4,14 @@ mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
 mod renderer;
-mod ring;
-mod timer;
 mod wayland;
 mod wire;
 
 use std::{os::fd::AsRawFd, time::Duration};
 
 use app::{App, Poll, Start, event::Event};
-use ring::Ring;
-use timer::{Timer, TimerEvent, TimerSettings};
+use io_ring::{Ring, register_ring};
+use timer::{Timer, TimerEvent, TimerSettings, register_timer};
 use wayland::Wayland;
 
 // ARGB8888 little-endian fourcc

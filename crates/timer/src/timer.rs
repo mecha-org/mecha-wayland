@@ -1,5 +1,5 @@
-use crate::ring::{IoEvent, IoToken, RingProxy};
 use app::event::Event;
+use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
 use std::{collections::HashMap, time::Duration};
 
@@ -89,8 +89,7 @@ impl Timer {
 #[macro_export]
 macro_rules! register_timer {
     () => {
-        app::module::Module::<crate::timer::Timer>::new().processor(
-            |timer: &mut crate::timer::Timer, event: &crate::ring::IoEvent| timer.try_finish(event),
-        )
+        app::module::Module::<Timer>::new()
+            .processor(|timer: &mut Timer, event: &io_ring::IoEvent| timer.try_finish(event))
     };
 }

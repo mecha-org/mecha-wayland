@@ -1,9 +1,6 @@
 use app::event::Event;
 use io_uring::{IoUring, squeue::Entry};
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::io;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::VecDeque, io, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IoToken(pub u64);
@@ -104,10 +101,10 @@ impl Ring {
     /// Temporary method to return a single event at a time.
     /// Returns `Some(IoEvent)` if an event is ready, or `None` if the queue is empty.
     pub fn poll_one(&mut self) -> Option<IoEvent> {
-        if self.ready.is_empty() {
-            if let Err(e) = self.drain_and_fill() {
-                eprintln!("Ring flush error: {}", e);
-            }
+        if self.ready.is_empty()
+            && let Err(e) = self.drain_and_fill()
+        {
+            eprintln!("Ring flush error: {}", e);
         }
         self.ready.pop_front()
     }
@@ -155,7 +152,7 @@ impl Ring {
         let mut cq = self.ring.completion();
         cq.sync();
 
-        while let Some(cqe) = cq.next() {
+        for cqe in cq {
             let token = IoToken(cqe.user_data());
             let result = cqe.result();
 
@@ -169,7 +166,7 @@ impl Ring {
 #[macro_export]
 macro_rules! register_ring {
     () => {
-        app::module::Module::<crate::ring::Ring>::new()
-            .processor(move |ring: &mut crate::ring::Ring, _: &app::Poll| ring.poll_one())
+        app::module::Module::<Ring>::new()
+            .processor(move |ring: &mut Ring, _: &app::Poll| ring.poll_one())
     };
 }

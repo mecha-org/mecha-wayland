@@ -1,33 +1,54 @@
-use crate::ring::{IoEvent, SharedRingProxy};
+use crate::ring::{IoEvent, IoToken, RingProxy};
 use app::event::Event;
 use io_uring::{opcode, types};
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TimerId(pub u64);
 
 pub struct TimerSettings {
-    pub duration: std::time::Duration,
+    pub duration: Duration,
+    pub repeat: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum TimerEvents {
-    TimerFinished { id: u64 },
+#[derive(Debug, Clone, Copy)]
+pub enum TimerEvent {
+    Finished { id: TimerId },
+    Restarted { id: TimerId },
 }
 
-impl Event for TimerEvents {}
+impl Event for TimerEvent {}
+
+struct ActiveTimer {
+    id: TimerId,
+    settings: TimerSettings,
+    ts: Box<types::Timespec>,
+}
 
 pub struct Timer {
-    ring_proxy: SharedRingProxy,
-    active: HashMap<u64, Box<types::Timespec>>,
+    ring_proxy: RingProxy,
+    active_by_token: HashMap<IoToken, ActiveTimer>,
+    next_timer_id: u64,
 }
 
 impl Timer {
-    pub fn new(ring_proxy: SharedRingProxy) -> Self {
+    pub fn new(ring_proxy: RingProxy) -> Self {
         Self {
             ring_proxy,
-            active: HashMap::new(),
+            active_by_token: HashMap::new(),
+            next_timer_id: 1,
         }
     }
 
-    pub fn start_timer(&mut self, settings: TimerSettings) -> u64 {
+    pub fn start_timer(&mut self, settings: TimerSettings) -> TimerId {
+        let id = TimerId(self.next_timer_id);
+        self.next_timer_id += 1;
+
+        self.submit_timer(id, settings);
+        id
+    }
+
+    fn submit_timer(&mut self, id: TimerId, settings: TimerSettings) -> IoToken {
         let ts = Box::new(
             types::Timespec::new()
                 .sec(settings.duration.as_secs())
@@ -35,24 +56,28 @@ impl Timer {
         );
 
         let sqe = opcode::Timeout::new(&*ts as *const _).build();
-
         let token = self.ring_proxy.push(sqe);
 
-        self.active.insert(token, ts);
-
+        self.active_by_token
+            .insert(token, ActiveTimer { id, settings, ts });
         token
     }
 
-    pub fn try_finish(&mut self, event: &IoEvent) -> Option<TimerEvents> {
+    pub fn try_finish(&mut self, event: &IoEvent) -> Option<TimerEvent> {
         match event {
             IoEvent::Completed { token, result } => {
-                if self.active.remove(token).is_some() {
-                    // Note: io_uring timeouts usually return -ETIME (-62) on success.
-                    // If result == 0, it means the timer was canceled.
+                if let Some(active) = self.active_by_token.remove(token) {
+                    // io_uring timeouts return -ETIME.
+                    // result == 0 usually indicates the timer was explicitly canceled.
                     let is_timeout = *result == -libc::ETIME || *result == 0;
 
                     if is_timeout {
-                        return Some(TimerEvents::TimerFinished { id: *token });
+                        if active.settings.repeat {
+                            self.submit_timer(active.id, active.settings);
+                            return Some(TimerEvent::Restarted { id: active.id });
+                        } else {
+                            return Some(TimerEvent::Finished { id: active.id });
+                        }
                     }
                 }
                 None

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use io_uring::{opcode, types};
 
-use crate::ring::{IoEvent, SharedRingProxy};
+use crate::ring::{IoEvent, IoToken, RingProxy};
 use crate::wire::{HEADER_SIZE, MessageHeader};
 
 pub mod wl_buffer;
@@ -87,11 +87,11 @@ pub type SharedConnection = Rc<RefCell<Connection>>;
 
 pub struct Wayland {
     conn: SharedConnection,
-    pub ring_proxy: SharedRingProxy,
+    pub ring_proxy: RingProxy,
     read_buf: Vec<u8>,
-    read_token: Option<u64>,
+    read_token: Option<IoToken>,
     write_in_flight: Vec<u8>,
-    write_token: Option<u64>,
+    write_token: Option<IoToken>,
     recv_overflow: Vec<u8>,
 
     pub pending: VecDeque<WaylandRawEvent>,
@@ -114,7 +114,7 @@ pub struct Wayland {
 }
 
 impl Wayland {
-    pub fn new(ring_proxy: SharedRingProxy) -> std::io::Result<Self> {
+    pub fn new(ring_proxy: RingProxy) -> std::io::Result<Self> {
         let xdg_runtime_dir =
             env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".into());
         let wayland_display = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
@@ -249,30 +249,32 @@ impl Wayland {
     }
 
     pub fn handle_io(&mut self, event: &IoEvent) {
-        let IoEvent::Completed { token, result } = event;
-
-        if Some(*token) == self.write_token {
-            self.write_token = None;
-            self.write_in_flight.clear();
-            self.submit_write();
-        } else if Some(*token) == self.read_token {
-            self.read_token = None;
-            if *result > 0 {
-                let new_bytes = &self.read_buf[..*result as usize];
-                // Prepend any leftover bytes from the previous read.
-                let data = if self.recv_overflow.is_empty() {
-                    new_bytes.to_vec()
-                } else {
-                    let mut buf = mem::take(&mut self.recv_overflow);
-                    buf.extend_from_slice(new_bytes);
-                    buf
-                };
-                self.process_messages(data);
-                self.submit_read();
-            } else if *result == 0 {
-                eprintln!("[Wayland] connection closed by server");
-            } else {
-                eprintln!("[Wayland] read error: {}", result);
+        match event {
+            IoEvent::Completed { token, result } => {
+                if Some(*token) == self.write_token {
+                    self.write_token = None;
+                    self.write_in_flight.clear();
+                    self.submit_write();
+                } else if Some(*token) == self.read_token {
+                    self.read_token = None;
+                    if *result > 0 {
+                        let new_bytes = &self.read_buf[..*result as usize];
+                        // Prepend any leftover bytes from the previous read.
+                        let data = if self.recv_overflow.is_empty() {
+                            new_bytes.to_vec()
+                        } else {
+                            let mut buf = mem::take(&mut self.recv_overflow);
+                            buf.extend_from_slice(new_bytes);
+                            buf
+                        };
+                        self.process_messages(data);
+                        self.submit_read();
+                    } else if *result == 0 {
+                        eprintln!("[Wayland] connection closed by server");
+                    } else {
+                        eprintln!("[Wayland] read error: {}", result);
+                    }
+                }
             }
         }
     }
@@ -455,7 +457,9 @@ macro_rules! register_wayland {
                 },
             )
             .processor(|wl: &mut crate::wayland::Wayland, _: &app::PrePoll| {
-                wl.ring_proxy.set_no_wait(wl.pending.len() > 1);
+                if wl.pending.len() > 1 {
+                    wl.ring_proxy.skip_next_wait();
+                }
                 wl.pending.pop_front()
             })
             .submodule(|wl| &mut wl.display, register_wl_display!())

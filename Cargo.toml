@@ -40,6 +40,10 @@ glow = "0.17"
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.9"
 
+
+# layouting
+taffy = "0.10.1"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

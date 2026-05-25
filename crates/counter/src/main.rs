@@ -11,11 +11,37 @@ use std::{os::fd::AsRawFd, time::Duration};
 
 use app::{App, Poll, Start, event::Event};
 use io_ring::{Ring, register_ring};
+use taffy::prelude::*;
 use timer::{Timer, TimerEvent, TimerSettings, register_timer};
 use wayland::Wayland;
 
 // ARGB8888 little-endian fourcc
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
+
+#[derive(Default, Clone, Copy, Debug)]
+struct BoundingBox {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl BoundingBox {
+    fn contains(&self, px: f64, py: f64) -> bool {
+        let px = px as f32;
+        let py = py as f32;
+        px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
+    }
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct UiLayout {
+    card: BoundingBox,
+    title: BoundingBox,
+    count: BoundingBox,
+    minus: BoundingBox,
+    plus: BoundingBox,
+}
 
 struct AppState {
     ring: Ring,
@@ -31,6 +57,7 @@ struct AppState {
     icon_tex: Option<::renderer::TextureId>,
     cursor_x: f64,
     cursor_y: f64,
+    ui_layout: UiLayout,
 }
 
 impl AppState {
@@ -54,6 +81,7 @@ impl AppState {
             icon_tex: None,
             cursor_x: 0.0,
             cursor_y: 0.0,
+            ui_layout: UiLayout::default(),
         }
     }
 }
@@ -121,6 +149,9 @@ fn main() {
                     let h = if *height == 0 { 256i32 } else { *height as i32 };
                     s.surface_size = (w, h);
 
+                    // Compute Taffy layout on Configure
+                    s.ui_layout = compute_ui_layout(w as f32, h as f32);
+
                     // Allocate double-buffered dmabuf surfaces.
                     let surface0 = s
                         .renderer
@@ -145,7 +176,12 @@ fn main() {
 
                     // Render the counter UI into surface 0 for the first frame.
                     s.renderer.active_surface(&surface0);
-                    render_counter_ui(&mut s.renderer, s.counter.count, s.icon_tex.unwrap());
+                    render_counter_ui(
+                        &mut s.renderer,
+                        s.counter.count,
+                        s.icon_tex.unwrap(),
+                        &s.ui_layout,
+                    );
                     s.renderer.finish();
 
                     s.dmabuf = [Some(surface0), Some(surface1)];
@@ -179,7 +215,7 @@ fn main() {
                 let surface = s.dmabuf[free_idx].as_ref().unwrap();
                 s.renderer.active_surface(surface);
                 if let Some(icon_tex) = s.icon_tex {
-                    render_counter_ui(&mut s.renderer, s.counter.count, icon_tex);
+                    render_counter_ui(&mut s.renderer, s.counter.count, icon_tex, &s.ui_layout);
                     s.renderer.finish();
                 }
 
@@ -236,7 +272,7 @@ fn main() {
                     wayland::PointerEvent::Button {
                         button: _, state, ..
                     } if *state == 1 => {
-                        if let Some(delta) = hit_button(s.cursor_x, s.cursor_y) {
+                        if let Some(delta) = hit_button(&s.ui_layout, s.cursor_x, s.cursor_y) {
                             s.counter.count += delta;
                             redraw(s);
                         }
@@ -249,7 +285,7 @@ fn main() {
             |s| s,
             app::module::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(*x, *y) {
+                    if let Some(delta) = hit_button(&s.ui_layout, *x, *y) {
                         s.counter.count += delta;
                         redraw(s);
                     }
@@ -276,14 +312,12 @@ fn main() {
     app.run();
 }
 
-fn hit_button(x: f64, y: f64) -> Option<i32> {
-    if y >= 238.0 && y <= 290.0 {
-        if x >= 60.0 && x <= 170.0 {
-            return Some(-1);
-        }
-        if x >= 230.0 && x <= 340.0 {
-            return Some(1);
-        }
+fn hit_button(layout: &UiLayout, x: f64, y: f64) -> Option<i32> {
+    if layout.minus.contains(x, y) {
+        return Some(-1);
+    }
+    if layout.plus.contains(x, y) {
+        return Some(1);
     }
     None
 }
@@ -300,7 +334,7 @@ fn redraw(s: &mut AppState) {
     let surface = s.dmabuf[free_idx].as_ref().unwrap();
     s.renderer.active_surface(surface);
     if let Some(icon_tex) = s.icon_tex {
-        render_counter_ui(&mut s.renderer, s.counter.count, icon_tex);
+        render_counter_ui(&mut s.renderer, s.counter.count, icon_tex, &s.ui_layout);
         s.renderer.finish();
     }
 
@@ -318,10 +352,171 @@ fn redraw(s: &mut AppState) {
     s.wayland.flush();
 }
 
+fn compute_ui_layout(width: f32, height: f32) -> UiLayout {
+    let mut taffy = TaffyTree::<()>::new();
+
+    let title = taffy
+        .new_leaf(Style {
+            size: Size {
+                width: percent(1.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+    let count_node = taffy
+        .new_leaf(Style {
+            size: Size {
+                width: percent(1.0),
+                height: length(120.0),
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+    let minus_button = taffy
+        .new_leaf(Style {
+            size: Size {
+                width: length(110.0),
+                height: length(52.0),
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+    let plus_button = taffy
+        .new_leaf(Style {
+            size: Size {
+                width: length(110.0),
+                height: length(52.0),
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+    let button_row = taffy
+        .new_with_children(
+            Style {
+                display: Display::Flex,
+                justify_content: Some(JustifyContent::SpaceBetween),
+                align_items: Some(AlignItems::Center),
+                size: Size {
+                    width: percent(1.0),
+                    height: length(52.0),
+                },
+                padding: Rect {
+                    left: length(60.0),
+                    right: length(60.0),
+                    ..Rect::zero()
+                },
+                ..Default::default()
+            },
+            &[minus_button, plus_button],
+        )
+        .unwrap();
+
+    let card = taffy
+        .new_with_children(
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: Some(AlignItems::Center),
+                size: Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                padding: Rect {
+                    top: length(16.0),
+                    ..Rect::zero()
+                },
+                gap: Size {
+                    width: zero(),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            &[title, count_node, button_row],
+        )
+        .unwrap();
+
+    taffy
+        .compute_layout(
+            card,
+            Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::Definite(height),
+            },
+        )
+        .unwrap();
+
+    let card_layout = taffy.layout(card).unwrap();
+    let title_layout = taffy.layout(title).unwrap();
+    let count_layout = taffy.layout(count_node).unwrap();
+    let row_layout = taffy.layout(button_row).unwrap();
+    let minus_layout = taffy.layout(minus_button).unwrap();
+    let plus_layout = taffy.layout(plus_button).unwrap();
+
+    UiLayout {
+        card: BoundingBox {
+            x: card_layout.location.x,
+            y: card_layout.location.y,
+            w: card_layout.size.width,
+            h: card_layout.size.height,
+        },
+        title: BoundingBox {
+            x: card_layout.location.x + title_layout.location.x,
+            y: card_layout.location.y + title_layout.location.y,
+            w: title_layout.size.width,
+            h: title_layout.size.height,
+        },
+        count: BoundingBox {
+            x: card_layout.location.x + count_layout.location.x,
+            y: card_layout.location.y + count_layout.location.y,
+            w: count_layout.size.width,
+            h: count_layout.size.height,
+        },
+        minus: BoundingBox {
+            x: card_layout.location.x + row_layout.location.x + minus_layout.location.x,
+            y: card_layout.location.y + row_layout.location.y + minus_layout.location.y,
+            w: minus_layout.size.width,
+            h: minus_layout.size.height,
+        },
+        plus: BoundingBox {
+            x: card_layout.location.x + row_layout.location.x + plus_layout.location.x,
+            y: card_layout.location.y + row_layout.location.y + plus_layout.location.y,
+            w: plus_layout.size.width,
+            h: plus_layout.size.height,
+        },
+    }
+}
+
+fn draw_centered_text(
+    renderer: &mut ::renderer::Renderer,
+    font: &'static assets::BakedFont,
+    texture_id: ::renderer::TextureId,
+    text: &str,
+    box_bounds: &BoundingBox,
+    z_index: f32,
+) {
+    let text_w = font.measure_width(text);
+    let center_x = box_bounds.x + (box_bounds.w - text_w) / 2.0;
+    let center_y = box_bounds.y + font.get_baseline_offset(box_bounds.h);
+
+    renderer.send_command(::renderer::commands::DrawText {
+        font,
+        texture_id,
+        text: text.to_string(),
+        origin: (center_x, center_y, z_index),
+        color: (1.0, 1.0, 1.0, 1.0),
+    });
+}
+
 fn render_counter_ui(
     renderer: &mut ::renderer::Renderer,
     count: i32,
     icon_tex: ::renderer::TextureId,
+    layout: &UiLayout,
 ) {
     use ::renderer::commands::*;
 
@@ -336,63 +531,67 @@ fn render_counter_ui(
     renderer.send_command(DrawQuad {
         color: (0.16, 0.16, 0.18, 1.0),
         border_color: (0.30, 0.30, 0.35, 1.0),
-        origin: (0.0, 0.0, 0.0),
-        size: (400.0, 360.0),
+        origin: (layout.card.x, layout.card.y, 0.0),
+        size: (layout.card.w, layout.card.h),
         border_radius: 20.0,
         border_thickness: 2.0,
     });
 
     // Title
-    renderer.send_command(DrawText {
-        font: &atlas::UI_FONT_INTER_24,
-        texture_id: icon_tex,
-        text: "Counter".to_string(),
-        origin: (16.0, 48.0, 0.5),
-        color: (1.0, 1.0, 1.0, 1.0),
-    });
+    draw_centered_text(
+        renderer,
+        &atlas::UI_FONT_INTER_24,
+        icon_tex,
+        "Counter",
+        &layout.title,
+        0.5,
+    );
 
     // Count value
-    renderer.send_command(DrawText {
-        font: &atlas::UI_FONT_INTER_100,
-        texture_id: icon_tex,
-        text: format!("{count}"),
-        origin: (150.0, 188.0, 0.5),
-        color: (1.0, 1.0, 1.0, 1.0),
-    });
+    draw_centered_text(
+        renderer,
+        &atlas::UI_FONT_INTER_100,
+        icon_tex,
+        &format!("{count}"),
+        &layout.count,
+        0.5,
+    );
 
     // Minus button
     renderer.send_command(DrawQuad {
         color: (0.2, 0.4, 0.9, 1.0),
         border_color: (0.4, 0.6, 1.0, 1.0),
-        origin: (60.0, 238.0, 1.0),
-        size: (110.0, 52.0),
+        origin: (layout.minus.x, layout.minus.y, 1.0),
+        size: (layout.minus.w, layout.minus.h),
         border_radius: 12.0,
         border_thickness: 2.0,
     });
-    renderer.send_command(DrawText {
-        font: &atlas::UI_FONT_INTER_24,
-        texture_id: icon_tex,
-        text: "-".to_string(),
-        origin: (105.0, 274.0, 0.4),
-        color: (1.0, 1.0, 1.0, 1.0),
-    });
+    draw_centered_text(
+        renderer,
+        &atlas::UI_FONT_INTER_24,
+        icon_tex,
+        "-",
+        &layout.minus,
+        0.4,
+    );
 
     // Plus button
     renderer.send_command(DrawQuad {
         color: (0.2, 0.7, 0.3, 1.0),
         border_color: (0.4, 0.9, 0.5, 1.0),
-        origin: (230.0, 238.0, 1.0),
-        size: (110.0, 52.0),
+        origin: (layout.plus.x, layout.plus.y, 1.0),
+        size: (layout.plus.w, layout.plus.h),
         border_radius: 12.0,
         border_thickness: 2.0,
     });
-    renderer.send_command(DrawText {
-        font: &atlas::UI_FONT_INTER_24,
-        texture_id: icon_tex,
-        text: "+".to_string(),
-        origin: (275.0, 274.0, 0.5),
-        color: (1.0, 1.0, 1.0, 1.0),
-    });
+    draw_centered_text(
+        renderer,
+        &atlas::UI_FONT_INTER_24,
+        icon_tex,
+        "+",
+        &layout.plus,
+        0.5,
+    );
 
     renderer.process_command_queue::<ClearColor>();
     renderer.process_command_queue::<DrawRect>();

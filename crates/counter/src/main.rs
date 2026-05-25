@@ -4,16 +4,14 @@ mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
 mod renderer;
-mod ring;
-mod timer;
 mod wayland;
 mod wire;
 
-use std::os::fd::AsRawFd;
+use std::{os::fd::AsRawFd, time::Duration};
 
-use app::{App, event::Event};
-use ring::Ring;
-use timer::{Timer, TimerEvents, TimerSettings};
+use app::{App, Poll, Start, event::Event};
+use io_ring::{Ring, register_ring};
+use timer::{Timer, TimerEvent, TimerSettings, register_timer};
 use wayland::Wayland;
 
 // ARGB8888 little-endian fourcc
@@ -76,7 +74,7 @@ fn main() {
     let state = AppState::new();
 
     let mut app = app::App::new(state)
-        .register_module(|s| &mut s.ring, register_ring!(1))
+        .register_module(|s| &mut s.ring, register_ring!())
         .register_module(|s| &mut s.timer, register_timer!())
         .register_module(|s| &mut s.renderer, register_renderer!())
         .register_module(|s| &mut s.wayland, register_wayland!())
@@ -142,10 +140,7 @@ fn main() {
 
                     // Upload the atlas texture once on first configure.
                     if s.icon_tex.is_none() {
-                        s.icon_tex = s
-                            .renderer
-                            .upload_atlas(atlas::UI.png_bytes)
-                            .ok();
+                        s.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
                     }
 
                     // Render the counter UI into surface 0 for the first frame.
@@ -228,21 +223,27 @@ fn main() {
         )
         .register_module(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| {
-                match ev {
-                    wayland::PointerEvent::Motion { surface_x, surface_y, .. } => {
+            app::module::Module::new().on(
+                |s: &mut AppState, ev: &wayland::PointerEvent| match ev {
+                    wayland::PointerEvent::Motion {
+                        surface_x,
+                        surface_y,
+                        ..
+                    } => {
                         s.cursor_x = *surface_x;
                         s.cursor_y = *surface_y;
                     }
-                    wayland::PointerEvent::Button { button: _, state, .. } if *state == 1 => {
+                    wayland::PointerEvent::Button {
+                        button: _, state, ..
+                    } if *state == 1 => {
                         if let Some(delta) = hit_button(s.cursor_x, s.cursor_y) {
                             s.counter.count += delta;
                             redraw(s);
                         }
                     }
                     _ => {}
-                }
-            }),
+                },
+            ),
         )
         .register_module(
             |s| s,
@@ -253,6 +254,22 @@ fn main() {
                         redraw(s);
                     }
                 }
+            }),
+        )
+        .register_module(
+            |s| s,
+            app::module::Module::new().on(|s: &mut AppState, ev: &app::Start| {
+                let id = s.timer.start_timer(TimerSettings {
+                    duration: Duration::from_secs(2),
+                    repeat: true,
+                });
+                println!("Timer Started with ID: {}", id.0);
+            }),
+        )
+        .register_module(
+            |s| s,
+            app::module::Module::new().on(|s: &mut AppState, ev: &timer::TimerEvent| {
+                println!("Timer Event: {:?}", ev);
             }),
         );
 
@@ -288,7 +305,9 @@ fn redraw(s: &mut AppState) {
     }
 
     let (w, h) = s.surface_size;
-    s.wayland.surface.attach(s.surface_id, s.wl_buf_ids[free_idx], 0, 0);
+    s.wayland
+        .surface
+        .attach(s.surface_id, s.wl_buf_ids[free_idx], 0, 0);
     s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
 
     let cb_id = s.wayland.surface.frame(s.surface_id);

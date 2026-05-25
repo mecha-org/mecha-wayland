@@ -1,8 +1,10 @@
 [workspace]
 members = [
-    "crates/renderer",
     "crates/app",
+    "crates/renderer",
     "crates/assets",
+    "crates/io-ring",
+    "crates/timer",
     "crates/counter",
 ]
 default-members = ["crates/counter"]

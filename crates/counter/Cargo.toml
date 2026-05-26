@@ -9,6 +9,7 @@ renderer = { path = "../renderer" }
 assets = { path = "../assets" }
 io-ring = { path = "../io-ring" }
 timer = { path = "../timer" }
+wayland = { path = "../wayland" }
 frunk = "0.4"
 anyhow = { workspace = true }
 glow = { workspace = true }

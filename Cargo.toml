@@ -6,6 +6,8 @@ members = [
     "crates/io-ring",
     "crates/timer",
     "crates/counter",
+    "crates/wayland",
+    "crates/wayland-gen",
 ]
 default-members = ["crates/counter"]
 resolver = "2"
@@ -31,6 +33,12 @@ quick-xml = { version = "0.39", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 crunch = "0.5"
+syn = "2.0.117"
+quote = "1.0.45"
+bitflags = "2.11.1"
+prettyplease = "0.2.37"
+proc-macro2 = "1.0"
+heck = "0.5.0"
 
 # graphics
 khronos-egl = { version = "6", features = ["dynamic"] }
@@ -39,7 +47,6 @@ glow = "0.17"
 # renderer extras
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.9"
-
 
 # layouting
 taffy = "0.10.1"

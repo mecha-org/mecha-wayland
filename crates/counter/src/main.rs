@@ -4,8 +4,6 @@ mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
 mod renderer;
-mod wayland;
-mod wire;
 
 use std::{os::fd::AsRawFd, time::Duration};
 
@@ -13,7 +11,7 @@ use app::{App, Poll, Start, event::Event};
 use io_ring::{Ring, register_ring};
 use taffy::prelude::*;
 use timer::{Timer, TimerEvent, TimerSettings, register_timer};
-use wayland::Wayland;
+use wayland::{Wayland, register_wayland};
 
 // ARGB8888 little-endian fourcc
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
@@ -109,21 +107,21 @@ fn main() {
         .register_module(
             |s| s,
             app::module::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
-                use wayland::zwlr_layer_shell::LAYER_TOP;
+                use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
 
                 let surface_id = s.wayland.compositor.create_surface();
                 s.wayland.surface.register(surface_id);
                 s.surface_id = surface_id;
 
-                let layer_surface_id = s
-                    .wayland
-                    .layer_shell
-                    .get_layer_surface(surface_id, 0, LAYER_TOP, "counter");
+                let layer_surface_id =
+                    s.wayland
+                        .layer_shell
+                        .get_layer_surface(surface_id, 0, Layer::Top, "counter");
                 s.wayland.layer_surface.register(layer_surface_id);
                 s.wayland.layer_surface.set_size(layer_surface_id, 400, 360);
                 s.wayland
                     .layer_surface
-                    .set_keyboard_interactivity(layer_surface_id, 2);
+                    .set_keyboard_interactivity(layer_surface_id, KeyboardInteractivity::OnDemand);
 
                 s.wayland.surface.commit(surface_id);
                 s.wayland.flush();
@@ -250,7 +248,7 @@ fn main() {
             app::module::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
                 println!("[App] Keyboard Event: {:?}", ev);
                 if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
-                    if (*key == 1 || *key == 16) && *state == 1 {
+                    if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
                         println!("[App] Exiting...");
                         std::process::exit(0);
                     }
@@ -271,7 +269,7 @@ fn main() {
                     }
                     wayland::PointerEvent::Button {
                         button: _, state, ..
-                    } if *state == 1 => {
+                    } if *state == wayland::ButtonState::Pressed => {
                         if let Some(delta) = hit_button(&s.ui_layout, s.cursor_x, s.cursor_y) {
                             s.counter.count += delta;
                             redraw(s);

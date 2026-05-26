@@ -167,16 +167,17 @@ where
     E: Event,
     E2: Event,
     F: Fn(&mut T, &E2) -> ProcOut,
+    ProcOut: Default,
     Tail: ProcessHandlers<T, E>,
 {
-    type Out = HCons<Option<ProcOut>, Tail::Out>;
+    type Out = HCons<ProcOut, Tail::Out>;
     fn process(&self, state: &mut T, event: &E) -> Self::Out {
         let head = if TypeId::of::<E>() == TypeId::of::<E2>() {
             // SAFETY: TypeId equality guarantees E == E2.
             let e2 = unsafe { &*(event as *const E as *const E2) };
-            Some((self.head.f)(state, e2))
+            (self.head.f)(state, e2)
         } else {
-            None
+            ProcOut::default()
         };
         HCons {
             head,
@@ -275,14 +276,28 @@ where
     }
 }
 
-impl<S, M, E, Tail> DispatchProduced<Zero, S, M> for HCons<Option<Option<E>>, Tail>
+impl<S, M, E, Tail> DispatchProduced<Zero, S, M> for HCons<Vec<E>, Tail>
 where
     E: Event,
     M: DispatchEvent<S, E>,
     Tail: DispatchProduced<Zero, S, M>,
 {
     fn dispatch_produced(self, state: &mut S, modules: &mut M) {
-        if let Some(Some(event)) = self.head {
+        for event in self.head.into_iter() {
+            modules.dispatch(state, &event);
+        }
+        self.tail.dispatch_produced(state, modules);
+    }
+}
+
+impl<S, M, E, Tail> DispatchProduced<Zero, S, M> for HCons<Vec<Option<E>>, Tail>
+where
+    E: Event,
+    M: DispatchEvent<S, E>,
+    Tail: DispatchProduced<Zero, S, M>,
+{
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        for event in self.head.into_iter().flatten() {
             modules.dispatch(state, &event);
         }
         self.tail.dispatch_produced(state, modules);
@@ -330,7 +345,7 @@ where
     }
 }
 
-impl<N, S, M, E, Tail> DispatchProduced<Succ<N>, S, M> for HCons<Option<Option<E>>, Tail>
+impl<N, S, M, E, Tail> DispatchProduced<Succ<N>, S, M> for HCons<Vec<E>, Tail>
 where
     E: Event,
     M: DispatchEvent<S, E> + ProcessHandlers<S, E>,
@@ -338,7 +353,24 @@ where
     Tail: DispatchProduced<Succ<N>, S, M>,
 {
     fn dispatch_produced(self, state: &mut S, modules: &mut M) {
-        if let Some(Some(event)) = self.head {
+        for event in self.head.into_iter() {
+            let produced = modules.process(state, &event);
+            produced.dispatch_produced(state, modules);
+            modules.dispatch(state, &event);
+        }
+        self.tail.dispatch_produced(state, modules);
+    }
+}
+
+impl<N, S, M, E, Tail> DispatchProduced<Succ<N>, S, M> for HCons<Vec<Option<E>>, Tail>
+where
+    E: Event,
+    M: DispatchEvent<S, E> + ProcessHandlers<S, E>,
+    <M as ProcessHandlers<S, E>>::Out: DispatchProduced<N, S, M>,
+    Tail: DispatchProduced<Succ<N>, S, M>,
+{
+    fn dispatch_produced(self, state: &mut S, modules: &mut M) {
+        for event in self.head.into_iter().flatten() {
             let produced = modules.process(state, &event);
             produced.dispatch_produced(state, modules);
             modules.dispatch(state, &event);

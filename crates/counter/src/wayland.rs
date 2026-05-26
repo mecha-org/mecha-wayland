@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::env;
 use std::mem;
 use std::os::fd::{IntoRawFd, RawFd};
@@ -94,8 +93,6 @@ pub struct Wayland {
     write_token: Option<IoToken>,
     recv_overflow: Vec<u8>,
 
-    pub pending: VecDeque<WaylandRawEvent>,
-
     pub display: WlDisplay,
     pub registry: WlRegistry,
     pub callback: WlCallback,
@@ -154,7 +151,6 @@ impl Wayland {
             write_in_flight: Vec::new(),
             write_token: None,
             recv_overflow: Vec::new(),
-            pending: VecDeque::new(),
         })
     }
 
@@ -248,18 +244,18 @@ impl Wayland {
         }
     }
 
-    pub fn handle_io(&mut self, event: &IoEvent) {
+    pub fn handle_io(&mut self, event: &IoEvent) -> Vec<WaylandRawEvent> {
         match event {
             IoEvent::Completed { token, result } => {
                 if Some(*token) == self.write_token {
                     self.write_token = None;
                     self.write_in_flight.clear();
                     self.submit_write();
+                    Vec::new()
                 } else if Some(*token) == self.read_token {
                     self.read_token = None;
                     if *result > 0 {
                         let new_bytes = &self.read_buf[..*result as usize];
-                        // Prepend any leftover bytes from the previous read.
                         let data = if self.recv_overflow.is_empty() {
                             new_bytes.to_vec()
                         } else {
@@ -267,19 +263,25 @@ impl Wayland {
                             buf.extend_from_slice(new_bytes);
                             buf
                         };
-                        self.process_messages(data);
+                        let events = self.parse_messages(data);
                         self.submit_read();
+                        events
                     } else if *result == 0 {
                         eprintln!("[Wayland] connection closed by server");
+                        Vec::new()
                     } else {
                         eprintln!("[Wayland] read error: {}", result);
+                        Vec::new()
                     }
+                } else {
+                    Vec::new()
                 }
             }
         }
     }
 
-    fn process_messages(&mut self, data: Vec<u8>) {
+    fn parse_messages(&mut self, data: Vec<u8>) -> Vec<WaylandRawEvent> {
+        let mut events = Vec::new();
         let mut offset = 0;
         while offset + HEADER_SIZE <= data.len() {
             let Some(header) = MessageHeader::parse(&data[offset..]) else {
@@ -287,22 +289,21 @@ impl Wayland {
             };
             let msg_size = header.size as usize;
             if msg_size < HEADER_SIZE || data[offset..].len() < msg_size {
-                // Incomplete or invalid message — save remainder for next read.
                 self.recv_overflow.extend_from_slice(&data[offset..]);
-                return;
+                return events;
             }
             let body = data[offset + HEADER_SIZE..offset + msg_size].to_vec();
-            self.pending.push_back(WaylandRawEvent {
+            events.push(WaylandRawEvent {
                 sender_id: header.sender_id,
                 opcode: header.opcode,
                 body,
             });
             offset += msg_size;
         }
-        // Save any partial header bytes for the next read.
         if offset < data.len() {
             self.recv_overflow.extend_from_slice(&data[offset..]);
         }
+        events
     }
 
     // ── async io_uring I/O ────────────────────────────────────────────────────
@@ -449,16 +450,10 @@ macro_rules! register_wayland {
         app::module::Module::<crate::wayland::Wayland>::new()
             .processor(|wl: &mut crate::wayland::Wayland, _: &app::Start| {
                 wl.init();
-                crate::wayland::Initilised
+                Some(crate::wayland::Initilised)
             })
-            .on(|wl: &mut crate::wayland::Wayland, ev: &io_ring::IoEvent| {
-                wl.handle_io(ev);
-            })
-            .processor(|wl: &mut crate::wayland::Wayland, _: &app::PrePoll| {
-                if wl.pending.len() > 1 {
-                    wl.ring_proxy.skip_next_wait();
-                }
-                wl.pending.pop_front()
+            .processor(|wl: &mut crate::wayland::Wayland, ev: &io_ring::IoEvent| {
+                wl.handle_io(ev)
             })
             .submodule(|wl| &mut wl.display, register_wl_display!())
             .submodule(|wl| &mut wl.registry, register_wl_registry!())

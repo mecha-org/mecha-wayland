@@ -74,9 +74,6 @@ impl RingProxy {
 pub struct Ring {
     ring: IoUring,
     data: Rc<RefCell<RingData>>,
-
-    // Added a temporary buffer to hold events for `poll_one`
-    ready: VecDeque<IoEvent>,
 }
 
 impl Default for Ring {
@@ -90,7 +87,6 @@ impl Ring {
         Self {
             ring: IoUring::new(settings.entries).expect("failed to create io_uring"),
             data: Rc::new(RefCell::new(RingData::new(settings.always_no_wait))),
-            ready: VecDeque::new(),
         }
     }
 
@@ -98,36 +94,14 @@ impl Ring {
         RingProxy(Rc::clone(&self.data))
     }
 
-    /// Temporary method to return a single event at a time.
-    /// Returns `Some(IoEvent)` if an event is ready, or `None` if the queue is empty.
-    pub fn poll_one(&mut self) -> Option<IoEvent> {
-        if self.ready.is_empty()
-            && let Err(e) = self.drain_and_fill()
-        {
-            eprintln!("Ring flush error: {}", e);
-        }
-        self.ready.pop_front()
-    }
-
     pub fn poll(&mut self) -> Vec<IoEvent> {
-        if let Err(e) = self.drain_and_fill() {
-            eprintln!("Ring flush error: {}", e);
-        }
-        self.ready.drain(..).collect()
-    }
-
-    fn drain_and_fill(&mut self) -> io::Result<()> {
         let mut data = self.data.borrow_mut();
 
-        // Submit pending entries carefully so we don't drop entries if the SQ is full
         if !data.pending.is_empty() {
             let mut sq = self.ring.submission();
             while !sq.is_full() {
                 if let Some(sqe) = data.pending.pop_front() {
-                    unsafe {
-                        // Push should theoretically never fail here because of `!is_full()` check
-                        let _ = sq.push(&sqe);
-                    }
+                    unsafe { let _ = sq.push(&sqe); }
                 } else {
                     break;
                 }
@@ -138,28 +112,22 @@ impl Ring {
         let always_no_wait = data.always_no_wait;
         let skip_next_wait = data.skip_next_wait;
         data.skip_next_wait = false;
-
         drop(data);
 
-        let wait_for = if always_no_wait || skip_next_wait {
-            0
-        } else {
-            1
-        };
+        let wait_for = if always_no_wait || skip_next_wait { 0 } else { 1 };
 
-        self.ring.submit_and_wait(wait_for)?;
+        if let Err(e) = self.ring.submit_and_wait(wait_for) {
+            eprintln!("Ring flush error: {}", e);
+            return Vec::new();
+        }
 
         let mut cq = self.ring.completion();
         cq.sync();
-
-        for cqe in cq {
-            let token = IoToken(cqe.user_data());
-            let result = cqe.result();
-
-            self.ready.push_back(IoEvent::Completed { token, result });
-        }
-
-        Ok(())
+        cq.map(|cqe| IoEvent::Completed {
+            token: IoToken(cqe.user_data()),
+            result: cqe.result(),
+        })
+        .collect()
     }
 }
 
@@ -167,6 +135,6 @@ impl Ring {
 macro_rules! register_ring {
     () => {
         app::module::Module::<Ring>::new()
-            .processor(move |ring: &mut Ring, _: &app::Poll| ring.poll_one())
+            .processor(move |ring: &mut Ring, _: &app::Poll| ring.poll())
     };
 }

@@ -7,7 +7,7 @@ members = [
     "crates/timer",
     "crates/counter",
     "crates/wayland",
-    "crates/wayland-gen",
+    "crates/wayland-gen", "crates/layout", "crates/layout-macro",
 ]
 default-members = ["crates/counter"]
 resolver = "2"

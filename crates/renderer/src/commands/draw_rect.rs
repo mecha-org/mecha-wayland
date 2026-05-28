@@ -76,7 +76,6 @@ impl CommandQueue<DrawRect> for RectQueue {
                   vec2 center = aOrigin.xy + aSize * 0.5;
                   vec2 pixelPos = vec2(aPos.x, -aPos.y) * aSize + center;
                   vec2 ndc = pixelPos * uViewportInvRes - 1.0;
-                  ndc.y = -ndc.y;
                   gl_Position = vec4(ndc, aOrigin.z, 1.0);
                   vColor = aColor;
                 }
@@ -180,7 +179,11 @@ impl CommandQueue<DrawRect> for RectQueue {
                     gl.disable(glow::BLEND);
 
                     let verts = build_rect_verts(&sorted);
-                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                    gl.buffer_data_u8_slice(
+                        glow::ARRAY_BUFFER,
+                        bytemuck::cast_slice(&verts),
+                        glow::STREAM_DRAW,
+                    );
                     gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
                 }
 
@@ -198,7 +201,11 @@ impl CommandQueue<DrawRect> for RectQueue {
                     );
 
                     let verts = build_rect_verts(&sorted);
-                    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                    gl.buffer_data_u8_slice(
+                        glow::ARRAY_BUFFER,
+                        bytemuck::cast_slice(&verts),
+                        glow::STREAM_DRAW,
+                    );
                     gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
                 }
 

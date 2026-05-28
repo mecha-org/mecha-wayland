@@ -9,7 +9,7 @@ use std::{os::fd::AsRawFd, time::Duration};
 
 use app::{App, Poll, Start, event::Event};
 use io_ring::{Ring, register_ring};
-use taffy::prelude::*;
+use layout::layout;
 use timer::{Timer, TimerEvent, TimerSettings, register_timer};
 use wayland::{Wayland, register_wayland};
 
@@ -33,10 +33,7 @@ impl BoundingBox {
 }
 
 #[derive(Default, Clone, Copy, Debug)]
-struct UiLayout {
-    card: BoundingBox,
-    title: BoundingBox,
-    count: BoundingBox,
+struct HitBoxes {
     minus: BoundingBox,
     plus: BoundingBox,
 }
@@ -55,7 +52,7 @@ struct AppState {
     icon_tex: Option<::renderer::TextureId>,
     cursor_x: f64,
     cursor_y: f64,
-    ui_layout: UiLayout,
+    hit_boxes: HitBoxes,
 }
 
 impl AppState {
@@ -79,7 +76,7 @@ impl AppState {
             icon_tex: None,
             cursor_x: 0.0,
             cursor_y: 0.0,
-            ui_layout: UiLayout::default(),
+            hit_boxes: HitBoxes::default(),
         }
     }
 }
@@ -147,9 +144,6 @@ fn main() {
                     let h = if *height == 0 { 256i32 } else { *height as i32 };
                     s.surface_size = (w, h);
 
-                    // Compute Taffy layout on Configure
-                    s.ui_layout = compute_ui_layout(w as f32, h as f32);
-
                     // Allocate double-buffered dmabuf surfaces.
                     let surface0 = s
                         .renderer
@@ -174,11 +168,12 @@ fn main() {
 
                     // Render the counter UI into surface 0 for the first frame.
                     s.renderer.active_surface(&surface0);
-                    render_counter_ui(
+                    s.hit_boxes = render_counter_ui(
                         &mut s.renderer,
+                        w as f32,
+                        h as f32,
                         s.counter.count,
                         s.icon_tex.unwrap(),
-                        &s.ui_layout,
                     );
                     s.renderer.finish();
 
@@ -213,7 +208,14 @@ fn main() {
                 let surface = s.dmabuf[free_idx].as_ref().unwrap();
                 s.renderer.active_surface(surface);
                 if let Some(icon_tex) = s.icon_tex {
-                    render_counter_ui(&mut s.renderer, s.counter.count, icon_tex, &s.ui_layout);
+                    let (w, h) = s.surface_size;
+                    s.hit_boxes = render_counter_ui(
+                        &mut s.renderer,
+                        w as f32,
+                        h as f32,
+                        s.counter.count,
+                        icon_tex,
+                    );
                     s.renderer.finish();
                 }
 
@@ -270,7 +272,7 @@ fn main() {
                     wayland::PointerEvent::Button {
                         button: _, state, ..
                     } if *state == wayland::ButtonState::Pressed => {
-                        if let Some(delta) = hit_button(&s.ui_layout, s.cursor_x, s.cursor_y) {
+                        if let Some(delta) = hit_button(&s.hit_boxes, s.cursor_x, s.cursor_y) {
                             s.counter.count += delta;
                             redraw(s);
                         }
@@ -283,7 +285,7 @@ fn main() {
             |s| s,
             app::module::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(&s.ui_layout, *x, *y) {
+                    if let Some(delta) = hit_button(&s.hit_boxes, *x, *y) {
                         s.counter.count += delta;
                         redraw(s);
                     }
@@ -310,11 +312,11 @@ fn main() {
     app.run();
 }
 
-fn hit_button(layout: &UiLayout, x: f64, y: f64) -> Option<i32> {
-    if layout.minus.contains(x, y) {
+fn hit_button(hit_boxes: &HitBoxes, x: f64, y: f64) -> Option<i32> {
+    if hit_boxes.minus.contains(x, y) {
         return Some(-1);
     }
-    if layout.plus.contains(x, y) {
+    if hit_boxes.plus.contains(x, y) {
         return Some(1);
     }
     None
@@ -332,7 +334,14 @@ fn redraw(s: &mut AppState) {
     let surface = s.dmabuf[free_idx].as_ref().unwrap();
     s.renderer.active_surface(surface);
     if let Some(icon_tex) = s.icon_tex {
-        render_counter_ui(&mut s.renderer, s.counter.count, icon_tex, &s.ui_layout);
+        let (w, h) = s.surface_size;
+        s.hit_boxes = render_counter_ui(
+            &mut s.renderer,
+            w as f32,
+            h as f32,
+            s.counter.count,
+            icon_tex,
+        );
         s.renderer.finish();
     }
 
@@ -348,145 +357,6 @@ fn redraw(s: &mut AppState) {
     s.wayland.surface.commit(s.surface_id);
     s.buf_in_flight[free_idx] = true;
     s.wayland.flush();
-}
-
-fn compute_ui_layout(width: f32, height: f32) -> UiLayout {
-    let mut taffy = TaffyTree::<()>::new();
-
-    let title = taffy
-        .new_leaf(Style {
-            size: Size {
-                width: percent(1.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        })
-        .unwrap();
-
-    let count_node = taffy
-        .new_leaf(Style {
-            size: Size {
-                width: percent(1.0),
-                height: length(120.0),
-            },
-            ..Default::default()
-        })
-        .unwrap();
-
-    let minus_button = taffy
-        .new_leaf(Style {
-            size: Size {
-                width: length(110.0),
-                height: length(52.0),
-            },
-            ..Default::default()
-        })
-        .unwrap();
-
-    let plus_button = taffy
-        .new_leaf(Style {
-            size: Size {
-                width: length(110.0),
-                height: length(52.0),
-            },
-            ..Default::default()
-        })
-        .unwrap();
-
-    let button_row = taffy
-        .new_with_children(
-            Style {
-                display: Display::Flex,
-                justify_content: Some(JustifyContent::SpaceBetween),
-                align_items: Some(AlignItems::Center),
-                size: Size {
-                    width: percent(1.0),
-                    height: length(52.0),
-                },
-                padding: Rect {
-                    left: length(60.0),
-                    right: length(60.0),
-                    ..Rect::zero()
-                },
-                ..Default::default()
-            },
-            &[minus_button, plus_button],
-        )
-        .unwrap();
-
-    let card = taffy
-        .new_with_children(
-            Style {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                align_items: Some(AlignItems::Center),
-                size: Size {
-                    width: length(width),
-                    height: length(height),
-                },
-                padding: Rect {
-                    top: length(16.0),
-                    ..Rect::zero()
-                },
-                gap: Size {
-                    width: zero(),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            &[title, count_node, button_row],
-        )
-        .unwrap();
-
-    taffy
-        .compute_layout(
-            card,
-            Size {
-                width: AvailableSpace::Definite(width),
-                height: AvailableSpace::Definite(height),
-            },
-        )
-        .unwrap();
-
-    let card_layout = taffy.layout(card).unwrap();
-    let title_layout = taffy.layout(title).unwrap();
-    let count_layout = taffy.layout(count_node).unwrap();
-    let row_layout = taffy.layout(button_row).unwrap();
-    let minus_layout = taffy.layout(minus_button).unwrap();
-    let plus_layout = taffy.layout(plus_button).unwrap();
-
-    UiLayout {
-        card: BoundingBox {
-            x: card_layout.location.x,
-            y: card_layout.location.y,
-            w: card_layout.size.width,
-            h: card_layout.size.height,
-        },
-        title: BoundingBox {
-            x: card_layout.location.x + title_layout.location.x,
-            y: card_layout.location.y + title_layout.location.y,
-            w: title_layout.size.width,
-            h: title_layout.size.height,
-        },
-        count: BoundingBox {
-            x: card_layout.location.x + count_layout.location.x,
-            y: card_layout.location.y + count_layout.location.y,
-            w: count_layout.size.width,
-            h: count_layout.size.height,
-        },
-        minus: BoundingBox {
-            x: card_layout.location.x + row_layout.location.x + minus_layout.location.x,
-            y: card_layout.location.y + row_layout.location.y + minus_layout.location.y,
-            w: minus_layout.size.width,
-            h: minus_layout.size.height,
-        },
-        plus: BoundingBox {
-            x: card_layout.location.x + row_layout.location.x + plus_layout.location.x,
-            y: card_layout.location.y + row_layout.location.y + plus_layout.location.y,
-            w: plus_layout.size.width,
-            h: plus_layout.size.height,
-        },
-    }
 }
 
 fn draw_centered_text(
@@ -512,11 +382,15 @@ fn draw_centered_text(
 
 fn render_counter_ui(
     renderer: &mut ::renderer::Renderer,
+    win_w: f32,
+    win_h: f32,
     count: i32,
     icon_tex: ::renderer::TextureId,
-    layout: &UiLayout,
-) {
+) -> HitBoxes {
     use ::renderer::commands::*;
+
+    let mut hit_boxes = HitBoxes::default();
+    let count_str = format!("{count}");
 
     renderer.send_command(ClearColor {
         r: 0.32,
@@ -525,70 +399,73 @@ fn render_counter_ui(
         a: 1.0,
     });
 
-    // Card background
-    renderer.send_command(DrawQuad {
-        color: (0.16, 0.16, 0.18, 1.0),
-        border_color: (0.30, 0.30, 0.35, 1.0),
-        origin: (layout.card.x, layout.card.y, 0.0),
-        size: (layout.card.w, layout.card.h),
-        border_radius: 20.0,
-        border_thickness: 2.0,
-    });
+    layout!(
+        {
+            available_width: win_w,
+            available_height: win_h,
+            direction: column,
+            gap: 40.0,
+            padding_top: 16.0,
 
-    // Title
-    draw_centered_text(
-        renderer,
-        &atlas::UI_FONT_INTER_24,
-        icon_tex,
-        "Counter",
-        &layout.title,
-        0.5,
-    );
+            layout!({ height: 50.0 }, {
+                let bb = BoundingBox { x, y, w: width, h: height };
+                draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "Counter", &bb, 0.95);
+            }),
+            layout!({ height: 120.0 }, {
+                let bb = BoundingBox { x, y, w: width, h: height };
+                draw_centered_text(renderer, &atlas::UI_FONT_INTER_100, icon_tex, &count_str, &bb, 0.95);
+            }),
+            layout!({
+                direction: row,
+                height: 52.0,
+                padding_left: 60.0,
+                padding_right: 60.0,
+                justify: space_between,
 
-    // Count value
-    draw_centered_text(
-        renderer,
-        &atlas::UI_FONT_INTER_100,
-        icon_tex,
-        &format!("{count}"),
-        &layout.count,
-        0.5,
-    );
-
-    // Minus button
-    renderer.send_command(DrawQuad {
-        color: (0.2, 0.4, 0.9, 1.0),
-        border_color: (0.4, 0.6, 1.0, 1.0),
-        origin: (layout.minus.x, layout.minus.y, 1.0),
-        size: (layout.minus.w, layout.minus.h),
-        border_radius: 12.0,
-        border_thickness: 2.0,
-    });
-    draw_centered_text(
-        renderer,
-        &atlas::UI_FONT_INTER_24,
-        icon_tex,
-        "-",
-        &layout.minus,
-        0.4,
-    );
-
-    // Plus button
-    renderer.send_command(DrawQuad {
-        color: (0.2, 0.7, 0.3, 1.0),
-        border_color: (0.4, 0.9, 0.5, 1.0),
-        origin: (layout.plus.x, layout.plus.y, 1.0),
-        size: (layout.plus.w, layout.plus.h),
-        border_radius: 12.0,
-        border_thickness: 2.0,
-    });
-    draw_centered_text(
-        renderer,
-        &atlas::UI_FONT_INTER_24,
-        icon_tex,
-        "+",
-        &layout.plus,
-        0.5,
+                layout!({ width: 110.0, height: 52.0 }, {
+                    let bb = BoundingBox { x, y, w: width, h: height };
+                    renderer.send_command(DrawQuad {
+                        color: (0.2, 0.4, 0.9, 1.0),
+                        border_color: (0.4, 0.6, 1.0, 1.0),
+                        origin: (bb.x, bb.y, 1.0),
+                        size: (bb.w, bb.h),
+                        border_radius: 12.0,
+                        border_thickness: 2.0,
+                    });
+                    draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "-", &bb, 0.4);
+                    hit_boxes.minus = bb;
+                }),
+                layout!({ width: 110.0, height: 52.0 }, {
+                    let bb = BoundingBox { x, y, w: width, h: height };
+                    renderer.send_command(DrawQuad {
+                        color: (0.2, 0.7, 0.3, 1.0),
+                        border_color: (0.4, 0.9, 0.5, 1.0),
+                        origin: (bb.x, bb.y, 1.0),
+                        size: (bb.w, bb.h),
+                        border_radius: 12.0,
+                        border_thickness: 2.0,
+                    });
+                    draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "+", &bb, 0.5);
+                    hit_boxes.plus = bb;
+                }),
+            }, {
+                renderer.send_command(DrawRect {
+                    color: (0.8, 0.8, 0.8, 1.0),
+                    origin: (x, y, 0.9),
+                    size: (width, height),
+                });
+            }),
+        },
+        {
+            renderer.send_command(DrawQuad {
+                color: (0.16, 0.16, 0.18, 1.0),
+                border_color: (0.30, 0.30, 0.35, 1.0),
+                origin: (x, y, 0.0),
+                size: (width, height),
+                border_radius: 20.0,
+                border_thickness: 2.0,
+            });
+        }
     );
 
     renderer.process_command_queue::<ClearColor>();
@@ -596,6 +473,8 @@ fn render_counter_ui(
     renderer.process_command_queue::<DrawQuad>();
     renderer.process_command_queue::<DrawMonochromeSprite>();
     renderer.process_command_queue::<DrawText>();
+
+    hit_boxes
 }
 
 /// Allocates a `zwp_linux_buffer_params_v1`, submits one plane's fd + metadata,

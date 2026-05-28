@@ -17,6 +17,12 @@ impl Event for PrePoll {}
 pub struct Poll;
 impl Event for Poll {}
 
+pub struct PostPoll;
+impl Event for PostPoll {}
+
+pub struct End;
+impl Event for End {}
+
 pub struct Start;
 impl Event for Start {}
 
@@ -82,11 +88,17 @@ impl<S, Modules> App<S, Modules> {
         <Modules as ProcessHandlers<S, PrePoll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
         Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
         <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
+        Modules: DispatchEvent<S, PostPoll> + ProcessHandlers<S, PostPoll>,
+        <Modules as ProcessHandlers<S, PostPoll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
+        Modules: DispatchEvent<S, End> + ProcessHandlers<S, End>,
+        <Modules as ProcessHandlers<S, End>>::Out: DispatchProduced<MaxDepth, S, Modules>,
     {
         self.dispatch(Start);
         loop {
             self.dispatch(PrePoll);
             self.dispatch(Poll);
+            self.dispatch(PostPoll);
         }
+        self.dispatch(End);
     }
 }

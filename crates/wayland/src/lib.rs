@@ -440,7 +440,7 @@ macro_rules! register_wayland {
         app::module::Module::<$crate::Wayland>::new()
             .processor(|wl: &mut $crate::Wayland, _: &app::Start| {
                 wl.init();
-                $crate::Initilised
+                Some($crate::Initilised)
             })
             .on(|wl: &mut $crate::Wayland, ev: &io_ring::IoEvent| {
                 wl.handle_io(ev);

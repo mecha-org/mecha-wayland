@@ -1,104 +1,135 @@
-#![recursion_limit = "512"]
-
-use frunk::{HCons, HNil};
+use std::any::TypeId;
 use std::marker::PhantomData;
 
-use crate::{
-    event::{DispatchEvent, DispatchProduced, Event, MaxDepth, ProcessHandlers},
-    module::{IsModule, MountedModule},
-};
+use frunk::{HCons, HNil};
 
-pub mod event;
-pub mod module;
+pub trait Event: 'static {}
 
-pub struct PrePoll;
-impl Event for PrePoll {}
+// Monomorphic wrapper that binds handler to a specific (S, E) pair.
+// Without this, HCons<F, T> can't constrain S and E1 in its impl.
+pub struct Handler<S, E, F: Fn(&mut S, &E)> {
+    f: F,
+    _phantom: PhantomData<fn(&mut S, &E)>,
+}
 
-pub struct Poll;
-impl Event for Poll {}
-
-pub struct PostPoll;
-impl Event for PostPoll {}
-
-pub struct End;
-impl Event for End {}
-
-pub struct Start;
-impl Event for Start {}
-
-pub struct App<S, Modules = HNil> {
-    pub state: S,
-    pub modules: Modules,
+pub struct App<S, M: Dispatcher<S>> {
+    pub(crate) state: S,
+    pub(crate) modules: M,
 }
 
 impl<S> App<S, HNil> {
     pub fn new(state: S) -> Self {
-        App {
+        Self {
             state,
             modules: HNil,
         }
     }
 }
 
-impl<S, Modules> App<S, Modules> {
-    pub fn register_module<T, L, M>(
+impl<S, M: Dispatcher<S>> App<S, M> {
+    pub fn state(&self) -> &S {
+        &self.state
+    }
+
+    pub fn register_module<T, H: Dispatcher<T>, L>(
         self,
         lens: L,
-        module: M,
-    ) -> App<S, HCons<MountedModule<S, T, L, M::Handlers>, Modules>>
+        module: Module<T, H>,
+    ) -> App<S, HCons<RegisteredModule<S, T, H, L>, M>>
     where
         L: Fn(&mut S) -> &mut T,
-        M: IsModule<T>,
+        HCons<RegisteredModule<S, T, H, L>, M>: Dispatcher<S>,
     {
         App {
             state: self.state,
             modules: HCons {
-                head: MountedModule {
+                head: RegisteredModule {
                     lens,
-                    handlers: module.into_handlers(),
-                    _marker: PhantomData,
+                    module,
+                    _phantom: PhantomData,
                 },
                 tail: self.modules,
             },
         }
     }
 
-    pub fn dispatch<E: Event>(&mut self, event: E)
-    where
-        Modules: DispatchEvent<S, E> + ProcessHandlers<S, E>,
-        <Modules as ProcessHandlers<S, E>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-    {
-        let produced = self.modules.process(&mut self.state, &event);
-        produced.dispatch_produced(&mut self.state, &mut self.modules);
-        self.modules.dispatch(&mut self.state, &event);
+    pub fn dispatch<E: Event>(&mut self, event: &E) {
+        self.modules.dispatch(event, &mut self.state);
     }
+}
 
-    pub fn process<E: Event>(&mut self, event: E) -> <Modules as ProcessHandlers<S, E>>::Out
-    where
-        Modules: ProcessHandlers<S, E>,
-    {
-        self.modules.process(&mut self.state, &event)
-    }
+pub trait Dispatcher<S> {
+    fn dispatch<E: Event>(&mut self, event: &E, state: &mut S);
+}
 
-    pub fn run(&mut self)
-    where
-        Modules: DispatchEvent<S, Start> + ProcessHandlers<S, Start>,
-        <Modules as ProcessHandlers<S, Start>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-        Modules: DispatchEvent<S, PrePoll> + ProcessHandlers<S, PrePoll>,
-        <Modules as ProcessHandlers<S, PrePoll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-        Modules: DispatchEvent<S, Poll> + ProcessHandlers<S, Poll>,
-        <Modules as ProcessHandlers<S, Poll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-        Modules: DispatchEvent<S, PostPoll> + ProcessHandlers<S, PostPoll>,
-        <Modules as ProcessHandlers<S, PostPoll>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-        Modules: DispatchEvent<S, End> + ProcessHandlers<S, End>,
-        <Modules as ProcessHandlers<S, End>>::Out: DispatchProduced<MaxDepth, S, Modules>,
-    {
-        self.dispatch(Start);
-        loop {
-            self.dispatch(PrePoll);
-            self.dispatch(Poll);
-            self.dispatch(PostPoll);
+impl<S> Dispatcher<S> for HNil {
+    fn dispatch<E: Event>(&mut self, _: &E, _: &mut S) {}
+}
+
+impl<S, E1: Event, F: Fn(&mut S, &E1), Tail: Dispatcher<S>> Dispatcher<S>
+    for HCons<Handler<S, E1, F>, Tail>
+{
+    fn dispatch<E2: Event>(&mut self, event: &E2, state: &mut S) {
+        if TypeId::of::<E2>() == TypeId::of::<E1>() {
+            // SAFETY: TypeId equality guarantees E2 and E1 are the same type,
+            // so reinterpreting the pointer is sound.
+            let e = unsafe { &*(event as *const E2 as *const E1) };
+            (self.head.f)(state, e);
         }
-        self.dispatch(End);
+        self.tail.dispatch(event, state);
+    }
+}
+
+impl<S, T, H: Dispatcher<T>, L: Fn(&mut S) -> &mut T, Tail: Dispatcher<S>> Dispatcher<S>
+    for HCons<RegisteredModule<S, T, H, L>, Tail>
+{
+    fn dispatch<E: Event>(&mut self, event: &E, state: &mut S) {
+        let sub = (self.head.lens)(state);
+        self.head.module.handlers.dispatch(event, sub);
+        self.tail.dispatch(event, state);
+    }
+}
+
+impl<S, H: Dispatcher<S>> Dispatcher<S> for Module<S, H> {
+    fn dispatch<E: Event>(&mut self, event: &E, state: &mut S) {
+        self.handlers.dispatch(event, state);
+    }
+}
+
+pub struct RegisteredModule<S, T, H: Dispatcher<T>, L: Fn(&mut S) -> &mut T> {
+    pub(crate) lens: L,
+    pub(crate) module: Module<T, H>,
+    pub(crate) _phantom: PhantomData<S>,
+}
+
+pub struct Module<S, H: Dispatcher<S>> {
+    _phantom: PhantomData<S>,
+    handlers: H,
+}
+
+impl<S> Module<S, HNil> {
+    pub fn new() -> Self {
+        Self {
+            _phantom: PhantomData,
+            handlers: HNil,
+        }
+    }
+}
+
+impl<S, H: Dispatcher<S>> Module<S, H> {
+    pub fn on<E: Event>(
+        self,
+        f: impl Fn(&mut S, &E),
+    ) -> Module<S, HCons<Handler<S, E, impl Fn(&mut S, &E)>, H>> {
+        Module {
+            _phantom: PhantomData,
+            handlers: HCons {
+                head: Handler {
+                    f,
+                    _phantom: PhantomData,
+                },
+                tail: self.handlers,
+            },
+        }
     }
 }

@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::proto::wl_keyboard as proto;
@@ -118,10 +118,7 @@ impl WlKeyboard {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_keyboard {
-    () => {
-        app::module::Module::<$crate::WlKeyboard>::new()
-            .processor(|s: &mut $crate::WlKeyboard, ev: &$crate::WaylandRawEvent| s.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlKeyboard, AppState> {
+    app::Module::<WlKeyboard, _, _>::new()
+        .on(|s: &mut WlKeyboard, ev: &crate::WaylandRawEvent| s.process(ev))
 }

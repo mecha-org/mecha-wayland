@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::os::fd::RawFd;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::{SharedConnection, WaylandRawEvent, parse, send};
@@ -116,13 +116,7 @@ impl ZwpLinuxBufferParamsV1 {
     }
 }
 
-#[macro_export]
-macro_rules! register_zwp_linux_dmabuf {
-    () => {
-        app::module::Module::<$crate::ZwpLinuxDmabufV1>::new().processor(
-            |d: &mut $crate::ZwpLinuxDmabufV1, ev: &$crate::WaylandRawEvent| {
-                d.process(ev)
-            },
-        )
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<ZwpLinuxDmabufV1, AppState> {
+    app::Module::<ZwpLinuxDmabufV1, _, _>::new()
+        .on(|d: &mut ZwpLinuxDmabufV1, ev: &crate::WaylandRawEvent| d.process(ev))
 }

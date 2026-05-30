@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 
 use crate::proto::wl_display as proto;
 use crate::proto::{Handle, WaylandParse};
@@ -87,10 +87,7 @@ impl WlDisplay {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_display {
-    () => {
-        app::module::Module::<$crate::WlDisplay>::new()
-            .processor(|d: &mut $crate::WlDisplay, ev: &$crate::WaylandRawEvent| d.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlDisplay, AppState> {
+    app::Module::<WlDisplay, _, _>::new()
+        .on(|d: &mut WlDisplay, ev: &crate::WaylandRawEvent| d.process(ev))
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::wl_surface as proto;
 use crate::proto::Handle;
@@ -68,11 +68,7 @@ impl WlSurface {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_surface {
-    () => {
-        app::module::Module::<$crate::WlSurface>::new().processor(
-            |s: &mut $crate::WlSurface, ev: &$crate::WaylandRawEvent| s.process(ev),
-        )
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlSurface, AppState> {
+    app::Module::<WlSurface, _, _>::new()
+        .on(|s: &mut WlSurface, ev: &crate::WaylandRawEvent| s.process(ev))
 }

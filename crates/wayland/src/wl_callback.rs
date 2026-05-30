@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::proto::wl_callback as proto;
@@ -67,10 +67,7 @@ impl WlCallback {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_callback {
-    () => {
-        app::module::Module::<$crate::WlCallback>::new()
-            .processor(|c: &mut $crate::WlCallback, ev: &$crate::WaylandRawEvent| c.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlCallback, AppState> {
+    app::Module::<WlCallback, _, _>::new()
+        .on(|c: &mut WlCallback, ev: &crate::WaylandRawEvent| c.process(ev))
 }

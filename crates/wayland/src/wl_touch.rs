@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 
 use crate::proto::wl_touch as proto;
 use crate::proto::Handle;
@@ -61,11 +61,7 @@ impl WlTouch {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_touch {
-    () => {
-        app::module::Module::<$crate::WlTouch>::new().processor(
-            |s: &mut $crate::WlTouch, ev: &$crate::WaylandRawEvent| s.process(ev),
-        )
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlTouch, AppState> {
+    app::Module::<WlTouch, _, _>::new()
+        .on(|s: &mut WlTouch, ev: &crate::WaylandRawEvent| s.process(ev))
 }

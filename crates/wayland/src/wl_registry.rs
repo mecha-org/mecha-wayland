@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::proto::wl_registry as proto;
@@ -102,10 +102,7 @@ impl WlRegistry {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_registry {
-    () => {
-        app::module::Module::<$crate::WlRegistry>::new()
-            .processor(|r: &mut $crate::WlRegistry, ev: &$crate::WaylandRawEvent| r.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlRegistry, AppState> {
+    app::Module::<WlRegistry, _, _>::new()
+        .on(|r: &mut WlRegistry, ev: &crate::WaylandRawEvent| r.process(ev))
 }

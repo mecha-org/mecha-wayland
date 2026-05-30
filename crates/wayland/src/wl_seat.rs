@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 
 use crate::proto::wl_seat as proto;
 use crate::proto::Handle;
@@ -67,11 +67,7 @@ impl WlSeat {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_seat {
-    () => {
-        app::module::Module::<$crate::WlSeat>::new().processor(
-            |s: &mut $crate::WlSeat, ev: &$crate::WaylandRawEvent| s.process(ev),
-        )
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlSeat, AppState> {
+    app::Module::<WlSeat, _, _>::new()
+        .on(|s: &mut WlSeat, ev: &crate::WaylandRawEvent| s.process(ev))
 }

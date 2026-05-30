@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::proto::wl_shm as proto;
@@ -153,10 +153,7 @@ pub fn mmap_shm(fd: RawFd, size: usize) -> *mut u8 {
     ptr as *mut u8
 }
 
-#[macro_export]
-macro_rules! register_wl_shm {
-    () => {
-        app::module::Module::<crate::WlShm>::new()
-            .processor(|s: &mut crate::WlShm, ev: &crate::WaylandRawEvent| s.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlShm, AppState> {
+    app::Module::<WlShm, _, _>::new()
+        .on(|s: &mut WlShm, ev: &crate::WaylandRawEvent| s.process(ev))
 }

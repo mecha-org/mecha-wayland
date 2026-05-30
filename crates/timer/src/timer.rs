@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
 use std::{collections::HashMap, time::Duration};
@@ -86,10 +86,7 @@ impl Timer {
     }
 }
 
-#[macro_export]
-macro_rules! register_timer {
-    () => {
-        app::module::Module::<Timer>::new()
-            .processor(|timer: &mut Timer, event: &io_ring::IoEvent| timer.try_finish(event))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<Timer, AppState> {
+    app::Module::<Timer, _, _>::new()
+        .on(|timer: &mut Timer, event: &io_ring::IoEvent| timer.try_finish(event))
 }

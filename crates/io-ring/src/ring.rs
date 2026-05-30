@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 use io_uring::{IoUring, squeue::Entry};
 use std::{cell::RefCell, collections::VecDeque, io, rc::Rc};
 
@@ -101,7 +101,9 @@ impl Ring {
             let mut sq = self.ring.submission();
             while !sq.is_full() {
                 if let Some(sqe) = data.pending.pop_front() {
-                    unsafe { let _ = sq.push(&sqe); }
+                    unsafe {
+                        let _ = sq.push(&sqe);
+                    }
                 } else {
                     break;
                 }
@@ -114,7 +116,11 @@ impl Ring {
         data.skip_next_wait = false;
         drop(data);
 
-        let wait_for = if always_no_wait || skip_next_wait { 0 } else { 1 };
+        let wait_for = if always_no_wait || skip_next_wait {
+            0
+        } else {
+            1
+        };
 
         if let Err(e) = self.ring.submit_and_wait(wait_for) {
             eprintln!("Ring flush error: {}", e);
@@ -131,10 +137,7 @@ impl Ring {
     }
 }
 
-#[macro_export]
-macro_rules! register_ring {
-    () => {
-        app::module::Module::<Ring>::new()
-            .processor(move |ring: &mut Ring, _: &app::Poll| ring.poll())
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<Ring, AppState> {
+    app::Module::<Ring, _, _>::new()
+        .on(|ring: &mut Ring, _: &app::Poll| app::Many(ring.poll().into_iter()))
 }

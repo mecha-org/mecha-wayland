@@ -40,14 +40,16 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use app::RegisteredModule as _;
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
 
 use crate::wire::{HEADER_SIZE, MessageBuilder, MessageHeader};
 use proto::{Handle, WaylandInterface, WaylandParse, WaylandSend};
 
+#[derive(Debug)]
 pub struct Initilised;
-impl app::event::Event for Initilised {}
+impl app::Event for Initilised {}
 
 #[derive(Debug)]
 pub struct WaylandRawEvent {
@@ -56,7 +58,7 @@ pub struct WaylandRawEvent {
     pub body: Vec<u8>,
 }
 
-impl app::event::Event for WaylandRawEvent {}
+impl app::Event for WaylandRawEvent {}
 
 // ── send / parse free functions ───────────────────────────────────────────────
 
@@ -434,56 +436,50 @@ impl Wayland {
     }
 }
 
-#[macro_export]
-macro_rules! register_wayland {
-    () => {
-        app::module::Module::<$crate::Wayland>::new()
-            .processor(|wl: &mut $crate::Wayland, _: &app::Start| {
-                wl.init();
-                Some($crate::Initilised)
-            })
-            .on(|wl: &mut $crate::Wayland, ev: &io_ring::IoEvent| {
-                wl.handle_io(ev);
-            })
-            .processor(|wl: &mut $crate::Wayland, _: &app::PrePoll| {
-                if wl.pending.len() > 1 {
-                    wl.ring_proxy.skip_next_wait();
-                }
-                wl.pending.pop_front()
-            })
-            .submodule(|wl| &mut wl.display, $crate::register_wl_display!())
-            .submodule(|wl| &mut wl.registry, $crate::register_wl_registry!())
-            .submodule(|wl| &mut wl.callback, $crate::register_wl_callback!())
-            .submodule(|wl| &mut wl.surface, $crate::register_wl_surface!())
-            .submodule(
-                |wl| &mut wl.layer_surface,
-                $crate::register_zwlr_layer_surface!(),
-            )
-            .submodule(|wl| &mut wl.seat, $crate::register_wl_seat!())
-            .submodule(|wl| &mut wl.pointer, $crate::register_wl_pointer!())
-            .submodule(|wl| &mut wl.keyboard, $crate::register_wl_keyboard!())
-            .submodule(|wl| &mut wl.touch, $crate::register_wl_touch!())
-            .submodule(|wl| &mut wl.dmabuf, $crate::register_zwp_linux_dmabuf!())
-            .submodule(|wl| &mut wl.wl_buffer, $crate::register_wl_buffer!())
-            .on(
-                |wl: &mut $crate::Wayland, ev: &$crate::SeatEvent| match ev {
-                    $crate::SeatEvent::Capabilities { capabilities } => {
-                        if (capabilities & $crate::CAP_POINTER) != 0 && wl.pointer.id() == 0 {
-                            let id = wl.seat.get_pointer();
-                            wl.pointer.set_id(id);
-                        }
-                        if (capabilities & $crate::CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
-                            let id = wl.seat.get_keyboard();
-                            wl.keyboard.set_id(id);
-                        }
-                        if (capabilities & $crate::CAP_TOUCH) != 0 && wl.touch.id() == 0 {
-                            let id = wl.seat.get_touch();
-                            wl.touch.set_id(id);
-                        }
-                        wl.flush();
+pub fn module<AppState>() -> impl app::RegisteredModule<Wayland, AppState> {
+    app::Module::<Wayland, _, _>::new()
+        .on(|wl: &mut Wayland, _: &app::Start| {
+            wl.init();
+            Some(Initilised)
+        })
+        .on(|wl: &mut Wayland, ev: &io_ring::IoEvent| {
+            wl.handle_io(ev);
+        })
+        .on(|wl: &mut Wayland, _: &app::PrePoll| {
+            if wl.pending.len() > 1 {
+                wl.ring_proxy.skip_next_wait();
+            }
+            wl.pending.pop_front()
+        })
+        .mount(|wl| &mut wl.display, wl_display::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.registry, wl_registry::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.callback, wl_callback::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.surface, wl_surface::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.layer_surface, zwlr_layer_shell::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.seat, wl_seat::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.pointer, wl_pointer::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.keyboard, wl_keyboard::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.touch, wl_touch::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.dmabuf, zwp_linux_dmabuf::module::<AppState>().into_module())
+        .mount(|wl| &mut wl.wl_buffer, wl_buffer::module::<AppState>().into_module())
+        .on(
+            |wl: &mut Wayland, ev: &SeatEvent| match ev {
+                SeatEvent::Capabilities { capabilities } => {
+                    if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {
+                        let id = wl.seat.get_pointer();
+                        wl.pointer.set_id(id);
                     }
-                    _ => {}
-                },
-            )
-    };
+                    if (capabilities & CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
+                        let id = wl.seat.get_keyboard();
+                        wl.keyboard.set_id(id);
+                    }
+                    if (capabilities & CAP_TOUCH) != 0 && wl.touch.id() == 0 {
+                        let id = wl.seat.get_touch();
+                        wl.touch.set_id(id);
+                    }
+                    wl.flush();
+                }
+                _ => {}
+            },
+        )
 }

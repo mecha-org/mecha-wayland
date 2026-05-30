@@ -87,7 +87,7 @@ mod module;
 mod runtime;
 
 pub use dispatch::{HandleList, Handler, ModuleList, MountedModule, OuterDispatch, Propagate};
-pub use event::{Emit, Event, Many, Start, Poll, PrePoll};
+pub use event::{Emit, Event, Many, Poll, PrePoll, Start};
 pub use module::{Module, RegisteredModule};
 pub use runtime::App;
 

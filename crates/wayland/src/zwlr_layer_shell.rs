@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::{SharedConnection, WaylandRawEvent, parse, send};
@@ -190,11 +190,7 @@ impl ZwlrLayerSurfaceV1 {
     }
 }
 
-#[macro_export]
-macro_rules! register_zwlr_layer_surface {
-    () => {
-        app::module::Module::<$crate::ZwlrLayerSurfaceV1>::new().processor(
-            |ls: &mut $crate::ZwlrLayerSurfaceV1, ev: &$crate::WaylandRawEvent| ls.process(ev),
-        )
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<ZwlrLayerSurfaceV1, AppState> {
+    app::Module::<ZwlrLayerSurfaceV1, _, _>::new()
+        .on(|ls: &mut ZwlrLayerSurfaceV1, ev: &crate::WaylandRawEvent| ls.process(ev))
 }

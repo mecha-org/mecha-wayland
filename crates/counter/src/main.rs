@@ -7,11 +7,10 @@ mod renderer;
 
 use std::{os::fd::AsRawFd, time::Duration};
 
-use app::{App, Poll, Start, event::Event};
-use io_ring::{Ring, register_ring};
+use io_ring::Ring;
 use layout::layout;
-use timer::{Timer, TimerEvent, TimerSettings, register_timer};
-use wayland::{Wayland, register_wayland};
+use timer::{Timer, TimerSettings};
+use wayland::Wayland;
 
 // ARGB8888 little-endian fourcc
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
@@ -91,19 +90,19 @@ pub enum CounterEvent {
     Updated { new_count: i32 },
 }
 
-impl Event for CounterEvent {}
+impl app::Event for CounterEvent {}
 
 fn main() {
     let state = AppState::new();
 
     let mut app = app::App::new(state)
-        .register_module(|s| &mut s.ring, register_ring!())
-        .register_module(|s| &mut s.timer, register_timer!())
-        .register_module(|s| &mut s.renderer, register_renderer!())
-        .register_module(|s| &mut s.wayland, register_wayland!())
-        .register_module(
+        .mount(|s| &mut s.ring, io_ring::module())
+        .mount(|s| &mut s.timer, timer::module())
+        .mount(|s| &mut s.renderer, renderer::module())
+        .mount(|s| &mut s.wayland, wayland::module())
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
+            app::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
                 use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
 
                 let surface_id = s.wayland.compositor.create_surface();
@@ -124,9 +123,9 @@ fn main() {
                 s.wayland.flush();
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(
+            app::Module::new().on(
                 |s: &mut AppState, ev: &wayland::zwlr_layer_shell::LayerSurfaceEvent| {
                     use wayland::zwlr_layer_shell::LayerSurfaceEvent;
 
@@ -193,9 +192,9 @@ fn main() {
                 },
             ),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, _: &wayland::WlCallbackEvent| {
+            app::Module::new().on(|s: &mut AppState, _: &wayland::WlCallbackEvent| {
                 // Find the free buffer (compositor released it).
                 let free_idx = if !s.buf_in_flight[0] {
                     0
@@ -233,9 +232,9 @@ fn main() {
                 s.wayland.flush();
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::WlBufferEvent| {
+            app::Module::new().on(|s: &mut AppState, ev: &wayland::WlBufferEvent| {
                 let wayland::WlBufferEvent::Release { id } = ev;
                 for i in 0..2 {
                     if s.wl_buf_ids[i] == *id {
@@ -245,45 +244,41 @@ fn main() {
                 }
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
-                println!("[App] Keyboard Event: {:?}", ev);
+            app::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
                 if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
                     if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
-                        println!("[App] Exiting...");
                         std::process::exit(0);
                     }
                 }
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(
-                |s: &mut AppState, ev: &wayland::PointerEvent| match ev {
-                    wayland::PointerEvent::Motion {
-                        surface_x,
-                        surface_y,
-                        ..
-                    } => {
-                        s.cursor_x = *surface_x;
-                        s.cursor_y = *surface_y;
+            app::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| match ev {
+                wayland::PointerEvent::Motion {
+                    surface_x,
+                    surface_y,
+                    ..
+                } => {
+                    s.cursor_x = *surface_x;
+                    s.cursor_y = *surface_y;
+                }
+                wayland::PointerEvent::Button {
+                    button: _, state, ..
+                } if *state == wayland::ButtonState::Pressed => {
+                    if let Some(delta) = hit_button(&s.hit_boxes, s.cursor_x, s.cursor_y) {
+                        s.counter.count += delta;
+                        redraw(s);
                     }
-                    wayland::PointerEvent::Button {
-                        button: _, state, ..
-                    } if *state == wayland::ButtonState::Pressed => {
-                        if let Some(delta) = hit_button(&s.hit_boxes, s.cursor_x, s.cursor_y) {
-                            s.counter.count += delta;
-                            redraw(s);
-                        }
-                    }
-                    _ => {}
-                },
-            ),
+                }
+                _ => {}
+            }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
+            app::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
                     if let Some(delta) = hit_button(&s.hit_boxes, *x, *y) {
                         s.counter.count += delta;
@@ -292,24 +287,25 @@ fn main() {
                 }
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, ev: &app::Start| {
-                let id = s.timer.start_timer(TimerSettings {
+            app::Module::new().on(|s: &mut AppState, _: &app::Start| {
+                s.timer.start_timer(TimerSettings {
                     duration: Duration::from_secs(2),
                     repeat: true,
                 });
-                println!("Timer Started with ID: {}", id.0);
             }),
         )
-        .register_module(
+        .mount(
             |s| s,
-            app::module::Module::new().on(|s: &mut AppState, ev: &timer::TimerEvent| {
-                println!("Timer Event: {:?}", ev);
-            }),
+            app::Module::new().on(|_: &mut AppState, _: &timer::TimerEvent| {}),
         );
 
-    app.run();
+    app.dispatch(&app::Start);
+    loop {
+        app.dispatch(&app::PrePoll);
+        app.dispatch(&app::Poll);
+    }
 }
 
 fn hit_button(hit_boxes: &HitBoxes, x: f64, y: f64) -> Option<i32> {
@@ -449,11 +445,6 @@ fn render_counter_ui(
                     hit_boxes.plus = bb;
                 }),
             }, {
-                renderer.send_command(DrawRect {
-                    color: (0.8, 0.8, 0.8, 1.0),
-                    origin: (x, y, 0.9),
-                    size: (width, height),
-                });
             }),
         },
         {

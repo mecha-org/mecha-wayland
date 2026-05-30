@@ -17,6 +17,17 @@ use frunk::{HCons, HNil};
 pub trait Event: 'static + std::fmt::Debug {}
 impl Event for () {}
 
+#[derive(Debug)]
+pub struct Poll;
+impl Event for Poll {}
+
+#[derive(Debug)]
+pub struct PrePoll;
+impl Event for PrePoll {}
+
+#[derive(Debug)]
+pub struct Start;
+impl Event for Start {}
 
 /// Wraps an iterator so a handler can emit zero or more events of the same type.
 ///
@@ -61,22 +72,31 @@ pub trait Emit: sealed::Sealed {
 impl<E: Event> sealed::Sealed for E {}
 impl<E: Event> Emit for E {
     type Output = Option<E>;
-    fn emit(self) -> Option<E> { Some(self) }
-    fn empty() -> Option<E> { None }
+    fn emit(self) -> Option<E> {
+        Some(self)
+    }
+    fn empty() -> Option<E> {
+        None
+    }
 }
 
 impl<E: Event> sealed::Sealed for Option<E> {}
 impl<E: Event> Emit for Option<E> {
     type Output = Option<E>;
-    fn emit(self) -> Option<E> { self }
-    fn empty() -> Option<E> { None }
+    fn emit(self) -> Option<E> {
+        self
+    }
+    fn empty() -> Option<E> {
+        None
+    }
 }
 
 impl<Iter> sealed::Sealed for Many<Iter>
 where
     Iter: IntoIterator,
     Iter::Item: Event,
-{}
+{
+}
 
 impl<Iter> Emit for Many<Iter>
 where
@@ -84,20 +104,32 @@ where
     Iter::Item: Event,
 {
     type Output = Option<Many<Iter>>;
-    fn emit(self) -> Option<Many<Iter>> { Some(self) }
-    fn empty() -> Option<Many<Iter>> { None }
+    fn emit(self) -> Option<Many<Iter>> {
+        Some(self)
+    }
+    fn empty() -> Option<Many<Iter>> {
+        None
+    }
 }
 
 impl sealed::Sealed for HNil {}
 impl Emit for HNil {
     type Output = Option<HNil>;
-    fn emit(self) -> Option<HNil> { Some(HNil) }
-    fn empty() -> Option<HNil> { None }
+    fn emit(self) -> Option<HNil> {
+        Some(HNil)
+    }
+    fn empty() -> Option<HNil> {
+        None
+    }
 }
 
 impl<H: Emit, T: Emit> sealed::Sealed for HCons<H, T> {}
 impl<H: Emit, T: Emit> Emit for HCons<H, T> {
     type Output = Option<HCons<H, T>>;
-    fn emit(self) -> Option<HCons<H, T>> { Some(self) }
-    fn empty() -> Option<HCons<H, T>> { None }
+    fn emit(self) -> Option<HCons<H, T>> {
+        Some(self)
+    }
+    fn empty() -> Option<HCons<H, T>> {
+        None
+    }
 }

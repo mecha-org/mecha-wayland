@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use app::event::Event;
+use app::Event;
 
 use crate::proto::wl_buffer as proto;
 use crate::{SharedConnection, WaylandRawEvent, parse};
@@ -37,10 +37,7 @@ impl WlBuffer {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_buffer {
-    () => {
-        app::module::Module::<$crate::WlBuffer>::new()
-            .processor(|b: &mut $crate::WlBuffer, ev: &$crate::WaylandRawEvent| b.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlBuffer, AppState> {
+    app::Module::<WlBuffer, _, _>::new()
+        .on(|b: &mut WlBuffer, ev: &crate::WaylandRawEvent| b.process(ev))
 }

@@ -1,4 +1,4 @@
-use app::event::Event;
+use app::Event;
 
 use crate::proto::Handle;
 use crate::proto::wl_pointer as proto;
@@ -132,10 +132,7 @@ impl WlPointer {
     }
 }
 
-#[macro_export]
-macro_rules! register_wl_pointer {
-    () => {
-        app::module::Module::<$crate::WlPointer>::new()
-            .processor(|s: &mut $crate::WlPointer, ev: &$crate::WaylandRawEvent| s.process(ev))
-    };
+pub fn module<AppState>() -> impl app::RegisteredModule<WlPointer, AppState> {
+    app::Module::<WlPointer, _, _>::new()
+        .on(|s: &mut WlPointer, ev: &crate::WaylandRawEvent| s.process(ev))
 }

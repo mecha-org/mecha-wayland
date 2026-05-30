@@ -248,6 +248,59 @@ fn hlist_handler_with_many_dispatches_all() {
     assert_eq!(*app.state(), 21);
 }
 
+// Cross-module propagation: emitted events reach all modules regardless of mount order.
+
+#[test]
+fn emitted_event_reaches_module_mounted_before_emitter() {
+    // Module A is mounted first (deeper in HList).
+    // Module B is mounted second and emits EventB when it sees EventA.
+    // Module A must receive EventB even though it was mounted before B.
+    struct EventA;
+    impl app::Event for EventA {}
+    struct EventB;
+    impl app::Event for EventB {}
+
+    let module_a = app::Module::new().on(|s: &mut (u32, u32), _: &EventB| s.0 += 1);
+    let module_b = app::Module::new().on(|s: &mut (u32, u32), _: &EventA| {
+        s.1 += 1;
+        EventB
+    });
+
+    let mut app = app::App::new((0u32, 0u32))
+        .mount(|s: &mut (u32, u32)| s, module_a)
+        .mount(|s: &mut (u32, u32)| s, module_b);
+
+    app.dispatch(&EventA);
+
+    assert_eq!(app.state().0, 1, "module_a should have received EventB emitted by module_b");
+    assert_eq!(app.state().1, 1, "module_b should have handled EventA");
+}
+
+#[test]
+fn emitted_event_reaches_module_mounted_after_emitter() {
+    // Module A is mounted first and emits EventB when it sees EventA.
+    // Module B is mounted second and handles EventB.
+    struct EventA;
+    impl app::Event for EventA {}
+    struct EventB;
+    impl app::Event for EventB {}
+
+    let module_a = app::Module::new().on(|s: &mut (u32, u32), _: &EventA| {
+        s.0 += 1;
+        EventB
+    });
+    let module_b = app::Module::new().on(|s: &mut (u32, u32), _: &EventB| s.1 += 1);
+
+    let mut app = app::App::new((0u32, 0u32))
+        .mount(|s: &mut (u32, u32)| s, module_a)
+        .mount(|s: &mut (u32, u32)| s, module_b);
+
+    app.dispatch(&EventA);
+
+    assert_eq!(app.state().0, 1, "module_a should have handled EventA");
+    assert_eq!(app.state().1, 1, "module_b should have received EventB emitted by module_a");
+}
+
 // Stack overflow aborts the process via SIGABRT — not catchable by #[should_panic].
 // Run manually with: cargo test infinite_emission -- --ignored
 #[test]

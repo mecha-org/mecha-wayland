@@ -1,3 +1,5 @@
+cargo-features = ["panic-immediate-abort"]
+
 [workspace]
 members = [
     "crates/app",
@@ -55,3 +57,4 @@ taffy = "0.10.1"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+panic = "immediate-abort"

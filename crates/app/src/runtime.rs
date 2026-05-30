@@ -47,10 +47,12 @@ impl<S, Modules: ModuleList<S>> App<S, Modules> {
         }
     }
 
+    #[inline(always)]
     pub fn dispatch<E: Event>(&mut self, event: &E)
     where
         Modules: ModuleList<S>,
     {
-        ModuleList::dispatch(&mut self.modules, event, &mut self.state);
+        let modules = &self.modules;
+        modules.dispatch(event, &mut self.state);
     }
 }

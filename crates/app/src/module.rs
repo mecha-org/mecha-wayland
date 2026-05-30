@@ -2,8 +2,37 @@ use std::marker::PhantomData;
 
 use frunk::{HCons, HNil};
 
-use crate::dispatch::{HandleList, Handler, MountedModule};
+use crate::dispatch::{HandleList, Handler, MountedModule, OuterDispatch, Propagate};
 use crate::event::{Emit, Event};
+
+/// A value that can be mounted onto an [`App`](crate::App).
+///
+/// Implemented automatically for every `Module` whose handler and sub-module
+/// types satisfy the full dispatch requirements. You never implement this
+/// manually; it exists so that factory functions can return
+/// `-> impl RegisteredModule<S, AppState>` without naming closure types.
+pub trait RegisteredModule<S, AppState> {
+    type Emitted: Propagate<AppState>;
+    type Handlers: HandleList<S, Self::Emitted>;
+    type SubModules: OuterDispatch<S, AppState>;
+
+    fn into_module(self) -> Module<S, Self::Emitted, Self::Handlers, Self::SubModules>;
+}
+
+impl<S, AppState, E, H, SM> RegisteredModule<S, AppState> for Module<S, E, H, SM>
+where
+    E: Propagate<AppState>,
+    H: HandleList<S, E>,
+    SM: OuterDispatch<S, AppState>,
+{
+    type Emitted = E;
+    type Handlers = H;
+    type SubModules = SM;
+
+    fn into_module(self) -> Module<S, E, H, SM> {
+        self
+    }
+}
 
 /// A collection of event handlers that operate on state `S`.
 ///

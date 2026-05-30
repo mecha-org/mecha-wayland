@@ -44,8 +44,7 @@ use frunk::{HCons, HNil};
 use crate::event::{Emit, Event, Many};
 use crate::module::Module;
 
-/// Sealed trait implemented by the HList of modules attached to an [`App`](crate::App).
-pub(crate) trait ModuleList<S> {
+pub trait ModuleList<S> {
     fn dispatch<E: Event>(&self, event: &E, state: &mut S);
     fn dispatch_inner<E: Event, Root: ModuleList<S>>(&self, event: &E, state: &mut S, root: &Root);
 }
@@ -93,7 +92,7 @@ where
 
 /// Like [`ModuleList`] but for sub-modules: carries a reference to the
 /// *outer* root so emitted events propagate beyond the current module tree.
-pub(crate) trait OuterDispatch<S, OuterS> {
+pub trait OuterDispatch<S, OuterS> {
     fn dispatch_outer<E: Event, Root: ModuleList<OuterS>>(
         &self,
         event: &E,
@@ -141,7 +140,7 @@ where
 ///
 /// Implemented for `()`, `HNil`, `HCons<Option<E>, Tail>`,
 /// `HCons<Many<Iter>, Tail>`, and their `Option<Many<…>>` variants.
-pub(crate) trait Propagate<S> {
+pub trait Propagate<S> {
     fn propagate<ML: ModuleList<S>>(self, root: &ML, state: &mut S);
 }
 
@@ -210,7 +209,7 @@ where
 
 /// Iterates over an HList of [`Handler`]s, running any whose registered event
 /// type matches the dispatched event (compared by [`TypeId`]).
-pub(crate) trait HandleList<S, Emitted> {
+pub trait HandleList<S, Emitted> {
     fn handle<E: Event>(&self, event: &E, state: &mut S) -> Emitted;
 }
 

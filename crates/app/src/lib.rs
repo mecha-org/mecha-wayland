@@ -86,9 +86,9 @@ mod event;
 mod module;
 mod runtime;
 
-pub use dispatch::{Handler, MountedModule};
-pub use event::{Emit, Event, Many};
-pub use module::Module;
+pub use dispatch::{HandleList, Handler, ModuleList, MountedModule, OuterDispatch, Propagate};
+pub use event::{Emit, Event, Many, Start, Poll, PrePoll};
+pub use module::{Module, RegisteredModule};
 pub use runtime::App;
 
 pub mod prelude {

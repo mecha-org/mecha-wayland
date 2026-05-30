@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use frunk::{HCons, HNil};
 
-use crate::dispatch::{HandleList, ModuleList, MountedModule, OuterDispatch, Propagate};
+use crate::dispatch::{ModuleList, MountedModule};
 use crate::event::Event;
-use crate::module::Module;
+use crate::module::RegisteredModule;
 
 /// The top-level application runtime.
 ///
@@ -54,25 +54,24 @@ impl<S, Modules> App<S, Modules> {
     /// so modules mounted earlier will see events emitted by later ones.
     /// Mount shared consumers (e.g. a notification queue) before producers.
     #[allow(private_bounds)]
-    pub fn mount<SubState, Emitted, Handlers, SubModules, LensFn>(
+    pub fn mount<SubState, M, LensFn>(
         self,
         lens: LensFn,
-        module: Module<SubState, Emitted, Handlers, SubModules>,
-    ) -> App<S, HCons<MountedModule<S, SubState, Emitted, Handlers, LensFn, SubModules>, Modules>>
+        module: M,
+    ) -> App<S, HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>>
     where
+        M: RegisteredModule<SubState, S>,
         LensFn: Fn(&mut S) -> &mut SubState,
-        Handlers: HandleList<SubState, Emitted>,
-        Emitted: Propagate<S>,
-        SubModules: OuterDispatch<SubState, S>,
-        HCons<MountedModule<S, SubState, Emitted, Handlers, LensFn, SubModules>, Modules>: ModuleList<S>,
+        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>: ModuleList<S>,
     {
+        let module = module.into_module();
         App {
             state: self.state,
             modules: HCons {
                 head: MountedModule {
                     lens,
                     module,
-                    _phantom: PhantomData::<(S, Emitted)>,
+                    _phantom: PhantomData::<(S, M::Emitted)>,
                 },
                 tail: self.modules,
             },

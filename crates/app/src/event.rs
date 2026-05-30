@@ -16,7 +16,7 @@ use frunk::{HCons, HNil};
 /// ```
 pub trait Event: 'static + std::fmt::Debug {}
 impl Event for () {}
-// () already implements Debug via std
+
 
 /// Wraps an iterator so a handler can emit zero or more events of the same type.
 ///

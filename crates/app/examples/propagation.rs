@@ -5,33 +5,45 @@ use app::prelude::*;
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 struct Tick;
 impl Event for Tick {}
 
+#[derive(Debug)]
 struct BatteryLow;
 impl Event for BatteryLow {}
 
+#[derive(Debug)]
 struct BatteryCritical;
 impl Event for BatteryCritical {}
 
+#[derive(Debug)]
 struct NetworkLost;
 impl Event for NetworkLost {}
 
+#[derive(Debug)]
 struct NetworkRestored;
 impl Event for NetworkRestored {}
 
+#[derive(Debug)]
 struct Notify(pub &'static str);
 impl Event for Notify {}
 
+#[derive(Debug)]
 struct Render;
 impl Event for Render {}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
+struct BatteryAlerts {
+    muted: bool,
+}
+
 struct Battery {
     level: u8,
     warned_low: bool,
     warned_critical: bool,
+    alerts: BatteryAlerts,
 }
 
 struct Network {
@@ -56,7 +68,12 @@ struct AppState {
 
 fn main() {
     let state = AppState {
-        battery: Battery { level: 30, warned_low: false, warned_critical: false },
+        battery: Battery {
+            level: 30,
+            warned_low: false,
+            warned_critical: false,
+            alerts: BatteryAlerts { muted: false },
+        },
         network: Network { connected: true, reconnect_attempts: 0, dropped: false },
         notifications: NotificationQueue { pending: [""; 4], pending_len: 0, displayed: 0 },
     };
@@ -139,13 +156,24 @@ fn main() {
                         },
                     ]
                 })
-                .on(|_: &mut Battery, _: &BatteryLow| {
-                    println!("[battery] LOW handler fired");
-                    Notify("Battery low — please plug in")
-                })
-                .on(|_: &mut Battery, _: &BatteryCritical| {
-                    println!("[battery] CRITICAL handler fired");
-                    Notify("Battery critical — suspending soon")
+                // BatteryAlerts submodule: owns the warning responses so the
+                // parent Battery module only needs to track level/flags.
+                .mount(|s: &mut Battery| &mut s.alerts, {
+                    Module::new()
+                        .on(|s: &mut BatteryAlerts, _: &BatteryLow| {
+                            if s.muted {
+                                println!("[alerts] LOW suppressed (muted)");
+                                None
+                            } else {
+                                println!("[alerts] LOW handler fired");
+                                Some(Notify("Battery low — please plug in"))
+                            }
+                        })
+                        .on(|s: &mut BatteryAlerts, _: &BatteryCritical| {
+                            s.muted = true;
+                            println!("[alerts] CRITICAL handler fired — muting further alerts");
+                            Notify("Battery critical — suspending soon")
+                        })
                 })
         });
 

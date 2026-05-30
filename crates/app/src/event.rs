@@ -1,14 +1,57 @@
 use frunk::{HCons, HNil};
 
-pub trait Event: 'static {}
+/// Marker trait for types that can be dispatched as events.
+///
+/// Any `'static + Debug` type can implement `Event`. The `Debug` bound is
+/// required for dispatch tracing.
+///
+/// # Example
+///
+/// ```rust
+/// use app::Event;
+///
+/// #[derive(Debug)]
+/// struct WindowResized { width: u32, height: u32 }
+/// impl Event for WindowResized {}
+/// ```
+pub trait Event: 'static + std::fmt::Debug {}
 impl Event for () {}
+// () already implements Debug via std
 
+/// Wraps an iterator so a handler can emit zero or more events of the same type.
+///
+/// Use `Many` when the number of events to emit is only known at runtime. For a
+/// statically-known set of different event types, use `hlist![…]` instead.
+///
+/// # Example
+///
+/// ```rust
+/// use app::prelude::*;
+///
+/// #[derive(Debug)] struct Explode; impl Event for Explode {}
+/// #[derive(Debug)] struct Fragment; impl Event for Fragment {}
+///
+/// let module = Module::new()
+///     .on(|_: &mut u32, _: &Explode| Many(vec![Fragment, Fragment, Fragment]));
+/// ```
 pub struct Many<Iter>(pub Iter);
 
 mod sealed {
     pub trait Sealed {}
 }
 
+/// Describes what a handler may return to emit subsequent events.
+///
+/// This is a sealed trait — you cannot implement it yourself. The following
+/// return types are valid for a handler closure:
+///
+/// | Return type | Behaviour |
+/// |-------------|-----------|
+/// | `E` (any [`Event`]) | Always emits `E` |
+/// | `Option<E>` | Emits `E` only when `Some` |
+/// | [`Many<Iter>`] where `Iter::Item: Event` | Emits every item in the iterator |
+/// | `hlist![T1, T2, …]` where each `Ti: Emit` | Emits each element independently |
+/// | `()` | Emits nothing |
 pub trait Emit: sealed::Sealed {
     type Output;
     fn emit(self) -> Self::Output;

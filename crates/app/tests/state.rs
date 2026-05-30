@@ -15,6 +15,7 @@ fn module_should_exist() {
 
 #[test]
 fn attached_handler_to_module() {
+    #[derive(Debug)]
     struct TestEvent;
     impl app::Event for TestEvent {}
 
@@ -23,6 +24,7 @@ fn attached_handler_to_module() {
 
 #[test]
 fn mount() {
+    #[derive(Debug)]
     struct TestEvent;
     impl app::Event for TestEvent {}
 
@@ -34,6 +36,7 @@ fn mount() {
 
 #[test]
 fn dispatch_event() {
+    #[derive(Debug)]
     struct TestEvent;
     impl app::Event for TestEvent {}
 
@@ -47,9 +50,11 @@ fn dispatch_event() {
 
 #[test]
 fn dispatch_other_event() {
+    #[derive(Debug)]
     struct TestEvent;
     impl app::Event for TestEvent {}
 
+    #[derive(Debug)]
     struct OtherEvent;
     impl app::Event for OtherEvent {}
 
@@ -63,6 +68,7 @@ fn dispatch_other_event() {
 
 #[test]
 fn handler_can_emit_event() {
+    #[derive(Debug)]
     struct TestEvent;
     impl app::Event for TestEvent {}
 
@@ -76,12 +82,16 @@ fn handler_can_emit_event() {
 
 #[test]
 fn emitted_event_propagates_3_levels_deep() {
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
+    #[derive(Debug)]
     struct EventC;
     impl app::Event for EventC {}
+    #[derive(Debug)]
     struct EventD;
     impl app::Event for EventD {}
 
@@ -100,10 +110,13 @@ fn emitted_event_propagates_3_levels_deep() {
 
 #[test]
 fn many_events_propagate_two_levels_deep() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct Step;
     impl app::Event for Step {}
+    #[derive(Debug)]
     struct Increment;
     impl app::Event for Increment {}
 
@@ -121,8 +134,10 @@ fn many_events_propagate_two_levels_deep() {
 
 #[test]
 fn handler_returning_empty_many_dispatches_nothing() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct Step;
     impl app::Event for Step {}
 
@@ -138,8 +153,10 @@ fn handler_returning_empty_many_dispatches_nothing() {
 
 #[test]
 fn handler_returning_many_dispatches_all_in_order() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct Step;
     impl app::Event for Step {}
 
@@ -156,8 +173,10 @@ fn handler_returning_many_dispatches_all_in_order() {
 
 #[test]
 fn handler_returning_none_emits_nothing() {
+    #[derive(Debug)]
     struct RawResized;
     impl app::Event for RawResized {}
+    #[derive(Debug)]
     struct Resized;
     impl app::Event for Resized {}
 
@@ -173,8 +192,10 @@ fn handler_returning_none_emits_nothing() {
 
 #[test]
 fn handler_returning_some_emits_event() {
+    #[derive(Debug)]
     struct RawResized;
     impl app::Event for RawResized {}
+    #[derive(Debug)]
     struct Resized;
     impl app::Event for Resized {}
 
@@ -190,10 +211,13 @@ fn handler_returning_some_emits_event() {
 
 #[test]
 fn hlist_handler_dispatches_all_some_events() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
 
@@ -210,10 +234,13 @@ fn hlist_handler_dispatches_all_some_events() {
 
 #[test]
 fn hlist_handler_none_element_suppresses_event() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
 
@@ -230,10 +257,13 @@ fn hlist_handler_none_element_suppresses_event() {
 
 #[test]
 fn hlist_handler_with_many_dispatches_all() {
+    #[derive(Debug)]
     struct Trigger;
     impl app::Event for Trigger {}
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
 
@@ -255,8 +285,10 @@ fn emitted_event_reaches_module_mounted_before_emitter() {
     // Module A is mounted first (deeper in HList).
     // Module B is mounted second and emits EventB when it sees EventA.
     // Module A must receive EventB even though it was mounted before B.
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
 
@@ -280,8 +312,10 @@ fn emitted_event_reaches_module_mounted_before_emitter() {
 fn emitted_event_reaches_module_mounted_after_emitter() {
     // Module A is mounted first and emits EventB when it sees EventA.
     // Module B is mounted second and handles EventB.
+    #[derive(Debug)]
     struct EventA;
     impl app::Event for EventA {}
+    #[derive(Debug)]
     struct EventB;
     impl app::Event for EventB {}
 
@@ -301,11 +335,134 @@ fn emitted_event_reaches_module_mounted_after_emitter() {
     assert_eq!(app.state().1, 1, "module_b should have received EventB emitted by module_a");
 }
 
+// Submodule tests
+
+#[test]
+fn submodule_receives_dispatched_event() {
+    #[derive(Debug)]
+    struct Tick;
+    impl app::Event for Tick {}
+
+    #[derive(Debug)]
+    struct State { child: u32 }
+
+    let child = app::Module::new().on(|s: &mut u32, _: &Tick| *s += 1);
+    let parent = app::Module::<State, _, _>::new()
+        .mount(|s: &mut State| &mut s.child, child);
+
+    let mut app = app::App::new(State { child: 0 })
+        .mount(|s: &mut State| s, parent);
+
+    app.dispatch(&Tick);
+
+    assert_eq!(app.state().child, 1);
+}
+
+#[test]
+fn submodule_emitted_event_reaches_app_root() {
+    #[derive(Debug)]
+    struct Trigger;
+    impl app::Event for Trigger {}
+    #[derive(Debug)]
+    struct Response;
+    impl app::Event for Response {}
+
+    #[derive(Debug)]
+    struct State { child: u32, root: u32 }
+
+    // Child emits Response when it sees Trigger
+    let child = app::Module::new().on(|_: &mut u32, _: &Trigger| Response);
+
+    // Root module handles Response (mounted separately at app level)
+    let root_module = app::Module::new().on(|s: &mut State, _: &Response| s.root += 1);
+
+    let parent = app::Module::<State, _, _>::new()
+        .mount(|s: &mut State| &mut s.child, child);
+
+    let mut app = app::App::new(State { child: 0, root: 0 })
+        .mount(|s: &mut State| s, parent)
+        .mount(|s: &mut State| s, root_module);
+
+    app.dispatch(&Trigger);
+
+    assert_eq!(app.state().root, 1, "Response emitted by submodule should reach root module");
+}
+
+#[test]
+fn app_module_emitted_event_reaches_submodule() {
+    #[derive(Debug)]
+    struct Trigger;
+    impl app::Event for Trigger {}
+    #[derive(Debug)]
+    struct Response;
+    impl app::Event for Response {}
+
+    #[derive(Debug)]
+    struct State { child: u32, root: u32 }
+
+    // Root module emits Response when it sees Trigger
+    let root_module = app::Module::new().on(|s: &mut State, _: &Trigger| { s.root += 1; Response });
+
+    // Child handles Response
+    let child = app::Module::new().on(|s: &mut u32, _: &Response| *s += 1);
+    let parent = app::Module::<State, _, _>::new()
+        .mount(|s: &mut State| &mut s.child, child);
+
+    let mut app = app::App::new(State { child: 0, root: 0 })
+        .mount(|s: &mut State| s, root_module)
+        .mount(|s: &mut State| s, parent);
+
+    app.dispatch(&Trigger);
+
+    assert_eq!(app.state().child, 1, "Response emitted by root module should reach submodule");
+}
+
+#[test]
+fn grandchild_emitted_event_reaches_app_root() {
+    #[derive(Debug)]
+    struct Tick;
+    impl app::Event for Tick {}
+    #[derive(Debug)]
+    struct Done;
+    impl app::Event for Done {}
+
+    #[derive(Debug)]
+    struct GrandchildState { count: u32 }
+    #[derive(Debug)]
+    struct ChildState { grandchild: GrandchildState }
+    #[derive(Debug)]
+    struct AppState { child: ChildState, done_count: u32 }
+
+    // Grandchild emits Done on Tick
+    let grandchild = app::Module::new()
+        .on(|_: &mut GrandchildState, _: &Tick| Done);
+
+    // Child just forwards — no handlers, only a mounted grandchild
+    let child = app::Module::<ChildState, _, _>::new()
+        .mount(|s: &mut ChildState| &mut s.grandchild, grandchild);
+
+    // Parent mounts child
+    let parent = app::Module::<AppState, _, _>::new()
+        .mount(|s: &mut AppState| &mut s.child, child);
+
+    // Separate root module counts Done events
+    let counter = app::Module::new().on(|s: &mut AppState, _: &Done| s.done_count += 1);
+
+    let mut app = app::App::new(AppState { child: ChildState { grandchild: GrandchildState { count: 0 } }, done_count: 0 })
+        .mount(|s: &mut AppState| s, parent)
+        .mount(|s: &mut AppState| s, counter);
+
+    app.dispatch(&Tick);
+
+    assert_eq!(app.state().done_count, 1, "Done emitted by grandchild should reach root counter");
+}
+
 // Stack overflow aborts the process via SIGABRT — not catchable by #[should_panic].
 // Run manually with: cargo test infinite_emission -- --ignored
 #[test]
 #[ignore]
 fn infinite_emission_causes_stack_overflow() {
+    #[derive(Debug)]
     struct PingEvent;
     impl app::Event for PingEvent {}
 

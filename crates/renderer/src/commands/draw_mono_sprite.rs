@@ -1,18 +1,21 @@
-use std::collections::HashMap;
-use std::mem::size_of;
+use std::{collections::HashMap, mem::size_of};
 
 use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
+use utils::{Color, Point, Rect, Size};
 
-use crate::commands::{Command, CommandQueue, RenderContext};
-use crate::texture::TextureId;
+use crate::{
+    commands::{Command, CommandQueue, RenderContext},
+    texture::TextureId,
+};
 
 #[derive(Clone)]
 pub struct DrawMonochromeSprite {
     pub texture_id: TextureId,
-    pub region:     (f32, f32, f32, f32), // x, y, w, h in texture pixels
-    pub origin:     (f32, f32, f32),      // screen x, y, z-depth
-    pub size:       (f32, f32),           // destination size on screen in pixels
-    pub color:      (f32, f32, f32, f32), // r, g, b, a tint
+    pub region: Rect,
+    pub origin: Point,
+    pub z: f32,
+    pub size: Size,
+    pub color: Color,
 }
 
 impl Command for DrawMonochromeSprite {
@@ -25,12 +28,12 @@ impl Command for DrawMonochromeSprite {
 
 #[derive(Default)]
 pub(crate) struct MonoSpriteQueue {
-    shader_program:         Option<NativeProgram>,
-    vbo:                    Option<NativeBuffer>,
+    shader_program: Option<NativeProgram>,
+    vbo: Option<NativeBuffer>,
     u_viewport_inv_res_loc: Option<NativeUniformLocation>,
-    u_tex_inv_size_loc:     Option<NativeUniformLocation>,
-    u_texture_loc:          Option<NativeUniformLocation>,
-    batches:                HashMap<TextureId, Vec<DrawMonochromeSprite>>,
+    u_tex_inv_size_loc: Option<NativeUniformLocation>,
+    u_texture_loc: Option<NativeUniformLocation>,
+    batches: HashMap<TextureId, Vec<DrawMonochromeSprite>>,
 }
 
 // Interleaved vertex layout: aPos(2) aColor(4) aOrigin(3) aSize(2) aRegion(4) = 15 floats/vertex
@@ -42,12 +45,18 @@ fn build_sprite_verts(sprites: &[DrawMonochromeSprite]) -> Vec<f32> {
     ];
     let mut v = Vec::with_capacity(sprites.len() * 6 * 15);
     for s in sprites {
-        let (cr, cg, cb, ca) = s.color;
-        let (ox, oy, oz) = s.origin;
-        let (sw, sh) = s.size;
-        let (rx, ry, rw, rh) = s.region;
+        let (ox, oy) = s.origin.as_tuple();
+        let oz = s.z;
+        let (sw, sh) = s.size.as_tuple();
+        let rx = s.region.x();
+        let ry = s.region.y();
+        let rw = s.region.width();
+        let rh = s.region.height();
         for (px, py) in CORNERS {
-            v.extend_from_slice(&[px, py, cr, cg, cb, ca, ox, oy, oz, sw, sh, rx, ry, rw, rh]);
+            v.extend_from_slice(&[
+                px, py, s.color.r, s.color.g, s.color.b, s.color.a, ox, oy, oz, sw, sh, rx, ry, rw,
+                rh,
+            ]);
         }
     }
     v
@@ -95,7 +104,10 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
             gl.shader_source(vs, vs_src);
             gl.compile_shader(vs);
             if !gl.get_shader_compile_status(vs) {
-                panic!("vertex shader compile error: {}", gl.get_shader_info_log(vs));
+                panic!(
+                    "vertex shader compile error: {}",
+                    gl.get_shader_info_log(vs)
+                );
             }
 
             // Texture is R8 (uploaded as GL_LUMINANCE on GLES 2.0).
@@ -118,7 +130,10 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
             gl.shader_source(fs, fs_src);
             gl.compile_shader(fs);
             if !gl.get_shader_compile_status(fs) {
-                panic!("fragment shader compile error: {}", gl.get_shader_info_log(fs));
+                panic!(
+                    "fragment shader compile error: {}",
+                    gl.get_shader_info_log(fs)
+                );
             }
 
             gl.attach_shader(program, vs);
@@ -136,15 +151,18 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
             gl.delete_shader(fs);
 
             self.u_viewport_inv_res_loc = gl.get_uniform_location(program, "uViewportInvRes");
-            self.u_tex_inv_size_loc     = gl.get_uniform_location(program, "uTexInvSize");
-            self.u_texture_loc          = gl.get_uniform_location(program, "uTexture");
+            self.u_tex_inv_size_loc = gl.get_uniform_location(program, "uTexInvSize");
+            self.u_texture_loc = gl.get_uniform_location(program, "uTexture");
             self.shader_program = Some(program);
             self.vbo = Some(gl.create_buffer().expect("glCreateBuffer"));
         }
     }
 
     fn enqueue(&mut self, command: DrawMonochromeSprite) {
-        self.batches.entry(command.texture_id).or_default().push(command);
+        self.batches
+            .entry(command.texture_id)
+            .or_default()
+            .push(command);
     }
 
     fn process(&mut self, ctx: &RenderContext) {
@@ -174,9 +192,9 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
             gl.enable_vertex_attrib_array(3);
             gl.enable_vertex_attrib_array(4);
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, STRIDE, 0);
-            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE,  2 * 4);
-            gl.vertex_attrib_pointer_f32(2, 3, glow::FLOAT, false, STRIDE,  6 * 4);
-            gl.vertex_attrib_pointer_f32(3, 2, glow::FLOAT, false, STRIDE,  9 * 4);
+            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE, 2 * 4);
+            gl.vertex_attrib_pointer_f32(2, 3, glow::FLOAT, false, STRIDE, 6 * 4);
+            gl.vertex_attrib_pointer_f32(3, 2, glow::FLOAT, false, STRIDE, 9 * 4);
             gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, STRIDE, 11 * 4);
 
             gl.uniform_2_f32(self.u_viewport_inv_res_loc.as_ref(), 2.0 / vp_w, 2.0 / vp_h);
@@ -205,7 +223,7 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
                 };
 
                 // Back-to-front sort for correct alpha blending within each batch.
-                batch.sort_unstable_by(|a, b| a.origin.2.total_cmp(&b.origin.2));
+                batch.sort_unstable_by(|a, b| a.z.total_cmp(&b.z));
 
                 gl.bind_texture(glow::TEXTURE_2D, Some(gpu_tex.handle));
                 gl.uniform_2_f32(

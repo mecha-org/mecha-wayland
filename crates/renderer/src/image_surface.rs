@@ -17,8 +17,8 @@ impl SurfaceBackend for ImageSurface {
     fn allocate(renderer: &Renderer, width: u32, height: u32) -> Result<Self> {
         let gl = &renderer.gl;
 
-        let texture = unsafe { gl.create_texture() }
-            .map_err(|e| anyhow::anyhow!("glGenTextures: {e}"))?;
+        let texture =
+            unsafe { gl.create_texture() }.map_err(|e| anyhow::anyhow!("glGenTextures: {e}"))?;
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
             gl.tex_image_2d(
@@ -32,10 +32,26 @@ impl SurfaceBackend for ImageSurface {
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(None),
             );
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
         }
 
         let depth_rbo = unsafe { gl.create_renderbuffer() }
@@ -74,7 +90,11 @@ impl SurfaceBackend for ImageSurface {
         }
         tracing::info!(width, height, "ImageSurface FBO complete");
 
-        Ok(Self { texture, depth_rbo, fbo })
+        Ok(Self {
+            texture,
+            depth_rbo,
+            fbo,
+        })
     }
 
     fn fbo(&self) -> glow::Framebuffer {

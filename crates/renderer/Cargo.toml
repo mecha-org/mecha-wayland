@@ -19,5 +19,6 @@ libc = { workspace = true }
 tracing = { workspace = true }
 gbm = { version = "0.18", default-features = false }
 assets   = { path = "../assets" }
+utils    = { path = "../utils" }
 bytemuck = { workspace = true }
 png      = { workspace = true }

@@ -1,6 +1,7 @@
 use criterion::{BenchmarkId, Criterion};
 use glow::HasContext;
 use renderer::{DmaBuf, Renderer, commands::DrawRect};
+use utils::{Color, Point, Size};
 
 const WIDTH: u32 = 1028;
 const HEIGHT: u32 = 1080;
@@ -14,6 +15,14 @@ const N: usize = 100;
 const MIN_RECT_SIZE: f32 = 16.0;
 const MAX_RECT_SIZE: f32 = 1024.0;
 
+const BLUE_SOLID: Color = Color::rgb(0.2, 0.6, 1.0);
+const BLUE_HALF: Color = Color {
+    r: 0.2,
+    g: 0.6,
+    b: 1.0,
+    a: 0.5,
+};
+
 pub fn bench_solid_rect(c: &mut Criterion) {
     let mut renderer =
         Renderer::new().expect("Renderer::new failed — needs /dev/dri/renderD* and EGL");
@@ -24,22 +33,27 @@ pub fn bench_solid_rect(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("solid_rect");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        origin: (0.0, 0.0, 0.0),
-                        size: (w as f32, h as f32),
-                    });
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        renderer.send_command(DrawRect {
+                            color: BLUE_SOLID,
+                            origin: Point::ZERO,
+                            z: 0.0,
+                            size: Size::new(w as f32, h as f32),
+                        });
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.gl.finish();
+                    }
+                });
+            },
+        );
     }
     group.finish();
 
@@ -56,22 +70,27 @@ pub fn bench_translucent_rect(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("translucent_rect");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        origin: (0.0, 0.0, 0.0),
-                        size: (w as f32, h as f32),
-                    });
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        renderer.send_command(DrawRect {
+                            color: BLUE_HALF,
+                            origin: Point::ZERO,
+                            z: 0.0,
+                            size: Size::new(w as f32, h as f32),
+                        });
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.gl.finish();
+                    }
+                });
+            },
+        );
     }
     group.finish();
 
@@ -91,24 +110,29 @@ pub fn bench_solid_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("solid_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        renderer.send_command(DrawRect {
-                            color: (0.2, 0.6, 1.0, 1.0),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            renderer.send_command(DrawRect {
+                                color: BLUE_SOLID,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -128,24 +152,29 @@ pub fn bench_translucent_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("translucent_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        renderer.send_command(DrawRect {
-                            color: (0.2, 0.6, 1.0, 0.5),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            renderer.send_command(DrawRect {
+                                color: BLUE_HALF,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -166,25 +195,30 @@ pub fn bench_mixed_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("mixed_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
-                        renderer.send_command(DrawRect {
-                            color: (0.2, 0.6, 1.0, alpha),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
+                            renderer.send_command(DrawRect {
+                                color,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -212,9 +246,10 @@ pub fn bench_solid_growing(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_SOLID,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();
@@ -246,9 +281,10 @@ pub fn bench_translucent_growing(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_HALF,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();
@@ -279,11 +315,12 @@ pub fn bench_mixed_growing(c: &mut Criterion) {
                 for i in 0..N {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_RECT_SIZE + t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, alpha),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();
@@ -317,9 +354,10 @@ pub fn bench_solid_shrinking(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_SOLID,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();
@@ -351,9 +389,10 @@ pub fn bench_translucent_shrinking(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_HALF,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();
@@ -384,11 +423,12 @@ pub fn bench_mixed_shrinking(c: &mut Criterion) {
                 for i in 0..N {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_RECT_SIZE - t * (MAX_RECT_SIZE - MIN_RECT_SIZE);
-                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
                     renderer.send_command(DrawRect {
-                        color: (0.2, 0.6, 1.0, alpha),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                     });
                 }
                 renderer.process_command_queue::<DrawRect>();

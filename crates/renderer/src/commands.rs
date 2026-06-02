@@ -1,11 +1,12 @@
-use crate::commands::{
-    clear_color::ClearColorQueue,
-    draw_mono_sprite::MonoSpriteQueue,
-    draw_quad::QuadQueue,
-    draw_rect::RectQueue,
-    draw_text::DrawTextQueue,
+use crate::{
+    commands::{
+        clear_color::ClearColorQueue, draw_mono_sprite::MonoSpriteQueue, draw_quad::QuadQueue,
+        draw_rect::RectQueue, draw_text::DrawTextQueue,
+    },
+    texture::TextureStore,
 };
-use crate::texture::TextureStore;
+
+pub use utils::{Color, Point, Rect, Size};
 
 mod clear_color;
 pub use clear_color::ClearColor;
@@ -23,8 +24,8 @@ mod draw_text;
 pub use draw_text::DrawText;
 
 pub struct RenderContext<'a> {
-    pub gl:              &'a glow::Context,
-    pub viewport_width:  u32,
+    pub gl: &'a glow::Context,
+    pub viewport_width: u32,
     pub viewport_height: u32,
     pub(crate) textures: &'a TextureStore,
 }
@@ -63,9 +64,9 @@ impl CommandQueueRegistry {
 
 #[derive(Default)]
 pub struct CommandQueueRegistry {
-    clear_color_queue:      ClearColorQueue,
-    draw_rect_queue:        RectQueue,
-    draw_quad_queue:        QuadQueue,
+    clear_color_queue: ClearColorQueue,
+    draw_rect_queue: RectQueue,
+    draw_quad_queue: QuadQueue,
     draw_mono_sprite_queue: MonoSpriteQueue,
-    draw_text_queue:        DrawTextQueue,
+    draw_text_queue: DrawTextQueue,
 }

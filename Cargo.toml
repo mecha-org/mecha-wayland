@@ -9,7 +9,10 @@ members = [
     "crates/timer",
     "crates/counter",
     "crates/wayland",
-    "crates/wayland-gen", "crates/layout", "crates/layout-macro",
+    "crates/wayland-gen",
+    "crates/layout",
+    "crates/layout-macro",
+    "crates/utils",
 ]
 default-members = ["crates/counter"]
 resolver = "2"
@@ -45,6 +48,7 @@ heck = "0.5.0"
 # graphics
 khronos-egl = { version = "6", features = ["dynamic"] }
 glow = "0.17"
+glam = { version = "0.29", features = ["bytemuck"] }
 
 # renderer extras
 bytemuck = { version = "1", features = ["derive"] }

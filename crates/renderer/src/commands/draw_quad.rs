@@ -1,17 +1,20 @@
 use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
+use utils::{Color, Point, Size};
 
 use crate::commands::{Command, CommandQueue, CommandQueueRegistry, DrawRect, RenderContext};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DrawQuad {
-    pub color: (f32, f32, f32, f32),        // r, g, b, a  — offset  0
-    pub border_color: (f32, f32, f32, f32), // r, g, b, a  — offset 16
-    pub origin: (f32, f32, f32),            // x, y in pixels, z for depth — offset 32
-    pub size: (f32, f32),                   // width, height in pixels — offset 44
-    pub border_radius: f32,                 // corner radius in pixels — offset 52
-    pub border_thickness: f32,              // border width in pixels  — offset 56
+    pub color: Color,          // offset  0
+    pub border_color: Color,   // offset 16
+    pub origin: Point,         // offset 32
+    pub z: f32,                // offset 40 — depth
+    pub size: Size,            // offset 44
+    pub border_radius: f32,    // offset 52 — corner radius in pixels
+    pub border_thickness: f32, // offset 56 — border width in pixels
 }
+
 unsafe impl bytemuck::Pod for DrawQuad {}
 unsafe impl bytemuck::Zeroable for DrawQuad {
     fn zeroed() -> Self {
@@ -27,23 +30,24 @@ impl Command for DrawQuad {
     }
 
     fn on_enqueue(registry: &mut CommandQueueRegistry, command: &DrawQuad) {
-        if command.color.3 >= 1.0 {
+        if command.color.a >= 1.0 {
             let r = command.border_radius;
-            let inner_w = command.size.0 - 2.0 * r;
-            let inner_h = command.size.1 - 2.0 * r;
+            let inner_w = command.size.width() - 2.0 * r;
+            let inner_h = command.size.height() - 2.0 * r;
             if inner_w > 0.0 && inner_h > 0.0 {
                 const Z_EPSILON: f32 = 1e-5;
                 DrawRect::get_queue_from_registry(registry).enqueue(DrawRect {
                     color: command.color,
-                    origin: (command.origin.0 + r, command.origin.1 + r, command.origin.2 + Z_EPSILON),
-                    size: (inner_w, inner_h),
+                    origin: Point::new(command.origin.x() + r, command.origin.y() + r),
+                    z: command.z + Z_EPSILON,
+                    size: Size::new(inner_w, inner_h),
                 });
             }
         }
     }
 }
 
-// Builds an interleaved vertex buffer (17 floats/vertex, 6 vertices/quad) for a batch of quads.
+// Builds an interleaved vertex buffer (17 floats/vertex, 6 vertices/quad).
 // Layout per vertex: aPos(2) aColor(4) aBorderColor(4) aOrigin(3) aSize(2) aBorderRadius(1) aBorderThickness(1)
 fn build_quad_verts(quads: &[DrawQuad]) -> Vec<f32> {
     #[rustfmt::skip]
@@ -53,17 +57,26 @@ fn build_quad_verts(quads: &[DrawQuad]) -> Vec<f32> {
     ];
     let mut v = Vec::with_capacity(quads.len() * 6 * 17);
     for q in quads {
-        let (cr, cg, cb, ca) = q.color;
-        let (br, bg, bb, ba) = q.border_color;
-        let (ox, oy, oz) = q.origin;
-        let (sw, sh) = q.size;
+        let (ox, oy) = q.origin.as_tuple();
+        let oz = q.z;
+        let (sw, sh) = q.size.as_tuple();
         for (px, py) in CORNERS {
             v.extend_from_slice(&[
-                px, py,
-                cr, cg, cb, ca,
-                br, bg, bb, ba,
-                ox, oy, oz,
-                sw, sh,
+                px,
+                py,
+                q.color.r,
+                q.color.g,
+                q.color.b,
+                q.color.a,
+                q.border_color.r,
+                q.border_color.g,
+                q.border_color.b,
+                q.border_color.a,
+                ox,
+                oy,
+                oz,
+                sw,
+                sh,
                 q.border_radius,
                 q.border_thickness,
             ]);
@@ -228,8 +241,8 @@ impl CommandQueue<DrawQuad> for QuadQueue {
                 gl.enable_vertex_attrib_array(5);
                 gl.enable_vertex_attrib_array(6);
                 gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, STRIDE, 0);
-                gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE,  2 * 4);
-                gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, STRIDE,  6 * 4);
+                gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, STRIDE, 2 * 4);
+                gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, STRIDE, 6 * 4);
                 gl.vertex_attrib_pointer_f32(3, 3, glow::FLOAT, false, STRIDE, 10 * 4);
                 gl.vertex_attrib_pointer_f32(4, 2, glow::FLOAT, false, STRIDE, 13 * 4);
                 gl.vertex_attrib_pointer_f32(5, 1, glow::FLOAT, false, STRIDE, 15 * 4);
@@ -239,19 +252,25 @@ impl CommandQueue<DrawQuad> for QuadQueue {
 
                 // All quads back-to-front; DrawRect pre-pass owns depth writes
                 let mut sorted: Vec<DrawQuad> = self.quads.drain(..).collect();
-                sorted.sort_unstable_by(|a, b| a.origin.2.total_cmp(&b.origin.2));
+                sorted.sort_unstable_by(|a, b| a.z.total_cmp(&b.z));
 
                 gl.enable(glow::DEPTH_TEST);
                 gl.depth_func(glow::GEQUAL);
                 gl.depth_mask(false);
                 gl.enable(glow::BLEND);
                 gl.blend_func_separate(
-                    glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA,
-                    glow::ZERO, glow::ONE,
+                    glow::SRC_ALPHA,
+                    glow::ONE_MINUS_SRC_ALPHA,
+                    glow::ZERO,
+                    glow::ONE,
                 );
 
                 let verts = build_quad_verts(&sorted);
-                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&verts), glow::STREAM_DRAW);
+                gl.buffer_data_u8_slice(
+                    glow::ARRAY_BUFFER,
+                    bytemuck::cast_slice(&verts),
+                    glow::STREAM_DRAW,
+                );
                 gl.draw_arrays(glow::TRIANGLES, 0, (sorted.len() * 6) as i32);
 
                 // Restore state

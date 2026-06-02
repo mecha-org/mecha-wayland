@@ -1,0 +1,36 @@
+[package]
+name = "assets"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+builder = ["dep:resvg", "dep:crunch", "dep:toml", "dep:serde", "dep:png", "dep:fontdue"]
+
+[dependencies]
+anyhow = { workspace = true }
+
+[dependencies.resvg]
+version = "0.44"
+optional = true
+
+[dependencies.crunch]
+version = "0.5"
+optional = true
+
+[dependencies.toml]
+version = "0.8"
+optional = true
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+optional = true
+
+[dependencies.png]
+workspace = true
+optional = true
+
+[dependencies.fontdue]
+workspace = true
+optional = true

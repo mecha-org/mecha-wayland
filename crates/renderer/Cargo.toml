@@ -3,14 +3,22 @@ name = "renderer"
 version = "0.1.0"
 edition = "2024"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "renderer"
+path = "benches/mod.rs"
+harness = false
+
 [dependencies]
-utils = { path = "../utils" }
 khronos-egl = { workspace = true }
 glow = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true }
 tracing = { workspace = true }
 gbm = { version = "0.18", default-features = false }
+assets   = { path = "../assets" }
+utils    = { path = "../utils" }
 bytemuck = { workspace = true }
-etagere  = { workspace = true }
-fontdue  = { workspace = true }
+png      = { workspace = true }

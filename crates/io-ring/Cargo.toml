@@ -1,0 +1,9 @@
+[package]
+name = "io-ring"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app = { path = "../app" }
+io-uring = { workspace = true }
+libc = { workspace = true }

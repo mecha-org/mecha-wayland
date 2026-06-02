@@ -5,6 +5,7 @@ mod atlas {
 }
 mod renderer;
 
+use app::prelude::*;
 use std::{os::fd::AsRawFd, time::Duration};
 
 use ::renderer::commands::{Color, Point};
@@ -38,12 +39,13 @@ struct HitBoxes {
     plus: BoundingBox,
 }
 
-struct AppState {
-    ring: Ring,
-    timer: Timer,
+#[derive(Default)]
+struct Counter {
+    count: i32,
+}
+
+struct UiState {
     counter: Counter,
-    wayland: Wayland,
-    renderer: ::renderer::Renderer,
     surface_id: u32,
     surface_size: (i32, i32),
     dmabuf: [Option<::renderer::RenderableSurface<::renderer::DmaBuf>>; 2],
@@ -55,19 +57,10 @@ struct AppState {
     hit_boxes: HitBoxes,
 }
 
-impl AppState {
+impl UiState {
     fn new() -> Self {
-        let ring = Ring::default();
-        let timer = Timer::new(ring.get_proxy());
-        let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
-        let renderer = ::renderer::Renderer::new().expect("failed to create renderer");
-
         Self {
-            ring,
-            timer,
             counter: Counter::default(),
-            wayland,
-            renderer,
             surface_id: 0,
             surface_size: (0, 0),
             dmabuf: [None, None],
@@ -81,9 +74,30 @@ impl AppState {
     }
 }
 
-#[derive(Default)]
-struct Counter {
-    count: i32,
+#[derive(State)]
+struct AppState {
+    ring: Ring,
+    timer: Timer,
+    wayland: Wayland,
+    renderer: ::renderer::Renderer,
+    ui: UiState,
+}
+
+impl AppState {
+    fn new() -> Self {
+        let ring = Ring::default();
+        let timer = Timer::new(ring.get_proxy());
+        let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
+        let renderer = ::renderer::Renderer::new().expect("failed to create renderer");
+
+        Self {
+            ring,
+            timer,
+            wayland,
+            renderer,
+            ui: UiState::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,18 +111,17 @@ fn main() {
     let state = AppState::new();
 
     let mut app = app::App::new(state)
-        .mount(|s| &mut s.ring, io_ring::module())
-        .mount(|s| &mut s.timer, timer::module())
-        .mount(|s| &mut s.renderer, renderer::module())
-        .mount(|s| &mut s.wayland, wayland::module())
+        .mount(io_ring::module())
+        .mount(timer::module())
+        .mount(renderer::module())
+        .mount(wayland::module())
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
                 use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
 
                 let surface_id = s.wayland.compositor.create_surface();
                 s.wayland.surface.register(surface_id);
-                s.surface_id = surface_id;
+                s.ui.surface_id = surface_id;
 
                 let layer_surface_id =
                     s.wayland
@@ -125,7 +138,6 @@ fn main() {
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(
                 |s: &mut AppState, ev: &wayland::zwlr_layer_shell::LayerSurfaceEvent| {
                     use wayland::zwlr_layer_shell::LayerSurfaceEvent;
@@ -142,9 +154,8 @@ fn main() {
 
                     let w = if *width == 0 { 256i32 } else { *width as i32 };
                     let h = if *height == 0 { 256i32 } else { *height as i32 };
-                    s.surface_size = (w, h);
+                    s.ui.surface_size = (w, h);
 
-                    // Allocate double-buffered dmabuf surfaces.
                     let surface0 = s
                         .renderer
                         .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
@@ -154,99 +165,91 @@ fn main() {
                         .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
                         .expect("dmabuf surface 1");
 
-                    // Create wl_buffer for each surface via zwp_linux_dmabuf_v1.
                     let buf_id0 = create_wl_buffer(&mut s.wayland, &surface0, w, h);
                     let buf_id1 = create_wl_buffer(&mut s.wayland, &surface1, w, h);
                     s.wayland.wl_buffer.register(buf_id0);
                     s.wayland.wl_buffer.register(buf_id1);
-                    s.wl_buf_ids = [buf_id0, buf_id1];
+                    s.ui.wl_buf_ids = [buf_id0, buf_id1];
 
-                    // Upload the atlas texture once on first configure.
-                    if s.icon_tex.is_none() {
-                        s.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
+                    if s.ui.icon_tex.is_none() {
+                        s.ui.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
                     }
 
-                    // Render the counter UI into surface 0 for the first frame.
                     s.renderer.active_surface(&surface0);
-                    s.hit_boxes = render_counter_ui(
+                    s.ui.hit_boxes = render_counter_ui(
                         &mut s.renderer,
                         w as f32,
                         h as f32,
-                        s.counter.count,
-                        s.icon_tex.unwrap(),
+                        s.ui.counter.count,
+                        s.ui.icon_tex.unwrap(),
                     );
                     s.renderer.finish();
 
-                    s.dmabuf = [Some(surface0), Some(surface1)];
-                    s.buf_in_flight = [true, false];
+                    s.ui.dmabuf = [Some(surface0), Some(surface1)];
+                    s.ui.buf_in_flight = [true, false];
 
                     s.wayland.layer_surface.ack_configure(*id, *serial);
-                    s.wayland.surface.attach(s.surface_id, buf_id0, 0, 0);
-                    s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
+                    s.wayland.surface.attach(s.ui.surface_id, buf_id0, 0, 0);
+                    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
 
-                    let cb_id = s.wayland.surface.frame(s.surface_id);
+                    let cb_id = s.wayland.surface.frame(s.ui.surface_id);
                     s.wayland.callback.register_frame(cb_id);
 
-                    s.wayland.surface.commit(s.surface_id);
-                    // flush via sendmsg — dmabuf fds are queued
+                    s.wayland.surface.commit(s.ui.surface_id);
                     s.wayland.flush();
                 },
             ),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, _: &wayland::WlCallbackEvent| {
-                // Find the free buffer (compositor released it).
-                let free_idx = if !s.buf_in_flight[0] {
+                let free_idx = if !s.ui.buf_in_flight[0] {
                     0
-                } else if !s.buf_in_flight[1] {
+                } else if !s.ui.buf_in_flight[1] {
                     1
                 } else {
                     return;
                 };
 
-                let surface = s.dmabuf[free_idx].as_ref().unwrap();
+                let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
                 s.renderer.active_surface(surface);
-                if let Some(icon_tex) = s.icon_tex {
-                    let (w, h) = s.surface_size;
-                    s.hit_boxes = render_counter_ui(
+                if let Some(icon_tex) = s.ui.icon_tex {
+                    let (w, h) = s.ui.surface_size;
+                    s.ui.hit_boxes = render_counter_ui(
                         &mut s.renderer,
                         w as f32,
                         h as f32,
-                        s.counter.count,
+                        s.ui.counter.count,
                         icon_tex,
                     );
                     s.renderer.finish();
                 }
 
-                let (w, h) = s.surface_size;
+                let (w, h) = s.ui.surface_size;
                 s.wayland
                     .surface
-                    .attach(s.surface_id, s.wl_buf_ids[free_idx], 0, 0);
-                s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
+                    .attach(s.ui.surface_id, s.ui.wl_buf_ids[free_idx], 0, 0);
+                s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
 
-                let cb_id = s.wayland.surface.frame(s.surface_id);
+                let cb_id = s.wayland.surface.frame(s.ui.surface_id);
                 s.wayland.callback.register_frame(cb_id);
 
-                s.wayland.surface.commit(s.surface_id);
-                s.buf_in_flight[free_idx] = true;
+                s.wayland.surface.commit(s.ui.surface_id);
+                s.ui.buf_in_flight[free_idx] = true;
                 s.wayland.flush();
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, ev: &wayland::WlBufferEvent| {
                 let wayland::WlBufferEvent::Release { id } = ev;
                 for i in 0..2 {
-                    if s.wl_buf_ids[i] == *id {
-                        s.buf_in_flight[i] = false;
+                    if s.ui.wl_buf_ids[i] == *id {
+                        s.ui.buf_in_flight[i] = false;
                         break;
                     }
                 }
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
                 if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
                     if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
@@ -256,21 +259,20 @@ fn main() {
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| match ev {
                 wayland::PointerEvent::Motion {
                     surface_x,
                     surface_y,
                     ..
                 } => {
-                    s.cursor_x = *surface_x;
-                    s.cursor_y = *surface_y;
+                    s.ui.cursor_x = *surface_x;
+                    s.ui.cursor_y = *surface_y;
                 }
                 wayland::PointerEvent::Button {
                     button: _, state, ..
                 } if *state == wayland::ButtonState::Pressed => {
-                    if let Some(delta) = hit_button(&s.hit_boxes, s.cursor_x, s.cursor_y) {
-                        s.counter.count += delta;
+                    if let Some(delta) = hit_button(&s.ui.hit_boxes, s.ui.cursor_x, s.ui.cursor_y) {
+                        s.ui.counter.count += delta;
                         redraw(s);
                     }
                 }
@@ -278,18 +280,16 @@ fn main() {
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(&s.hit_boxes, *x, *y) {
-                        s.counter.count += delta;
+                    if let Some(delta) = hit_button(&s.ui.hit_boxes, *x, *y) {
+                        s.ui.counter.count += delta;
                         redraw(s);
                     }
                 }
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|s: &mut AppState, _: &app::Start| {
                 s.timer.start_timer(TimerSettings {
                     duration: Duration::from_secs(2),
@@ -298,7 +298,6 @@ fn main() {
             }),
         )
         .mount(
-            |s| s,
             app::Module::new().on(|_: &mut AppState, _: &timer::TimerEvent| {}),
         );
 
@@ -320,39 +319,39 @@ fn hit_button(hit_boxes: &HitBoxes, x: f64, y: f64) -> Option<i32> {
 }
 
 fn redraw(s: &mut AppState) {
-    let free_idx = if !s.buf_in_flight[0] {
+    let free_idx = if !s.ui.buf_in_flight[0] {
         0
-    } else if !s.buf_in_flight[1] {
+    } else if !s.ui.buf_in_flight[1] {
         1
     } else {
         return;
     };
 
-    let surface = s.dmabuf[free_idx].as_ref().unwrap();
+    let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
     s.renderer.active_surface(surface);
-    if let Some(icon_tex) = s.icon_tex {
-        let (w, h) = s.surface_size;
-        s.hit_boxes = render_counter_ui(
+    if let Some(icon_tex) = s.ui.icon_tex {
+        let (w, h) = s.ui.surface_size;
+        s.ui.hit_boxes = render_counter_ui(
             &mut s.renderer,
             w as f32,
             h as f32,
-            s.counter.count,
+            s.ui.counter.count,
             icon_tex,
         );
         s.renderer.finish();
     }
 
-    let (w, h) = s.surface_size;
+    let (w, h) = s.ui.surface_size;
     s.wayland
         .surface
-        .attach(s.surface_id, s.wl_buf_ids[free_idx], 0, 0);
-    s.wayland.surface.damage(s.surface_id, 0, 0, w, h);
+        .attach(s.ui.surface_id, s.ui.wl_buf_ids[free_idx], 0, 0);
+    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
 
-    let cb_id = s.wayland.surface.frame(s.surface_id);
+    let cb_id = s.wayland.surface.frame(s.ui.surface_id);
     s.wayland.callback.register_frame(cb_id);
 
-    s.wayland.surface.commit(s.surface_id);
-    s.buf_in_flight[free_idx] = true;
+    s.wayland.surface.commit(s.ui.surface_id);
+    s.ui.buf_in_flight[free_idx] = true;
     s.wayland.flush();
 }
 
@@ -468,8 +467,6 @@ fn render_counter_ui(
     hit_boxes
 }
 
-/// Allocates a `zwp_linux_buffer_params_v1`, submits one plane's fd + metadata,
-/// and creates a `wl_buffer` via `create_immed`. Returns the new wl_buffer id.
 fn create_wl_buffer(
     wayland: &mut Wayland,
     surface: &::renderer::RenderableSurface<::renderer::DmaBuf>,

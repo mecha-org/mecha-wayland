@@ -7,6 +7,7 @@ mod renderer;
 
 use std::{os::fd::AsRawFd, time::Duration};
 
+use ::renderer::commands::{Color, Point};
 use io_ring::Ring;
 use layout::layout;
 use timer::{Timer, TimerSettings};
@@ -371,8 +372,9 @@ fn draw_centered_text(
         font,
         texture_id,
         text: text.to_string(),
-        origin: (center_x, center_y, z_index),
-        color: (1.0, 1.0, 1.0, 1.0),
+        origin: Point::new(center_x, center_y),
+        z: z_index,
+        color: Color::rgb(1.0, 1.0, 1.0),
     });
 }
 
@@ -388,12 +390,7 @@ fn render_counter_ui(
     let mut hit_boxes = HitBoxes::default();
     let count_str = format!("{count}");
 
-    renderer.send_command(ClearColor {
-        r: 0.32,
-        g: 0.32,
-        b: 0.32,
-        a: 1.0,
-    });
+    renderer.send_command(ClearColor::rgb(0.32, 0.32, 0.32));
 
     layout!(
         {
@@ -421,10 +418,11 @@ fn render_counter_ui(
                 layout!({ width: 110.0, height: 52.0 }, {
                     let bb = BoundingBox { x, y, w: width, h: height };
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.4, 0.9, 1.0),
-                        border_color: (0.4, 0.6, 1.0, 1.0),
-                        origin: (bb.x, bb.y, 1.0),
-                        size: (bb.w, bb.h),
+                        color: Color::rgb(0.2, 0.4, 0.9),
+                        border_color: Color::rgb(0.4, 0.6, 1.0),
+                        origin: Point::new(bb.x, bb.y),
+                        z: 1.0,
+                        size: Size::new(bb.w, bb.h),
                         border_radius: 12.0,
                         border_thickness: 2.0,
                     });
@@ -434,10 +432,11 @@ fn render_counter_ui(
                 layout!({ width: 110.0, height: 52.0 }, {
                     let bb = BoundingBox { x, y, w: width, h: height };
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.7, 0.3, 1.0),
-                        border_color: (0.4, 0.9, 0.5, 1.0),
-                        origin: (bb.x, bb.y, 1.0),
-                        size: (bb.w, bb.h),
+                        color: Color::rgb(0.2, 0.7, 0.3),
+                        border_color: Color::rgb(0.4, 0.9, 0.5),
+                        origin: Point::new(bb.x, bb.y),
+                        z: 1.0,
+                        size: Size::new(bb.w, bb.h),
                         border_radius: 12.0,
                         border_thickness: 2.0,
                     });
@@ -449,10 +448,11 @@ fn render_counter_ui(
         },
         {
             renderer.send_command(DrawQuad {
-                color: (0.16, 0.16, 0.18, 1.0),
-                border_color: (0.30, 0.30, 0.35, 1.0),
-                origin: (x, y, 0.0),
-                size: (width, height),
+                color: Color::rgb(0.16, 0.16, 0.18),
+                border_color: Color::rgb(0.30, 0.30, 0.35),
+                origin: Point::new(x, y),
+                z: 0.0,
+                size: Size::new(width, height),
                 border_radius: 20.0,
                 border_thickness: 2.0,
             });

@@ -2,8 +2,10 @@ use anyhow::{Result, bail};
 use gbm::{BufferObjectFlags, Format as GbmFormat};
 use glow::HasContext;
 use khronos_egl as egl;
-use std::ffi::c_void;
-use std::os::unix::io::{AsRawFd, OwnedFd};
+use std::{
+    ffi::c_void,
+    os::unix::io::{AsRawFd, OwnedFd},
+};
 
 use crate::{Renderer, SurfaceBackend};
 
@@ -27,14 +29,14 @@ const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 /// `zwp_linux_dmabuf_v1`. Keep one `RenderableSurface<DmaBuf>` per swap slot;
 /// the caller manages buffer lifecycle and swap chain rotation.
 pub struct DmaBuf {
-    _gbm_bo: gbm::BufferObject<()>, // must outlive egl_image
-    pub prime_fd: OwnedFd,          // DMA-BUF fd to hand to Wayland (dup before sending)
-    pub egl_image: *mut c_void,     // EGLImageKHR wrapping the DMA-BUF memory
-    pub stride: u32,                // bytes per row
-    pub modifier: u64,              // DRM format modifier (for Wayland params)
-    pub rbo: glow::Renderbuffer,    // GL renderbuffer backed by egl_image
+    _gbm_bo: gbm::BufferObject<()>,    // must outlive egl_image
+    pub prime_fd: OwnedFd,             // DMA-BUF fd to hand to Wayland (dup before sending)
+    pub egl_image: *mut c_void,        // EGLImageKHR wrapping the DMA-BUF memory
+    pub stride: u32,                   // bytes per row
+    pub modifier: u64,                 // DRM format modifier (for Wayland params)
+    pub rbo: glow::Renderbuffer,       // GL renderbuffer backed by egl_image
     pub depth_rbo: glow::Renderbuffer, // depth renderbuffer at DEPTH_ATTACHMENT
-    pub fbo: glow::Framebuffer,     // GL framebuffer with rbo at COLOR_ATTACHMENT0
+    pub fbo: glow::Framebuffer,        // GL framebuffer with rbo at COLOR_ATTACHMENT0
 }
 
 // SAFETY: EGLImageKHR pointer and GL handles are only accessed from one thread.
@@ -114,7 +116,9 @@ impl SurfaceBackend for DmaBuf {
         let depth_rbo = unsafe { renderer.gl.create_renderbuffer() }
             .map_err(|e| anyhow::anyhow!("glGenRenderbuffers (depth): {e}"))?;
         unsafe {
-            renderer.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(depth_rbo));
+            renderer
+                .gl
+                .bind_renderbuffer(glow::RENDERBUFFER, Some(depth_rbo));
             renderer.gl.renderbuffer_storage(
                 glow::RENDERBUFFER,
                 glow::DEPTH_COMPONENT24,

@@ -1,14 +1,25 @@
 use glow::{COLOR_BUFFER_BIT, DEPTH_BUFFER_BIT, HasContext};
+use utils::Color;
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
-#[derive(Clone)]
-pub struct ClearColor {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
+#[derive(Clone, Copy)]
+pub struct ClearColor(pub Color);
+
+impl ClearColor {
+    /// Construct from normalized `[0, 1]` RGB components with full opacity.
+    #[inline]
+    pub fn rgb(r: f32, g: f32, b: f32) -> Self {
+        Self(Color::rgb(r, g, b))
+    }
 }
+
+impl From<Color> for ClearColor {
+    fn from(c: Color) -> Self {
+        Self(c)
+    }
+}
+
 impl Command for ClearColor {
     fn get_queue_from_registry(
         registry: &mut super::CommandQueueRegistry,
@@ -18,28 +29,22 @@ impl Command for ClearColor {
 }
 
 #[derive(Default)]
-pub(crate) struct ClearColorQueue(Option<(f32, f32, f32, f32)>);
+pub(crate) struct ClearColorQueue(Option<Color>);
 
 impl CommandQueue<ClearColor> for ClearColorQueue {
     fn init(&mut self, _ctx: &RenderContext) {}
 
     fn enqueue(&mut self, command: ClearColor) {
-        let mut color = (0.0, 0.0, 0.0, 0.0);
-        color.0 = command.r;
-        color.1 = command.g;
-        color.2 = command.b;
-        color.3 = command.a;
-        self.0 = Some(color)
+        self.0 = Some(command.0);
     }
 
     fn process(&mut self, ctx: &RenderContext) {
-        if let Some(color) = self.0 {
+        if let Some(c) = self.0.take() {
             unsafe {
-                ctx.gl.clear_color(color.0, color.1, color.2, color.3);
+                ctx.gl.clear_color(c.r, c.g, c.b, c.a);
                 ctx.gl.clear_depth_f32(0.0);
                 ctx.gl.clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
             }
         }
-        self.0 = None;
     }
 }

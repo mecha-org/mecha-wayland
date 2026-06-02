@@ -2,8 +2,7 @@ use anyhow::{Context as _, Result, bail};
 use gbm::{AsRaw, Device as GbmDevice};
 use glow::HasContext;
 use khronos_egl as egl;
-use std::collections::HashMap;
-use std::ffi::c_void;
+use std::{collections::HashMap, ffi::c_void};
 
 pub mod dmabuf;
 pub use dmabuf::DmaBuf;
@@ -12,8 +11,8 @@ pub mod image_surface;
 pub use image_surface::ImageSurface;
 
 pub mod texture;
-pub use texture::{TextureFormat, TextureId};
 use texture::GpuTexture;
+pub use texture::{TextureFormat, TextureId};
 
 use crate::commands::{Command, CommandQueueRegistry, RenderContext};
 pub mod commands;
@@ -71,7 +70,9 @@ pub trait SurfaceBackend: Sized {
     fn read_pixels(&self, renderer: &Renderer, width: u32, height: u32) -> Vec<u8> {
         let mut pixels = vec![0u8; (width * height * 4) as usize];
         unsafe {
-            renderer.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo()));
+            renderer
+                .gl
+                .bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo()));
             renderer.gl.read_pixels(
                 0,
                 0,
@@ -292,8 +293,10 @@ impl Renderer {
     /// `process_command_queue`. Replaces the manual bind + viewport pattern.
     pub fn active_surface<B: SurfaceBackend>(&mut self, surface: &RenderableSurface<B>) {
         unsafe {
-            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(surface.fbo));
-            self.gl.viewport(0, 0, surface.width as i32, surface.height as i32);
+            self.gl
+                .bind_framebuffer(glow::FRAMEBUFFER, Some(surface.fbo));
+            self.gl
+                .viewport(0, 0, surface.width as i32, surface.height as i32);
         }
         self.viewport_width = surface.width;
         self.viewport_height = surface.height;
@@ -310,7 +313,10 @@ impl Renderer {
         data: &[u8],
     ) -> Result<TextureId> {
         let handle = unsafe {
-            let t = self.gl.create_texture().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let t = self
+                .gl
+                .create_texture()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             self.gl.bind_texture(glow::TEXTURE_2D, Some(t));
             self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
 
@@ -331,17 +337,40 @@ impl Renderer {
                 glow::UNSIGNED_BYTE,
                 glow::PixelUnpackData::Slice(Some(data)),
             );
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            self.gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            self.gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            self.gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
             self.gl.bind_texture(glow::TEXTURE_2D, None);
             t
         };
 
         let id = TextureId(self.next_texture_id);
         self.next_texture_id += 1;
-        self.textures.insert(id, GpuTexture { handle, width, height });
+        self.textures.insert(
+            id,
+            GpuTexture {
+                handle,
+                width,
+                height,
+            },
+        );
         Ok(id)
     }
 
@@ -350,9 +379,21 @@ impl Renderer {
     pub fn upload_atlas(&mut self, png_bytes: &[u8]) -> Result<TextureId> {
         let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
         let mut reader = decoder.read_info().context("decode atlas PNG header")?;
-        let mut buf = vec![0u8; reader.output_buffer_size().context("atlas PNG has unknown size")?];
-        let info = reader.next_frame(&mut buf).context("decode atlas PNG frame")?;
-        self.create_texture(info.width, info.height, TextureFormat::R8, &buf[..info.buffer_size()])
+        let mut buf = vec![
+            0u8;
+            reader
+                .output_buffer_size()
+                .context("atlas PNG has unknown size")?
+        ];
+        let info = reader
+            .next_frame(&mut buf)
+            .context("decode atlas PNG frame")?;
+        self.create_texture(
+            info.width,
+            info.height,
+            TextureFormat::R8,
+            &buf[..info.buffer_size()],
+        )
     }
 
     pub fn init_command_queue<C: Command>(&mut self) {

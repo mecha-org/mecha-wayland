@@ -1,6 +1,10 @@
 use criterion::{BenchmarkId, Criterion};
 use glow::HasContext;
-use renderer::{DmaBuf, Renderer, commands::{DrawQuad, DrawRect}};
+use renderer::{
+    DmaBuf, Renderer,
+    commands::{DrawQuad, DrawRect},
+};
+use utils::{Color, Point, Size};
 
 const WIDTH: u32 = 1028;
 const HEIGHT: u32 = 1080;
@@ -11,6 +15,14 @@ const N: usize = 100;
 
 const MIN_QUAD_SIZE: f32 = 16.0;
 const MAX_QUAD_SIZE: f32 = 1024.0;
+
+const BLUE_SOLID: Color = Color::rgb(0.2, 0.6, 1.0);
+const BLUE_HALF: Color = Color {
+    r: 0.2,
+    g: 0.6,
+    b: 1.0,
+    a: 0.5,
+};
 
 pub fn bench_solid_quad(c: &mut Criterion) {
     let mut renderer =
@@ -23,26 +35,31 @@ pub fn bench_solid_quad(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("solid_quad");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, 0.0),
-                        size: (w as f32, h as f32),
-                        border_radius: 8.0,
-                        border_thickness: 0.0,
-                    });
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.process_command_queue::<DrawQuad>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        renderer.send_command(DrawQuad {
+                            color: BLUE_SOLID,
+                            border_color: Color::WHITE,
+                            origin: Point::ZERO,
+                            z: 0.0,
+                            size: Size::new(w as f32, h as f32),
+                            border_radius: 8.0,
+                            border_thickness: 0.0,
+                        });
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.process_command_queue::<DrawQuad>();
+                        renderer.gl.finish();
+                    }
+                });
+            },
+        );
     }
     group.finish();
 
@@ -60,26 +77,31 @@ pub fn bench_translucent_quad(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("translucent_quad");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, 0.0),
-                        size: (w as f32, h as f32),
-                        border_radius: 8.0,
-                        border_thickness: 0.0,
-                    });
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.process_command_queue::<DrawQuad>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        renderer.send_command(DrawQuad {
+                            color: BLUE_HALF,
+                            border_color: Color::WHITE,
+                            origin: Point::ZERO,
+                            z: 0.0,
+                            size: Size::new(w as f32, h as f32),
+                            border_radius: 8.0,
+                            border_thickness: 0.0,
+                        });
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.process_command_queue::<DrawQuad>();
+                        renderer.gl.finish();
+                    }
+                });
+            },
+        );
     }
     group.finish();
 
@@ -99,28 +121,33 @@ pub fn bench_solid_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("solid_quad_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        renderer.send_command(DrawQuad {
-                            color: (0.2, 0.6, 1.0, 1.0),
-                            border_color: (1.0, 1.0, 1.0, 1.0),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                            border_radius: 8.0,
-                            border_thickness: 0.0,
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            renderer.send_command(DrawQuad {
+                                color: BLUE_SOLID,
+                                border_color: Color::WHITE,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                                border_radius: 8.0,
+                                border_thickness: 0.0,
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.process_command_queue::<DrawQuad>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.process_command_queue::<DrawQuad>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -140,28 +167,33 @@ pub fn bench_translucent_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("translucent_quad_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        renderer.send_command(DrawQuad {
-                            color: (0.2, 0.6, 1.0, 0.5),
-                            border_color: (1.0, 1.0, 1.0, 1.0),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                            border_radius: 8.0,
-                            border_thickness: 0.0,
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            renderer.send_command(DrawQuad {
+                                color: BLUE_HALF,
+                                border_color: Color::WHITE,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                                border_radius: 8.0,
+                                border_thickness: 0.0,
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.process_command_queue::<DrawQuad>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.process_command_queue::<DrawQuad>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -181,29 +213,34 @@ pub fn bench_mixed_stacked(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("mixed_quad_stacked_N100");
     for &(w, h) in SIZES {
-        group.bench_with_input(BenchmarkId::new("size", format!("{w}x{h}")), &(w, h), |b, &(w, h)| {
-            b.iter(|| {
-                renderer.active_surface(&surface);
-                unsafe {
-                    renderer.gl.clear_depth_f32(0.0);
-                    renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
-                    for i in 0..N {
-                        let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
-                        renderer.send_command(DrawQuad {
-                            color: (0.2, 0.6, 1.0, alpha),
-                            border_color: (1.0, 1.0, 1.0, 1.0),
-                            origin: (0.0, 0.0, i as f32 * z_step),
-                            size: (w as f32, h as f32),
-                            border_radius: 8.0,
-                            border_thickness: 0.0,
-                        });
+        group.bench_with_input(
+            BenchmarkId::new("size", format!("{w}x{h}")),
+            &(w, h),
+            |b, &(w, h)| {
+                b.iter(|| {
+                    renderer.active_surface(&surface);
+                    unsafe {
+                        renderer.gl.clear_depth_f32(0.0);
+                        renderer.gl.clear(glow::DEPTH_BUFFER_BIT);
+                        for i in 0..N {
+                            let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
+                            renderer.send_command(DrawQuad {
+                                color,
+                                border_color: Color::WHITE,
+                                origin: Point::ZERO,
+                                z: i as f32 * z_step,
+                                size: Size::new(w as f32, h as f32),
+                                border_radius: 8.0,
+                                border_thickness: 0.0,
+                            });
+                        }
+                        renderer.process_command_queue::<DrawRect>();
+                        renderer.process_command_queue::<DrawQuad>();
+                        renderer.gl.finish();
                     }
-                    renderer.process_command_queue::<DrawRect>();
-                    renderer.process_command_queue::<DrawQuad>();
-                    renderer.gl.finish();
-                }
-            });
-        });
+                });
+            },
+        );
     }
     group.finish();
 
@@ -232,10 +269,11 @@ pub fn bench_solid_growing(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_QUAD_SIZE + t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_SOLID,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });
@@ -273,10 +311,11 @@ pub fn bench_translucent_growing(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_QUAD_SIZE + t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_HALF,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });
@@ -313,12 +352,13 @@ pub fn bench_mixed_growing(c: &mut Criterion) {
                 for i in 0..N {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MIN_QUAD_SIZE + t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
-                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, alpha),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });
@@ -356,10 +396,11 @@ pub fn bench_solid_shrinking(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_QUAD_SIZE - t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 1.0),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_SOLID,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });
@@ -397,10 +438,11 @@ pub fn bench_translucent_shrinking(c: &mut Criterion) {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_QUAD_SIZE - t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, 0.5),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color: BLUE_HALF,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });
@@ -437,12 +479,13 @@ pub fn bench_mixed_shrinking(c: &mut Criterion) {
                 for i in 0..N {
                     let t = i as f32 / (N - 1) as f32;
                     let s = MAX_QUAD_SIZE - t * (MAX_QUAD_SIZE - MIN_QUAD_SIZE);
-                    let alpha = if i % 2 == 0 { 1.0 } else { 0.5 };
+                    let color = if i % 2 == 0 { BLUE_SOLID } else { BLUE_HALF };
                     renderer.send_command(DrawQuad {
-                        color: (0.2, 0.6, 1.0, alpha),
-                        border_color: (1.0, 1.0, 1.0, 1.0),
-                        origin: (0.0, 0.0, i as f32 * z_step),
-                        size: (s, s),
+                        color,
+                        border_color: Color::WHITE,
+                        origin: Point::ZERO,
+                        z: i as f32 * z_step,
+                        size: Size::new(s, s),
                         border_radius: 8.0,
                         border_thickness: 0.0,
                     });

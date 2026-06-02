@@ -1,9 +1,18 @@
 use criterion::Criterion;
 use glow::HasContext;
 use renderer::{DmaBuf, Renderer, commands::ClearColor};
+use utils::Color;
 
 const WIDTH: u32 = 1028;
 const HEIGHT: u32 = 1080;
+
+// Lavender: hsl(240°, 67%, 94%) ≈ rgb(0.902, 0.902, 0.980)
+const LAVENDER: Color = Color {
+    r: 0.902,
+    g: 0.902,
+    b: 0.980,
+    a: 1.0,
+};
 
 pub fn bench_lavender_render(c: &mut Criterion) {
     let mut renderer =
@@ -18,12 +27,7 @@ pub fn bench_lavender_render(c: &mut Criterion) {
         b.iter(|| {
             renderer.active_surface(&surface);
             unsafe {
-                renderer.send_command(ClearColor {
-                    r: 0.902,
-                    g: 0.902,
-                    b: 0.980,
-                    a: 1.000,
-                });
+                renderer.send_command(ClearColor(LAVENDER));
                 renderer.process_command_queue::<ClearColor>();
                 renderer.gl.finish(); // blocks until GPU completes — measures true GPU time
             }

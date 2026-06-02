@@ -1,14 +1,17 @@
 use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
+use utils::{Color, Point, Size};
 
 use crate::commands::{Command, CommandQueue, RenderContext};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct DrawRect {
-    pub color: (f32, f32, f32, f32), // r, g, b, a in f32 from 0.0 to 1.0
-    pub origin: (f32, f32, f32),     // x, y in pixels, z for depth
-    pub size: (f32, f32),            // width, height in pixels
+    pub color: Color,  // r, g, b, a
+    pub origin: Point, // x, y in pixels
+    pub z: f32,        // depth
+    pub size: Size,    // width, height in pixels
 }
+
 unsafe impl bytemuck::Pod for DrawRect {}
 unsafe impl bytemuck::Zeroable for DrawRect {
     fn zeroed() -> Self {
@@ -35,8 +38,8 @@ pub(crate) struct RectQueue {
     translucent: Vec<DrawRect>,
 }
 
-// Builds an interleaved vertex buffer (11 floats/vertex, 6 vertices/rect) for a batch of rects.
-// Layout per vertex: aPos(2) aColor(4) aOrigin(3) aSize(2)
+/// Builds an interleaved vertex buffer (11 floats/vertex, 6 vertices/rect).
+/// Layout per vertex: aPos(2) aColor(4) aOrigin(3) aSize(2)
 fn build_rect_verts(rects: &[DrawRect]) -> Vec<f32> {
     #[rustfmt::skip]
     const CORNERS: [(f32, f32); 6] = [
@@ -45,11 +48,13 @@ fn build_rect_verts(rects: &[DrawRect]) -> Vec<f32> {
     ];
     let mut v = Vec::with_capacity(rects.len() * 6 * 11);
     for r in rects {
-        let (cr, cg, cb, ca) = r.color;
-        let (ox, oy, oz) = r.origin;
-        let (sw, sh) = r.size;
+        let (ox, oy) = r.origin.as_tuple();
+        let (sw, sh) = r.size.as_tuple();
+        let oz = r.z;
         for (px, py) in CORNERS {
-            v.extend_from_slice(&[px, py, cr, cg, cb, ca, ox, oy, oz, sw, sh]);
+            v.extend_from_slice(&[
+                px, py, r.color.r, r.color.g, r.color.b, r.color.a, ox, oy, oz, sw, sh,
+            ]);
         }
     }
     v
@@ -134,7 +139,7 @@ impl CommandQueue<DrawRect> for RectQueue {
     }
 
     fn enqueue(&mut self, command: DrawRect) {
-        if command.color.3 >= 1.0 {
+        if command.color.a >= 1.0 {
             self.opaque.push(command);
         } else {
             self.translucent.push(command);
@@ -174,7 +179,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                 // Pass 1: opaque, front-to-back, depth write on, blending off
                 if !self.opaque.is_empty() {
                     let mut sorted: Vec<DrawRect> = self.opaque.drain(..).collect();
-                    sorted.sort_unstable_by(|a, b| b.origin.2.total_cmp(&a.origin.2));
+                    sorted.sort_unstable_by(|a, b| b.z.total_cmp(&a.z));
                     gl.depth_mask(true);
                     gl.disable(glow::BLEND);
 
@@ -190,7 +195,7 @@ impl CommandQueue<DrawRect> for RectQueue {
                 // Pass 2: translucent, back-to-front, depth write off, blending on
                 if !self.translucent.is_empty() {
                     let mut sorted: Vec<DrawRect> = self.translucent.drain(..).collect();
-                    sorted.sort_unstable_by(|a, b| a.origin.2.total_cmp(&b.origin.2));
+                    sorted.sort_unstable_by(|a, b| a.z.total_cmp(&b.z));
                     gl.depth_mask(false);
                     gl.enable(glow::BLEND);
                     gl.blend_func_separate(

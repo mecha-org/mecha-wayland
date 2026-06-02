@@ -72,7 +72,7 @@
 //!
 //! struct AppState { counter: u32 }
 //!
-//! impl Lens<u32> for AppState {
+//! unsafe impl Lens<u32> for AppState {
 //!     fn lens(&mut self) -> &mut u32 { &mut self.counter }
 //! }
 //!
@@ -85,17 +85,20 @@
 //! assert_eq!(app.state().counter, 1);
 //! ```
 
+mod compose;
 mod dispatch;
 mod event;
 mod module;
 mod runtime;
 
+pub use compose::Compose;
 pub use dispatch::{HandleList, Handler, ModuleList, MountedModule, OuterDispatch, Propagate};
 pub use event::{Emit, Event, Many, Poll, PrePoll, Start};
 pub use module::{Lens, Module, RegisteredModule};
 pub use runtime::App;
 
 pub mod prelude {
-    pub use crate::{App, Event, Lens, Many, Module};
+    pub use crate::{App, Compose, Event, Lens, Many, Module};
+    pub use app_macro::{State, context, with_context};
     pub use frunk::hlist;
 }

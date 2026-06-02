@@ -66,25 +66,25 @@ struct AppState {
 
 // ── Lenses ────────────────────────────────────────────────────────────────────
 
-impl Lens<NotificationQueue> for AppState {
+unsafe impl Lens<NotificationQueue> for AppState {
     fn lens(&mut self) -> &mut NotificationQueue {
         &mut self.notifications
     }
 }
 
-impl Lens<Network> for AppState {
+unsafe impl Lens<Network> for AppState {
     fn lens(&mut self) -> &mut Network {
         &mut self.network
     }
 }
 
-impl Lens<Battery> for AppState {
+unsafe impl Lens<Battery> for AppState {
     fn lens(&mut self) -> &mut Battery {
         &mut self.battery
     }
 }
 
-impl Lens<BatteryAlerts> for Battery {
+unsafe impl Lens<BatteryAlerts> for Battery {
     fn lens(&mut self) -> &mut BatteryAlerts {
         &mut self.alerts
     }

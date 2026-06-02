@@ -41,6 +41,13 @@ pub trait RegisteredModule<S, AppState> {
 /// impl — you are not required to write every combination; only the ones where
 /// you actually mount directly across levels.
 ///
+/// # Safety
+///
+/// The returned reference must point to a distinct sub-field of `self`. No two
+/// `Lens<T>` impls on the same type may return overlapping memory. Violating
+/// this allows the dispatch machinery to produce aliased `&mut` references,
+/// which is immediate undefined behaviour.
+///
 /// # Example
 ///
 /// ```rust
@@ -48,7 +55,7 @@ pub trait RegisteredModule<S, AppState> {
 ///
 /// struct AppState { count: u32 }
 ///
-/// impl Lens<u32> for AppState {
+/// unsafe impl Lens<u32> for AppState {
 ///     fn lens(&mut self) -> &mut u32 { &mut self.count }
 /// }
 ///
@@ -59,11 +66,11 @@ pub trait RegisteredModule<S, AppState> {
 /// app.dispatch(&Increment);
 /// assert_eq!(app.state().count, 1);
 /// ```
-pub trait Lens<T> {
+pub unsafe trait Lens<T> {
     fn lens(&mut self) -> &mut T;
 }
 
-impl<T> Lens<T> for T {
+unsafe impl<T> Lens<T> for T {
     fn lens(&mut self) -> &mut T {
         self
     }
@@ -186,7 +193,7 @@ impl<S, Emitted, Handlers, SubModules> Module<S, Emitted, Handlers, SubModules> 
     ///
     /// struct Parent { child_val: u32 }
     ///
-    /// impl Lens<u32> for Parent {
+    /// unsafe impl Lens<u32> for Parent {
     ///     fn lens(&mut self) -> &mut u32 { &mut self.child_val }
     /// }
     ///

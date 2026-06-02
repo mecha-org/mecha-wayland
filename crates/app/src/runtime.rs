@@ -62,10 +62,7 @@ impl<S, Modules> App<S, Modules> {
     pub fn mount<SubState, M>(
         self,
         module: M,
-    ) -> App<
-        S,
-        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, M::SubModules>, Modules>,
-    >
+    ) -> App<S, HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, M::SubModules>, Modules>>
     where
         S: Lens<SubState>,
         M: RegisteredModule<SubState, S>,

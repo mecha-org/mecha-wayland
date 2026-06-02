@@ -1,7 +1,11 @@
 use app::prelude::*;
 
-struct Renderer { draw_calls: u32 }
-struct Wayland  { committed: bool }
+struct Renderer {
+    draw_calls: u32,
+}
+struct Wayland {
+    committed: bool,
+}
 
 #[derive(State)]
 struct AppState {

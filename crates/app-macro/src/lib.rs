@@ -121,11 +121,15 @@ pub fn context(_attr: TokenStream, input: TokenStream) -> TokenStream {
         }
     };
 
-    let field_inits: Vec<_> = field_names.iter().zip(field_types.iter()).map(|(fname, ty)| {
-        quote! {
-            #fname: &mut *(::app::Lens::<#ty>::lens(state) as *mut #ty),
-        }
-    }).collect();
+    let field_inits: Vec<_> = field_names
+        .iter()
+        .zip(field_types.iter())
+        .map(|(fname, ty)| {
+            quote! {
+                #fname: &mut *(::app::Lens::<#ty>::lens(state) as *mut #ty),
+            }
+        })
+        .collect();
 
     let compose_impl = quote! {
         unsafe impl<'a, S> ::app::Compose<'a, S> for #name<'a>
@@ -179,7 +183,13 @@ impl Parse for WithContextInput {
 
         let body: Expr = input.parse()?;
 
-        Ok(WithContextInput { ctx_ident, ctx_type, evt_pat, evt_type, body })
+        Ok(WithContextInput {
+            ctx_ident,
+            ctx_type,
+            evt_pat,
+            evt_type,
+            body,
+        })
     }
 }
 
@@ -196,8 +206,13 @@ impl Parse for WithContextInput {
 /// ```
 #[proc_macro]
 pub fn with_context(input: TokenStream) -> TokenStream {
-    let WithContextInput { ctx_ident, ctx_type, evt_pat, evt_type, body } =
-        parse_macro_input!(input as WithContextInput);
+    let WithContextInput {
+        ctx_ident,
+        ctx_type,
+        evt_pat,
+        evt_type,
+        body,
+    } = parse_macro_input!(input as WithContextInput);
 
     quote! {
         move |__state: &mut _, __event: &_| {

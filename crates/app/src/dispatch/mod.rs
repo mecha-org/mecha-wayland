@@ -128,10 +128,7 @@ impl<S, OuterS> OuterDispatch<S, OuterS> for HNil {
 
 impl<S, OuterS, ChildState, ChildEmitted, ChildHandlers, ChildSubModules, Tail>
     OuterDispatch<S, OuterS>
-    for HCons<
-        MountedModule<S, ChildState, ChildEmitted, ChildHandlers, ChildSubModules>,
-        Tail,
-    >
+    for HCons<MountedModule<S, ChildState, ChildEmitted, ChildHandlers, ChildSubModules>, Tail>
 where
     S: Lens<ChildState>,
     ChildHandlers: HandleList<ChildState, ChildEmitted>,

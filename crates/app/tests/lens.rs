@@ -22,10 +22,15 @@ fn field_extraction() {
     struct Tick;
     impl app::Event for Tick {}
 
-    struct State { a: u32, b: u32 }
+    struct State {
+        a: u32,
+        b: u32,
+    }
 
     unsafe impl app::Lens<u32> for State {
-        fn lens(&mut self) -> &mut u32 { &mut self.a }
+        fn lens(&mut self) -> &mut u32 {
+            &mut self.a
+        }
     }
 
     let module = app::Module::new().on(|s: &mut u32, _: &Tick| *s += 1);
@@ -48,21 +53,31 @@ fn two_modules_on_different_fields() {
 
     struct Counter(u32);
     struct Timer(u32);
-    struct State { counter: Counter, timer: Timer }
+    struct State {
+        counter: Counter,
+        timer: Timer,
+    }
 
     unsafe impl app::Lens<Counter> for State {
-        fn lens(&mut self) -> &mut Counter { &mut self.counter }
+        fn lens(&mut self) -> &mut Counter {
+            &mut self.counter
+        }
     }
     unsafe impl app::Lens<Timer> for State {
-        fn lens(&mut self) -> &mut Timer { &mut self.timer }
+        fn lens(&mut self) -> &mut Timer {
+            &mut self.timer
+        }
     }
 
     let counter_module = app::Module::new().on(|s: &mut Counter, _: &TickA| s.0 += 1);
     let timer_module = app::Module::new().on(|s: &mut Timer, _: &TickB| s.0 += 10);
 
-    let mut app = app::App::new(State { counter: Counter(0), timer: Timer(0) })
-        .mount(counter_module)
-        .mount(timer_module);
+    let mut app = app::App::new(State {
+        counter: Counter(0),
+        timer: Timer(0),
+    })
+    .mount(counter_module)
+    .mount(timer_module);
 
     app.dispatch(&TickA);
     app.dispatch(&TickB);

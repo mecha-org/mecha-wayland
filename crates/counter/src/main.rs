@@ -137,69 +137,67 @@ fn main() {
                 s.wayland.flush();
             }),
         )
-        .mount(
-            app::Module::new().on(
-                |s: &mut AppState, ev: &wayland::zwlr_layer_shell::LayerSurfaceEvent| {
-                    use wayland::zwlr_layer_shell::LayerSurfaceEvent;
+        .mount(app::Module::new().on(
+            |s: &mut AppState, ev: &wayland::zwlr_layer_shell::LayerSurfaceEvent| {
+                use wayland::zwlr_layer_shell::LayerSurfaceEvent;
 
-                    let LayerSurfaceEvent::Configured {
-                        id,
-                        serial,
-                        width,
-                        height,
-                    } = ev
-                    else {
-                        return;
-                    };
+                let LayerSurfaceEvent::Configured {
+                    id,
+                    serial,
+                    width,
+                    height,
+                } = ev
+                else {
+                    return;
+                };
 
-                    let w = if *width == 0 { 256i32 } else { *width as i32 };
-                    let h = if *height == 0 { 256i32 } else { *height as i32 };
-                    s.ui.surface_size = (w, h);
+                let w = if *width == 0 { 256i32 } else { *width as i32 };
+                let h = if *height == 0 { 256i32 } else { *height as i32 };
+                s.ui.surface_size = (w, h);
 
-                    let surface0 = s
-                        .renderer
-                        .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
-                        .expect("dmabuf surface 0");
-                    let surface1 = s
-                        .renderer
-                        .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
-                        .expect("dmabuf surface 1");
+                let surface0 = s
+                    .renderer
+                    .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
+                    .expect("dmabuf surface 0");
+                let surface1 = s
+                    .renderer
+                    .create_surface::<::renderer::DmaBuf>(w as u32, h as u32)
+                    .expect("dmabuf surface 1");
 
-                    let buf_id0 = create_wl_buffer(&mut s.wayland, &surface0, w, h);
-                    let buf_id1 = create_wl_buffer(&mut s.wayland, &surface1, w, h);
-                    s.wayland.wl_buffer.register(buf_id0);
-                    s.wayland.wl_buffer.register(buf_id1);
-                    s.ui.wl_buf_ids = [buf_id0, buf_id1];
+                let buf_id0 = create_wl_buffer(&mut s.wayland, &surface0, w, h);
+                let buf_id1 = create_wl_buffer(&mut s.wayland, &surface1, w, h);
+                s.wayland.wl_buffer.register(buf_id0);
+                s.wayland.wl_buffer.register(buf_id1);
+                s.ui.wl_buf_ids = [buf_id0, buf_id1];
 
-                    if s.ui.icon_tex.is_none() {
-                        s.ui.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
-                    }
+                if s.ui.icon_tex.is_none() {
+                    s.ui.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
+                }
 
-                    s.renderer.active_surface(&surface0);
-                    s.ui.hit_boxes = render_counter_ui(
-                        &mut s.renderer,
-                        w as f32,
-                        h as f32,
-                        s.ui.counter.count,
-                        s.ui.icon_tex.unwrap(),
-                    );
-                    s.renderer.finish();
+                s.renderer.active_surface(&surface0);
+                s.ui.hit_boxes = render_counter_ui(
+                    &mut s.renderer,
+                    w as f32,
+                    h as f32,
+                    s.ui.counter.count,
+                    s.ui.icon_tex.unwrap(),
+                );
+                s.renderer.finish();
 
-                    s.ui.dmabuf = [Some(surface0), Some(surface1)];
-                    s.ui.buf_in_flight = [true, false];
+                s.ui.dmabuf = [Some(surface0), Some(surface1)];
+                s.ui.buf_in_flight = [true, false];
 
-                    s.wayland.layer_surface.ack_configure(*id, *serial);
-                    s.wayland.surface.attach(s.ui.surface_id, buf_id0, 0, 0);
-                    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
+                s.wayland.layer_surface.ack_configure(*id, *serial);
+                s.wayland.surface.attach(s.ui.surface_id, buf_id0, 0, 0);
+                s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
 
-                    let cb_id = s.wayland.surface.frame(s.ui.surface_id);
-                    s.wayland.callback.register_frame(cb_id);
+                let cb_id = s.wayland.surface.frame(s.ui.surface_id);
+                s.wayland.callback.register_frame(cb_id);
 
-                    s.wayland.surface.commit(s.ui.surface_id);
-                    s.wayland.flush();
-                },
-            ),
-        )
+                s.wayland.surface.commit(s.ui.surface_id);
+                s.wayland.flush();
+            },
+        ))
         .mount(
             app::Module::new().on(|s: &mut AppState, _: &wayland::WlCallbackEvent| {
                 let free_idx = if !s.ui.buf_in_flight[0] {
@@ -289,17 +287,13 @@ fn main() {
                 }
             }),
         )
-        .mount(
-            app::Module::new().on(|s: &mut AppState, _: &app::Start| {
-                s.timer.start_timer(TimerSettings {
-                    duration: Duration::from_secs(2),
-                    repeat: true,
-                });
-            }),
-        )
-        .mount(
-            app::Module::new().on(|_: &mut AppState, _: &timer::TimerEvent| {}),
-        );
+        .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
+            s.timer.start_timer(TimerSettings {
+                duration: Duration::from_secs(2),
+                repeat: true,
+            });
+        }))
+        .mount(app::Module::new().on(|_: &mut AppState, _: &timer::TimerEvent| {}));
 
     app.dispatch(&app::Start);
     loop {

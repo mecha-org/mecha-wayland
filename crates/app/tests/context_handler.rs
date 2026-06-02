@@ -1,12 +1,24 @@
 use app::prelude::*;
 
-#[derive(Debug)] struct Tick;   impl Event for Tick {}
-#[derive(Debug)] struct Resize; impl Event for Resize {}
-#[derive(Debug)] struct Beat;   impl Event for Beat {}
+#[derive(Debug)]
+struct Tick;
+impl Event for Tick {}
+#[derive(Debug)]
+struct Resize;
+impl Event for Resize {}
+#[derive(Debug)]
+struct Beat;
+impl Event for Beat {}
 
-struct Renderer { draw_calls: u32 }
-struct Wayland  { committed: bool }
-struct Audio    { volume: u32 }
+struct Renderer {
+    draw_calls: u32,
+}
+struct Wayland {
+    committed: bool,
+}
+struct Audio {
+    volume: u32,
+}
 
 #[derive(State)]
 struct AppState {
@@ -36,8 +48,8 @@ fn make_state() -> AppState {
 
 #[test]
 fn with_context_single_field_mutates_state() {
-    let module = Module::<AppState, _, _>::new()
-        .on(with_context!(|ctx: RenderCtx<'_>, _: &Tick| {
+    let module =
+        Module::<AppState, _, _>::new().on(with_context!(|ctx: RenderCtx<'_>, _: &Tick| {
             ctx.renderer.draw_calls += 1;
         }));
 
@@ -67,8 +79,8 @@ fn with_context_mixed_with_plain_handler() {
 
 #[test]
 fn with_context_multi_field_mutates_all() {
-    let module = Module::<AppState, _, _>::new()
-        .on(with_context!(|ctx: RenderCtx<'_>, _: &Tick| {
+    let module =
+        Module::<AppState, _, _>::new().on(with_context!(|ctx: RenderCtx<'_>, _: &Tick| {
             ctx.renderer.draw_calls += 1;
             ctx.wayland.committed = true;
         }));

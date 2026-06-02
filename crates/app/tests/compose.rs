@@ -87,7 +87,10 @@ fn make_state() -> AppState {
     AppState {
         renderer: Renderer { draw_calls: 0 },
         wayland: Wayland { committed: false },
-        button: ButtonState { clicked: false, click_count: 0 },
+        button: ButtonState {
+            clicked: false,
+            click_count: 0,
+        },
     }
 }
 
@@ -157,5 +160,8 @@ fn compose_subset_does_not_affect_excluded_field() {
     let ctx = RenderCtx::compose(&mut state);
     ctx.renderer.draw_calls = 7;
 
-    assert_eq!(state.button.click_count, 42, "button state must be untouched");
+    assert_eq!(
+        state.button.click_count, 42,
+        "button state must be untouched"
+    );
 }

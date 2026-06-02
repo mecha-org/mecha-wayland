@@ -87,9 +87,7 @@ pub fn redraw(s: &mut AppState) {
     s.wayland
         .surface
         .attach(s.ui.surface_id, s.ui.wl_buf_ids[free_idx], 0, 0);
-    s.wayland
-        .surface
-        .damage(s.ui.surface_id, 0, 0, w, h);
+    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
 
     let cb_id = s.wayland.surface.frame(s.ui.surface_id);
     s.wayland.callback.register_frame(cb_id);

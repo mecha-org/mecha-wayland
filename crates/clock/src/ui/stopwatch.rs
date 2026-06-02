@@ -22,7 +22,8 @@ pub fn render(
     let theme_colors = s.ui.theme.colors();
 
     let elapsed = s.ui.stopwatch.accumulated_duration
-        + s.ui.stopwatch
+        + s.ui
+            .stopwatch
             .start_instant
             .map(|i| i.elapsed())
             .unwrap_or(Duration::ZERO);
@@ -124,7 +125,13 @@ pub fn format_duration(dur: Duration) -> String {
     let mins = total_secs / 60;
     let hours = mins / 60;
     if hours > 0 {
-        format!("{:02}:{:02}:{:02}.{:02}", hours, mins % 60, secs, hundredths)
+        format!(
+            "{:02}:{:02}:{:02}.{:02}",
+            hours,
+            mins % 60,
+            secs,
+            hundredths
+        )
     } else {
         format!("{:02}:{:02}.{:02}", mins, secs, hundredths)
     }
@@ -135,5 +142,9 @@ pub fn get_lap_label(laps: &[Duration], display_index: usize) -> Option<String> 
         return None;
     }
     let lap_idx = laps.len() - 1 - display_index;
-    Some(format!("Lap {}: {}", lap_idx + 1, format_duration(laps[lap_idx])))
+    Some(format!(
+        "Lap {}: {}",
+        lap_idx + 1,
+        format_duration(laps[lap_idx])
+    ))
 }

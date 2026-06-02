@@ -11,42 +11,42 @@ struct AtlasConfig {
 
 #[derive(Deserialize)]
 struct AtlasEntry {
-    name:   String,
+    name: String,
     #[serde(default)]
     sprite: Vec<SpriteEntry>,
     #[serde(default)]
-    font:   Vec<FontEntry>,
+    font: Vec<FontEntry>,
 }
 
 #[derive(Deserialize)]
 struct SpriteEntry {
-    name:   String,
-    path:   String,
-    width:  Option<u32>,
+    name: String,
+    path: String,
+    width: Option<u32>,
     height: Option<u32>,
 }
 
 #[derive(Deserialize)]
 struct FontEntry {
-    name:  String,
-    path:  String,
+    name: String,
+    path: String,
     sizes: Vec<u32>,
 }
 
 struct SpriteImage {
-    name:   String,
-    width:  u32,
+    name: String,
+    width: u32,
     height: u32,
     pixels: Vec<u8>,
 }
 
 struct GlyphImage {
-    width:     u32,
-    height:    u32,
-    pixels:    Vec<u8>,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
     bearing_x: f32,
     bearing_y: f32,
-    advance:   f32,
+    advance: f32,
 }
 
 // Parallel to the crunch::Item<usize> list — tells us what each slot is.
@@ -61,8 +61,8 @@ pub fn pack_atlas(toml_path: &Path, out_dir: &Path) -> Result<()> {
 
     println!("cargo:rerun-if-changed={}", toml_path.display());
 
-    let config: AtlasConfig = toml::from_str(&content)
-        .with_context(|| format!("parsing {}", toml_path.display()))?;
+    let config: AtlasConfig =
+        toml::from_str(&content).with_context(|| format!("parsing {}", toml_path.display()))?;
 
     let base_dir = toml_path.parent().unwrap_or(Path::new("."));
 
@@ -94,8 +94,8 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
     for font_entry in &atlas.font {
         let path = base_dir.join(&font_entry.path);
         println!("cargo:rerun-if-changed={}", path.display());
-        let bytes = std::fs::read(&path)
-            .with_context(|| format!("reading font '{}'", path.display()))?;
+        let bytes =
+            std::fs::read(&path).with_context(|| format!("reading font '{}'", path.display()))?;
         let font = fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
             .map_err(|e| anyhow::anyhow!("fontdue: {e}"))?;
 
@@ -105,12 +105,12 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
                 let ch = (char_idx + 32) as char;
                 let (metrics, pixels) = font.rasterize(ch, px as f32);
                 run.push(GlyphImage {
-                    width:     metrics.width as u32,
-                    height:    metrics.height as u32,
+                    width: metrics.width as u32,
+                    height: metrics.height as u32,
                     pixels,
                     bearing_x: metrics.xmin as f32,
                     bearing_y: metrics.ymin as f32,
-                    advance:   metrics.advance_width,
+                    advance: metrics.advance_width,
                 });
             }
             glyph_runs.push(run);
@@ -126,12 +126,21 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
     for (si, s) in sprites.iter().enumerate() {
         let idx = slots.len();
         slots.push(Slot::Sprite(si));
-        pack_items.push(crunch::Item::new(idx, s.width as usize + 1, s.height as usize + 1, crunch::Rotation::None));
+        pack_items.push(crunch::Item::new(
+            idx,
+            s.width as usize + 1,
+            s.height as usize + 1,
+            crunch::Rotation::None,
+        ));
     }
 
     for (run_idx, run) in glyph_runs.iter().enumerate() {
         for (char_idx, g) in run.iter().enumerate() {
-            let (w, h) = if g.width == 0 || g.height == 0 { (1, 1) } else { (g.width as usize, g.height as usize) };
+            let (w, h) = if g.width == 0 || g.height == 0 {
+                (1, 1)
+            } else {
+                (g.width as usize, g.height as usize)
+            };
             let idx = slots.len();
             slots.push(Slot::Glyph(run_idx * 95 + char_idx));
             pack_items.push(crunch::Item::new(idx, w + 1, h + 1, crunch::Rotation::None));
@@ -151,9 +160,8 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
             break;
         }
     }
-    let packed = packed.with_context(|| {
-        format!("atlas '{}': items don't fit within 4096×4096", atlas.name)
-    })?;
+    let packed = packed
+        .with_context(|| format!("atlas '{}': items don't fit within 4096×4096", atlas.name))?;
 
     // ── Blit pixels ───────────────────────────────────────────────────────────
     let mut atlas_pixels = vec![0u8; atlas_size * atlas_size];
@@ -244,10 +252,10 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
                 glyph_entries.push_str(&format!(
                     "        ::assets::GlyphInfo {{ x: {ax}.0, y: {ay}.0, w: {w}, h: {h}, \
                      bearing_x: {bx}, bearing_y: {by}, advance: {adv} }},\n",
-                    w   = f32_lit(g.width as f32),
-                    h   = f32_lit(g.height as f32),
-                    bx  = f32_lit(g.bearing_x),
-                    by  = f32_lit(g.bearing_y),
+                    w = f32_lit(g.width as f32),
+                    h = f32_lit(g.height as f32),
+                    bx = f32_lit(g.bearing_x),
+                    by = f32_lit(g.bearing_y),
                     adv = f32_lit(g.advance),
                 ));
             }
@@ -295,7 +303,12 @@ fn load_sprite(path: &Path, width: Option<u32>, height: Option<u32>) -> Result<S
             let w = width.context("SVG sprite requires `width` in TOML")?;
             let h = height.context("SVG sprite requires `height` in TOML")?;
             let pixels = rasterize_svg(path, w, h)?;
-            Ok(SpriteImage { name: String::new(), width: w, height: h, pixels })
+            Ok(SpriteImage {
+                name: String::new(),
+                width: w,
+                height: h,
+                pixels,
+            })
         }
         "png" => load_png(path),
         _ => bail!("unsupported sprite extension '{ext}'"),
@@ -311,7 +324,11 @@ fn rasterize_svg(path: &Path, width: u32, height: u32) -> Result<Vec<u8>> {
     let scale_y = height as f32 / size.height();
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("failed to create pixmap {width}×{height}"))?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(scale_x, scale_y), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale_x, scale_y),
+        &mut pixmap.as_mut(),
+    );
     Ok(pixmap.pixels().iter().map(|p| p.alpha()).collect())
 }
 
@@ -319,7 +336,12 @@ fn load_png(path: &Path) -> Result<SpriteImage> {
     let file = std::io::BufReader::new(File::open(path)?);
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info()?;
-    let mut buf = vec![0u8; reader.output_buffer_size().context("PNG has unknown size")?];
+    let mut buf = vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .context("PNG has unknown size")?
+    ];
     let info = reader.next_frame(&mut buf)?;
     let bytes = &buf[..info.buffer_size()];
 
@@ -331,7 +353,11 @@ fn load_png(path: &Path) -> Result<SpriteImage> {
             .chunks(3)
             .map(|c| (0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32) as u8)
             .collect(),
-        _ => bail!("unsupported PNG format {:?}/{:?}", info.color_type, info.bit_depth),
+        _ => bail!(
+            "unsupported PNG format {:?}/{:?}",
+            info.color_type,
+            info.bit_depth
+        ),
     };
 
     Ok(SpriteImage {

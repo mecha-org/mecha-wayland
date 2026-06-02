@@ -1,5 +1,5 @@
-use crate::proto::wl_compositor as proto;
 use crate::proto::Handle;
+use crate::proto::wl_compositor as proto;
 use crate::{SharedConnection, send};
 
 pub struct WlCompositor {
@@ -9,7 +9,10 @@ pub struct WlCompositor {
 
 impl WlCompositor {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { conn, handle: Handle::new(0) }
+        Self {
+            conn,
+            handle: Handle::new(0),
+        }
     }
 
     pub fn set_id(&mut self, id: u32) {
@@ -18,7 +21,11 @@ impl WlCompositor {
 
     pub fn create_surface(&self) -> u32 {
         let surface_id = self.conn.borrow_mut().alloc_id();
-        send(&self.conn, &self.handle, &proto::request::CreateSurface { id: surface_id });
+        send(
+            &self.conn,
+            &self.handle,
+            &proto::request::CreateSurface { id: surface_id },
+        );
         surface_id
     }
 }

@@ -451,35 +451,66 @@ pub fn module<AppState>() -> impl app::RegisteredModule<Wayland, AppState> {
             }
             wl.pending.pop_front()
         })
-        .mount(|wl| &mut wl.display, wl_display::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.registry, wl_registry::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.callback, wl_callback::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.surface, wl_surface::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.layer_surface, zwlr_layer_shell::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.seat, wl_seat::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.pointer, wl_pointer::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.keyboard, wl_keyboard::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.touch, wl_touch::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.dmabuf, zwp_linux_dmabuf::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.wl_buffer, wl_buffer::module::<AppState>().into_module())
-        .on(
-            |wl: &mut Wayland, ev: &SeatEvent| match ev {
-                SeatEvent::Capabilities { capabilities } => {
-                    if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {
-                        let id = wl.seat.get_pointer();
-                        wl.pointer.set_id(id);
-                    }
-                    if (capabilities & CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
-                        let id = wl.seat.get_keyboard();
-                        wl.keyboard.set_id(id);
-                    }
-                    if (capabilities & CAP_TOUCH) != 0 && wl.touch.id() == 0 {
-                        let id = wl.seat.get_touch();
-                        wl.touch.set_id(id);
-                    }
-                    wl.flush();
-                }
-                _ => {}
-            },
+        .mount(
+            |wl| &mut wl.display,
+            wl_display::module::<AppState>().into_module(),
         )
+        .mount(
+            |wl| &mut wl.registry,
+            wl_registry::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.callback,
+            wl_callback::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.surface,
+            wl_surface::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.layer_surface,
+            zwlr_layer_shell::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.seat,
+            wl_seat::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.pointer,
+            wl_pointer::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.keyboard,
+            wl_keyboard::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.touch,
+            wl_touch::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.dmabuf,
+            zwp_linux_dmabuf::module::<AppState>().into_module(),
+        )
+        .mount(
+            |wl| &mut wl.wl_buffer,
+            wl_buffer::module::<AppState>().into_module(),
+        )
+        .on(|wl: &mut Wayland, ev: &SeatEvent| match ev {
+            SeatEvent::Capabilities { capabilities } => {
+                if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {
+                    let id = wl.seat.get_pointer();
+                    wl.pointer.set_id(id);
+                }
+                if (capabilities & CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
+                    let id = wl.seat.get_keyboard();
+                    wl.keyboard.set_id(id);
+                }
+                if (capabilities & CAP_TOUCH) != 0 && wl.touch.id() == 0 {
+                    let id = wl.seat.get_touch();
+                    wl.touch.set_id(id);
+                }
+                wl.flush();
+            }
+            _ => {}
+        })
 }

@@ -2,10 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    braced,
+    Expr, Ident, Token, braced,
     parse::{Parse, ParseStream},
     parse_macro_input,
-    Expr, Ident, Token,
 };
 
 // ── DSL prop ─────────────────────────────────────────────────────────────────
@@ -60,10 +59,15 @@ impl Parse for FirstScope {
         loop {
             // Skip separators
             while input.peek(Token![,]) || input.peek(Token![;]) {
-                if input.peek(Token![,]) { input.parse::<Token![,]>()?; }
-                else { input.parse::<Token![;]>()?; }
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                } else {
+                    input.parse::<Token![;]>()?;
+                }
             }
-            if input.is_empty() { break; }
+            if input.is_empty() {
+                break;
+            }
 
             // Peek for nested layout!
             if input.peek(Ident) {
@@ -103,7 +107,11 @@ fn parse_layout_args(input: ParseStream) -> syn::Result<LayoutNode> {
 
     let _ = input.parse::<Token![,]>();
 
-    Ok(LayoutNode { props: first.props, children: first.children, body })
+    Ok(LayoutNode {
+        props: first.props,
+        children: first.children,
+        body,
+    })
 }
 
 impl Parse for LayoutNode {
@@ -154,7 +162,7 @@ fn flatten(node: LayoutNode, parent: Option<usize>, nodes: &mut Vec<NodeInfo>) -
                 if let Expr::Path(ref ep) = p.value {
                     if let Some(seg) = ep.path.segments.first() {
                         match seg.ident.to_string().as_str() {
-                            "row"    => dir = Dir::Row,
+                            "row" => dir = Dir::Row,
                             "column" => dir = Dir::Column,
                             _ => {}
                         }
@@ -170,15 +178,15 @@ fn flatten(node: LayoutNode, parent: Option<usize>, nodes: &mut Vec<NodeInfo>) -
                     }
                 }
             }
-            "width"            => width_prop = Some(p.value),
-            "height"           => height_prop = Some(p.value),
-            "available_width"  => available_width = Some(p.value),
+            "width" => width_prop = Some(p.value),
+            "height" => height_prop = Some(p.value),
+            "available_width" => available_width = Some(p.value),
             "available_height" => available_height = Some(p.value),
-            "gap"              => gap = Some(p.value),
-            "padding_top"      => padding_top = Some(p.value),
-            "padding_right"    => padding_right = Some(p.value),
-            "padding_bottom"   => padding_bottom = Some(p.value),
-            "padding_left"     => padding_left = Some(p.value),
+            "gap" => gap = Some(p.value),
+            "padding_top" => padding_top = Some(p.value),
+            "padding_right" => padding_right = Some(p.value),
+            "padding_bottom" => padding_bottom = Some(p.value),
+            "padding_left" => padding_left = Some(p.value),
             _ => {}
         }
     }
@@ -212,15 +220,23 @@ fn flatten(node: LayoutNode, parent: Option<usize>, nodes: &mut Vec<NodeInfo>) -
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn slot_w(i: usize) -> Ident { Ident::new(&format!("__lw{i}"), Span::call_site()) }
-fn slot_h(i: usize) -> Ident { Ident::new(&format!("__lh{i}"), Span::call_site()) }
-fn slot_x(i: usize) -> Ident { Ident::new(&format!("__lx{i}"), Span::call_site()) }
-fn slot_y(i: usize) -> Ident { Ident::new(&format!("__ly{i}"), Span::call_site()) }
+fn slot_w(i: usize) -> Ident {
+    Ident::new(&format!("__lw{i}"), Span::call_site())
+}
+fn slot_h(i: usize) -> Ident {
+    Ident::new(&format!("__lh{i}"), Span::call_site())
+}
+fn slot_x(i: usize) -> Ident {
+    Ident::new(&format!("__lx{i}"), Span::call_site())
+}
+fn slot_y(i: usize) -> Ident {
+    Ident::new(&format!("__ly{i}"), Span::call_site())
+}
 
 fn or_zero(e: &Option<Expr>) -> TokenStream2 {
     match e {
         Some(v) => quote! { (#v) as f32 },
-        None    => quote! { 0.0_f32 },
+        None => quote! { 0.0_f32 },
     }
 }
 
@@ -256,7 +272,9 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
     // ── Phase 2: Fill propagation (pre-order: parents before children) ───────
     // nodes vec is already in pre-order (parent pushed before children)
     for n in nodes {
-        if n.child_indices.is_empty() { continue; }
+        if n.child_indices.is_empty() {
+            continue;
+        }
         let pw = slot_w(n.idx);
         let ph = slot_h(n.idx);
         let pad_l = or_zero(&n.padding_left);
@@ -291,7 +309,9 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
     out.extend(quote! { #rx = 0.0_f32; #ry = 0.0_f32; });
 
     for n in nodes {
-        if n.child_indices.is_empty() { continue; }
+        if n.child_indices.is_empty() {
+            continue;
+        }
 
         let px = slot_x(n.idx);
         let py = slot_y(n.idx);
@@ -300,7 +320,7 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
         let pad_l = or_zero(&n.padding_left);
         let pad_r = or_zero(&n.padding_right);
         let pad_t = or_zero(&n.padding_top);
-        let gap   = or_zero(&n.gap);
+        let gap = or_zero(&n.gap);
 
         match n.dir {
             Dir::Column => {
@@ -319,52 +339,50 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
                     cur_y = quote! { #cy + #ch + #gap };
                 }
             }
-            Dir::Row => {
-                match n.justify {
-                    Justify::FlexStart => {
-                        let mut cur_x = quote! { #px + #pad_l };
-                        for &ci in &n.child_indices {
-                            let cx = slot_x(ci);
-                            let cy = slot_y(ci);
-                            let cw = slot_w(ci);
-                            let ch = slot_h(ci);
-                            let cur_x_clone = cur_x.clone();
-                            out.extend(quote! {
-                                #cx = #cur_x_clone;
-                                #cy = #py + (#ph - #ch) / 2.0_f32;
-                            });
-                            cur_x = quote! { #cx + #cw + #gap };
-                        }
-                    }
-                    Justify::SpaceBetween => {
-                        let n_children = n.child_indices.len();
-                        let child_ws: Vec<_> = n.child_indices.iter().map(|&c| slot_w(c)).collect();
-                        let space_id = Ident::new(&format!("__lspc{}", n.idx), Span::call_site());
-                        let sum_id   = Ident::new(&format!("__lsum{}", n.idx), Span::call_site());
+            Dir::Row => match n.justify {
+                Justify::FlexStart => {
+                    let mut cur_x = quote! { #px + #pad_l };
+                    for &ci in &n.child_indices {
+                        let cx = slot_x(ci);
+                        let cy = slot_y(ci);
+                        let cw = slot_w(ci);
+                        let ch = slot_h(ci);
+                        let cur_x_clone = cur_x.clone();
                         out.extend(quote! {
-                            let #sum_id: f32 = #(#child_ws as f32)+*;
-                            let #space_id: f32 = if #n_children > 1 {
-                                (#pw - #pad_l - #pad_r - #sum_id) / (#n_children as f32 - 1.0_f32)
-                            } else {
-                                0.0_f32
-                            };
+                            #cx = #cur_x_clone;
+                            #cy = #py + (#ph - #ch) / 2.0_f32;
                         });
-                        let mut cur_x = quote! { #px + #pad_l };
-                        for &ci in &n.child_indices {
-                            let cx = slot_x(ci);
-                            let cy = slot_y(ci);
-                            let cw = slot_w(ci);
-                            let ch = slot_h(ci);
-                            let cur_x_clone = cur_x.clone();
-                            out.extend(quote! {
-                                #cx = #cur_x_clone;
-                                #cy = #py + (#ph - #ch) / 2.0_f32;
-                            });
-                            cur_x = quote! { #cx + #cw + #space_id };
-                        }
+                        cur_x = quote! { #cx + #cw + #gap };
                     }
                 }
-            }
+                Justify::SpaceBetween => {
+                    let n_children = n.child_indices.len();
+                    let child_ws: Vec<_> = n.child_indices.iter().map(|&c| slot_w(c)).collect();
+                    let space_id = Ident::new(&format!("__lspc{}", n.idx), Span::call_site());
+                    let sum_id = Ident::new(&format!("__lsum{}", n.idx), Span::call_site());
+                    out.extend(quote! {
+                        let #sum_id: f32 = #(#child_ws as f32)+*;
+                        let #space_id: f32 = if #n_children > 1 {
+                            (#pw - #pad_l - #pad_r - #sum_id) / (#n_children as f32 - 1.0_f32)
+                        } else {
+                            0.0_f32
+                        };
+                    });
+                    let mut cur_x = quote! { #px + #pad_l };
+                    for &ci in &n.child_indices {
+                        let cx = slot_x(ci);
+                        let cy = slot_y(ci);
+                        let cw = slot_w(ci);
+                        let ch = slot_h(ci);
+                        let cur_x_clone = cur_x.clone();
+                        out.extend(quote! {
+                            #cx = #cur_x_clone;
+                            #cy = #py + (#ph - #ch) / 2.0_f32;
+                        });
+                        cur_x = quote! { #cx + #cw + #space_id };
+                    }
+                }
+            },
         }
     }
 

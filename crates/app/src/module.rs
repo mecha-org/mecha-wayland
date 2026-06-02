@@ -148,7 +148,10 @@ impl<S, Emitted, Handlers, SubModules> Module<S, Emitted, Handlers, SubModules> 
         S,
         Emitted,
         Handlers,
-        HCons<MountedModule<S, ChildState, ChildEmitted, ChildHandlers, LensFn, ChildSubModules>, SubModules>,
+        HCons<
+            MountedModule<S, ChildState, ChildEmitted, ChildHandlers, LensFn, ChildSubModules>,
+            SubModules,
+        >,
     >
     where
         LensFn: Fn(&mut S) -> &mut ChildState,

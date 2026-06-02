@@ -304,7 +304,11 @@ fn emitted_event_reaches_module_mounted_before_emitter() {
 
     app.dispatch(&EventA);
 
-    assert_eq!(app.state().0, 1, "module_a should have received EventB emitted by module_b");
+    assert_eq!(
+        app.state().0,
+        1,
+        "module_a should have received EventB emitted by module_b"
+    );
     assert_eq!(app.state().1, 1, "module_b should have handled EventA");
 }
 
@@ -332,7 +336,11 @@ fn emitted_event_reaches_module_mounted_after_emitter() {
     app.dispatch(&EventA);
 
     assert_eq!(app.state().0, 1, "module_a should have handled EventA");
-    assert_eq!(app.state().1, 1, "module_b should have received EventB emitted by module_a");
+    assert_eq!(
+        app.state().1,
+        1,
+        "module_b should have received EventB emitted by module_a"
+    );
 }
 
 // Submodule tests
@@ -344,14 +352,14 @@ fn submodule_receives_dispatched_event() {
     impl app::Event for Tick {}
 
     #[derive(Debug)]
-    struct State { child: u32 }
+    struct State {
+        child: u32,
+    }
 
     let child = app::Module::new().on(|s: &mut u32, _: &Tick| *s += 1);
-    let parent = app::Module::<State, _, _>::new()
-        .mount(|s: &mut State| &mut s.child, child);
+    let parent = app::Module::<State, _, _>::new().mount(|s: &mut State| &mut s.child, child);
 
-    let mut app = app::App::new(State { child: 0 })
-        .mount(|s: &mut State| s, parent);
+    let mut app = app::App::new(State { child: 0 }).mount(|s: &mut State| s, parent);
 
     app.dispatch(&Tick);
 
@@ -368,7 +376,10 @@ fn submodule_emitted_event_reaches_app_root() {
     impl app::Event for Response {}
 
     #[derive(Debug)]
-    struct State { child: u32, root: u32 }
+    struct State {
+        child: u32,
+        root: u32,
+    }
 
     // Child emits Response when it sees Trigger
     let child = app::Module::new().on(|_: &mut u32, _: &Trigger| Response);
@@ -376,8 +387,7 @@ fn submodule_emitted_event_reaches_app_root() {
     // Root module handles Response (mounted separately at app level)
     let root_module = app::Module::new().on(|s: &mut State, _: &Response| s.root += 1);
 
-    let parent = app::Module::<State, _, _>::new()
-        .mount(|s: &mut State| &mut s.child, child);
+    let parent = app::Module::<State, _, _>::new().mount(|s: &mut State| &mut s.child, child);
 
     let mut app = app::App::new(State { child: 0, root: 0 })
         .mount(|s: &mut State| s, parent)
@@ -385,7 +395,11 @@ fn submodule_emitted_event_reaches_app_root() {
 
     app.dispatch(&Trigger);
 
-    assert_eq!(app.state().root, 1, "Response emitted by submodule should reach root module");
+    assert_eq!(
+        app.state().root,
+        1,
+        "Response emitted by submodule should reach root module"
+    );
 }
 
 #[test]
@@ -398,15 +412,20 @@ fn app_module_emitted_event_reaches_submodule() {
     impl app::Event for Response {}
 
     #[derive(Debug)]
-    struct State { child: u32, root: u32 }
+    struct State {
+        child: u32,
+        root: u32,
+    }
 
     // Root module emits Response when it sees Trigger
-    let root_module = app::Module::new().on(|s: &mut State, _: &Trigger| { s.root += 1; Response });
+    let root_module = app::Module::new().on(|s: &mut State, _: &Trigger| {
+        s.root += 1;
+        Response
+    });
 
     // Child handles Response
     let child = app::Module::new().on(|s: &mut u32, _: &Response| *s += 1);
-    let parent = app::Module::<State, _, _>::new()
-        .mount(|s: &mut State| &mut s.child, child);
+    let parent = app::Module::<State, _, _>::new().mount(|s: &mut State| &mut s.child, child);
 
     let mut app = app::App::new(State { child: 0, root: 0 })
         .mount(|s: &mut State| s, root_module)
@@ -414,7 +433,11 @@ fn app_module_emitted_event_reaches_submodule() {
 
     app.dispatch(&Trigger);
 
-    assert_eq!(app.state().child, 1, "Response emitted by root module should reach submodule");
+    assert_eq!(
+        app.state().child,
+        1,
+        "Response emitted by root module should reach submodule"
+    );
 }
 
 #[test]
@@ -427,34 +450,48 @@ fn grandchild_emitted_event_reaches_app_root() {
     impl app::Event for Done {}
 
     #[derive(Debug)]
-    struct GrandchildState { count: u32 }
+    struct GrandchildState {
+        count: u32,
+    }
     #[derive(Debug)]
-    struct ChildState { grandchild: GrandchildState }
+    struct ChildState {
+        grandchild: GrandchildState,
+    }
     #[derive(Debug)]
-    struct AppState { child: ChildState, done_count: u32 }
+    struct AppState {
+        child: ChildState,
+        done_count: u32,
+    }
 
     // Grandchild emits Done on Tick
-    let grandchild = app::Module::new()
-        .on(|_: &mut GrandchildState, _: &Tick| Done);
+    let grandchild = app::Module::new().on(|_: &mut GrandchildState, _: &Tick| Done);
 
     // Child just forwards — no handlers, only a mounted grandchild
     let child = app::Module::<ChildState, _, _>::new()
         .mount(|s: &mut ChildState| &mut s.grandchild, grandchild);
 
     // Parent mounts child
-    let parent = app::Module::<AppState, _, _>::new()
-        .mount(|s: &mut AppState| &mut s.child, child);
+    let parent = app::Module::<AppState, _, _>::new().mount(|s: &mut AppState| &mut s.child, child);
 
     // Separate root module counts Done events
     let counter = app::Module::new().on(|s: &mut AppState, _: &Done| s.done_count += 1);
 
-    let mut app = app::App::new(AppState { child: ChildState { grandchild: GrandchildState { count: 0 } }, done_count: 0 })
-        .mount(|s: &mut AppState| s, parent)
-        .mount(|s: &mut AppState| s, counter);
+    let mut app = app::App::new(AppState {
+        child: ChildState {
+            grandchild: GrandchildState { count: 0 },
+        },
+        done_count: 0,
+    })
+    .mount(|s: &mut AppState| s, parent)
+    .mount(|s: &mut AppState| s, counter);
 
     app.dispatch(&Tick);
 
-    assert_eq!(app.state().done_count, 1, "Done emitted by grandchild should reach root counter");
+    assert_eq!(
+        app.state().done_count,
+        1,
+        "Done emitted by grandchild should reach root counter"
+    );
 }
 
 // Stack overflow aborts the process via SIGABRT — not catchable by #[should_panic].

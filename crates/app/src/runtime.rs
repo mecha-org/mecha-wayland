@@ -34,7 +34,10 @@ pub struct App<S, Modules> {
 impl<S> App<S, HNil> {
     /// Create a new `App` with the given initial state and no modules.
     pub fn new(state: S) -> Self {
-        Self { state, modules: HNil }
+        Self {
+            state,
+            modules: HNil,
+        }
     }
 }
 
@@ -58,11 +61,15 @@ impl<S, Modules> App<S, Modules> {
         self,
         lens: LensFn,
         module: M,
-    ) -> App<S, HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>>
+    ) -> App<
+        S,
+        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>,
+    >
     where
         M: RegisteredModule<SubState, S>,
         LensFn: Fn(&mut S) -> &mut SubState,
-        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>: ModuleList<S>,
+        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>:
+            ModuleList<S>,
     {
         let module = module.into_module();
         App {

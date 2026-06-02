@@ -74,8 +74,16 @@ fn main() {
             warned_critical: false,
             alerts: BatteryAlerts { muted: false },
         },
-        network: Network { connected: true, reconnect_attempts: 0, dropped: false },
-        notifications: NotificationQueue { pending: [""; 4], pending_len: 0, displayed: 0 },
+        network: Network {
+            connected: true,
+            reconnect_attempts: 0,
+            dropped: false,
+        },
+        notifications: NotificationQueue {
+            pending: [""; 4],
+            pending_len: 0,
+            displayed: 0,
+        },
     };
 
     // Mount order matters: emitted events propagate to modules that sit deeper

@@ -9,7 +9,7 @@ pub enum TextureFormat {
 
 pub(crate) struct GpuTexture {
     pub handle: glow::NativeTexture,
-    pub width:  u32,
+    pub width: u32,
     pub height: u32,
 }
 

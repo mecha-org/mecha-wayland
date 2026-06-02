@@ -8,8 +8,14 @@ use crate::{SharedConnection, WaylandRawEvent, parse, send};
 
 #[derive(Debug)]
 pub enum DmabufEvent {
-    Format { format: u32 },
-    Modifier { format: u32, modifier_hi: u32, modifier_lo: u32 },
+    Format {
+        format: u32,
+    },
+    Modifier {
+        format: u32,
+        modifier_hi: u32,
+        modifier_lo: u32,
+    },
 }
 
 impl Event for DmabufEvent {}
@@ -24,7 +30,11 @@ pub struct ZwpLinuxDmabufV1 {
 
 impl ZwpLinuxDmabufV1 {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { conn, handle: Handle::new(0), formats: Vec::new() }
+        Self {
+            conn,
+            handle: Handle::new(0),
+            formats: Vec::new(),
+        }
     }
 
     pub fn set_id(&mut self, id: u32) {
@@ -33,7 +43,11 @@ impl ZwpLinuxDmabufV1 {
 
     pub fn create_params(&self) -> u32 {
         let params_id = self.conn.borrow_mut().alloc_id();
-        send(&self.conn, &self.handle, &crate::proto::zwp_linux_dmabuf_v1::request::CreateParams { params_id });
+        send(
+            &self.conn,
+            &self.handle,
+            &crate::proto::zwp_linux_dmabuf_v1::request::CreateParams { params_id },
+        );
         params_id
     }
 
@@ -65,7 +79,10 @@ pub struct ZwpLinuxBufferParamsV1 {
 
 impl ZwpLinuxBufferParamsV1 {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { conn, active_ids: HashSet::new() }
+        Self {
+            conn,
+            active_ids: HashSet::new(),
+        }
     }
 
     pub fn register(&mut self, params_id: u32) {
@@ -74,8 +91,14 @@ impl ZwpLinuxBufferParamsV1 {
 
     pub fn destroy(&mut self, params_id: u32) {
         self.active_ids.remove(&params_id);
-        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(params_id);
-        send(&self.conn, &h, &crate::proto::zwp_linux_buffer_params_v1::request::Destroy);
+        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(
+            params_id,
+        );
+        send(
+            &self.conn,
+            &h,
+            &crate::proto::zwp_linux_buffer_params_v1::request::Destroy,
+        );
     }
 
     pub fn add(
@@ -88,11 +111,20 @@ impl ZwpLinuxBufferParamsV1 {
         modifier_hi: u32,
         modifier_lo: u32,
     ) {
-        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(params_id);
+        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(
+            params_id,
+        );
         send(
             &self.conn,
             &h,
-            &crate::proto::zwp_linux_buffer_params_v1::request::Add { fd, plane_idx, offset, stride, modifier_hi, modifier_lo },
+            &crate::proto::zwp_linux_buffer_params_v1::request::Add {
+                fd,
+                plane_idx,
+                offset,
+                stride,
+                modifier_hi,
+                modifier_lo,
+            },
         );
     }
 
@@ -105,12 +137,23 @@ impl ZwpLinuxBufferParamsV1 {
         flags: u32,
     ) -> u32 {
         let buf_id = self.conn.borrow_mut().alloc_id();
-        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(params_id);
-        let flags_flags = crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1Flags::from_bits_retain(flags);
+        let h = Handle::<crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>::new(
+            params_id,
+        );
+        let flags_flags =
+            crate::proto::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1Flags::from_bits_retain(
+                flags,
+            );
         send(
             &self.conn,
             &h,
-            &crate::proto::zwp_linux_buffer_params_v1::request::CreateImmed { buffer_id: buf_id, width, height, format, flags: flags_flags },
+            &crate::proto::zwp_linux_buffer_params_v1::request::CreateImmed {
+                buffer_id: buf_id,
+                width,
+                height,
+                format,
+                flags: flags_flags,
+            },
         );
         buf_id
     }

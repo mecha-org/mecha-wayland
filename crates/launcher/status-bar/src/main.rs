@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use io_ring::Ring;
 use layout::layout;
-use timer::{Timer, TimerSettings};
+use timer::{Timer, TimerId, TimerSettings};
 use wayland::Wayland;
 use widgets::{battery, bluetooth, clock, wifi};
 
@@ -24,11 +24,6 @@ struct DemoDriver {
 }
 
 impl DemoDriver {
-    fn tick_clock(&self) -> clock::ClockUpdate {
-        let (h, m) = clock::local_time();
-        clock::ClockUpdate(h, m)
-    }
-
     fn tick_battery(&mut self) -> battery::BatteryUpdate {
         const STATES: &[(u8, bool)] = &[
             (100, false),
@@ -93,6 +88,10 @@ const JUICE_MAX_W: f32 = 12.0;
 const JUICE_H: f32 = 6.0;
 // ── END REMOVE: charging overlay ──────────────────────────────────────────
 
+fn secs_to_next_minute() -> u64 {
+    60 - (unsafe { libc::time(std::ptr::null_mut()) } as u64 % 60)
+}
+
 struct StatusBarState {
     ring: Ring,
     timer: Timer,
@@ -111,6 +110,7 @@ struct StatusBarState {
     wifi: wifi::WifiWidget,
     // REMOVE: demo — replace with real hardware event source
     demo: DemoDriver,
+    clock_timer_id: Option<TimerId>,
 }
 
 impl StatusBarState {
@@ -149,8 +149,15 @@ impl StatusBarState {
                 bluetooth_step: 0,
                 wifi_step: 0,
             },
-            // END REMOVE: demo
+            clock_timer_id: None,
         }
+    }
+
+    fn schedule_clock_tick(&mut self) {
+        self.clock_timer_id = Some(self.timer.start_timer(TimerSettings {
+            duration: Duration::from_secs(secs_to_next_minute()),
+            repeat: false,
+        }));
     }
 
     fn try_redraw(&mut self) {
@@ -244,21 +251,6 @@ impl StatusBarState {
                     gap: GAP,
 
                     layout!({
-                        width: wifi_w,
-                        height: ICON_SIZE,
-                    }, {
-                        let region = self.wifi.sprite_region();
-                        renderer.send_command(DrawMonochromeSprite {
-                            texture_id: icon_tex,
-                            region: Rect::new(region.x, region.y, region.w, region.h),
-                            origin: Point::new(x, y),
-                            z: 0.1,
-                            size: Size::new(ICON_SIZE, ICON_SIZE),
-                            color: Color::WHITE,
-                        });
-                    }),
-
-                    layout!({
                         width: bluetooth_w,
                         height: ICON_SIZE,
                     }, {
@@ -273,6 +265,21 @@ impl StatusBarState {
                                 color: Color::WHITE,
                             });
                         }
+                    }),
+
+                    layout!({
+                        width: wifi_w,
+                        height: ICON_SIZE,
+                    }, {
+                        let region = self.wifi.sprite_region();
+                        renderer.send_command(DrawMonochromeSprite {
+                            texture_id: icon_tex,
+                            region: Rect::new(region.x, region.y, region.w, region.h),
+                            origin: Point::new(x, y),
+                            z: 0.1,
+                            size: Size::new(ICON_SIZE, ICON_SIZE),
+                            color: Color::WHITE,
+                        });
                     }),
 
                     layout!({
@@ -368,6 +375,7 @@ fn main() {
                     duration: Duration::from_secs(1),
                     repeat: true,
                 });
+                s.schedule_clock_tick();
             }),
         )
         .mount(
@@ -469,12 +477,6 @@ fn main() {
             |s| s,
             // REMOVE: demo — replace with real hardware polling
             app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
-                Some(s.demo.tick_clock())
-            }),
-        )
-        .mount(
-            |s| s,
-            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
                 Some(s.demo.tick_battery())
             }),
         )
@@ -489,6 +491,19 @@ fn main() {
             app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
                 Some(s.demo.tick_wifi())
             }),
+        )
+        .mount(
+            |s| s,
+            app::Module::new().on(
+                |s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                    if s.clock_timer_id != Some(ev.id()) {
+                        return None;
+                    }
+                    s.schedule_clock_tick();
+                    let (h, m) = clock::local_time();
+                    Some(clock::ClockUpdate(h, m))
+                },
+            ),
         )
         .mount(
             |s| s,

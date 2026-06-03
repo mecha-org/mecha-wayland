@@ -17,6 +17,14 @@ pub enum TimerEvent {
     Restarted { id: TimerId },
 }
 
+impl TimerEvent {
+    pub fn id(&self) -> TimerId {
+        match self {
+            TimerEvent::Finished { id } | TimerEvent::Restarted { id } => *id,
+        }
+    }
+}
+
 impl Event for TimerEvent {}
 
 struct ActiveTimer {

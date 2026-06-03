@@ -476,34 +476,29 @@ fn main() {
         .mount(
             |s| s,
             // REMOVE: demo — replace with real hardware polling
-            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
-                Some(s.demo.tick_battery())
-            }),
+            app::Module::new()
+                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_battery())),
         )
         .mount(
             |s| s,
-            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
-                Some(s.demo.tick_bluetooth())
-            }),
+            app::Module::new()
+                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_bluetooth())),
         )
         .mount(
             |s| s,
-            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
-                Some(s.demo.tick_wifi())
-            }),
+            app::Module::new()
+                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_wifi())),
         )
         .mount(
             |s| s,
-            app::Module::new().on(
-                |s: &mut StatusBarState, ev: &timer::TimerEvent| {
-                    if s.clock_timer_id != Some(ev.id()) {
-                        return None;
-                    }
-                    s.schedule_clock_tick();
-                    let (h, m) = clock::local_time();
-                    Some(clock::ClockUpdate(h, m))
-                },
-            ),
+            app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                if s.clock_timer_id != Some(ev.id()) {
+                    return None;
+                }
+                s.schedule_clock_tick();
+                let (h, m) = clock::local_time();
+                Some(clock::ClockUpdate(h, m))
+            }),
         )
         .mount(
             |s| s,

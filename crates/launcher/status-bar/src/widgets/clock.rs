@@ -54,7 +54,11 @@ impl ClockWidget {
 
     pub fn slot_width(&self) -> f32 {
         let template = if self.show_date {
-            if self.format_24h { "00 Xxx  00:00" } else { "00 Xxx  00:00 PM" }
+            if self.format_24h {
+                "00 Xxx  00:00"
+            } else {
+                "00 Xxx  00:00 PM"
+            }
         } else {
             if self.format_24h { "00:00" } else { "00:00 PM" }
         };

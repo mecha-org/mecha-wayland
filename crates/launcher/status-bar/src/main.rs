@@ -21,79 +21,58 @@ struct DemoDriver {
     battery_step: u8,
     bluetooth_step: u8,
     wifi_step: u8,
-    tick_count: u64,
 }
 
 impl DemoDriver {
-    fn tick(
-        &mut self,
-    ) -> (
-        clock::ClockUpdate,
-        battery::BatteryUpdate,
-        bluetooth::BluetoothUpdate,
-        wifi::WifiUpdate,
-    ) {
-        let count = self.tick_count;
-        self.tick_count += 1;
-
+    fn tick_clock(&self) -> clock::ClockUpdate {
         let (h, m) = clock::local_time();
-        let clock = clock::ClockUpdate(h, m);
+        clock::ClockUpdate(h, m)
+    }
 
-        let battery = if count % 2 == 0 {
-            const STATES: &[(u8, bool)] = &[
-                (100, false),
-                (100, true),
-                (80, false),
-                (80, true),
-                (60, false),
-                (60, true),
-                (40, false),
-                (40, true),
-                (20, false),
-                (20, true),
-                (0, false),
-                (0, true),
-            ];
-            let (pct, charging) = STATES[self.battery_step as usize];
-            self.battery_step = (self.battery_step + 1) % (STATES.len() as u8);
-            battery::BatteryUpdate { pct, charging }
-        } else {
-            battery::BatteryUpdate {
-                pct: 100,
-                charging: false,
-            }
-        };
+    fn tick_battery(&mut self) -> battery::BatteryUpdate {
+        const STATES: &[(u8, bool)] = &[
+            (100, false),
+            (100, true),
+            (80, false),
+            (80, true),
+            (60, false),
+            (60, true),
+            (40, false),
+            (40, true),
+            (20, false),
+            (20, true),
+            (0, false),
+            (0, true),
+        ];
+        let (pct, charging) = STATES[self.battery_step as usize];
+        self.battery_step = (self.battery_step + 1) % (STATES.len() as u8);
+        battery::BatteryUpdate { pct, charging }
+    }
 
-        let (bluetooth, wifi) = if count % 5 == 0 {
-            use bluetooth::BluetoothState;
-            let states = [
-                BluetoothState::Off,
-                BluetoothState::On,
-                BluetoothState::Connected,
-            ];
-            let s = states[self.bluetooth_step as usize];
-            self.bluetooth_step = (self.bluetooth_step + 1) % (states.len() as u8);
+    fn tick_bluetooth(&mut self) -> bluetooth::BluetoothUpdate {
+        use bluetooth::BluetoothState;
+        let states = [
+            BluetoothState::Off,
+            BluetoothState::On,
+            BluetoothState::Connected,
+        ];
+        let s = states[self.bluetooth_step as usize];
+        self.bluetooth_step = (self.bluetooth_step + 1) % (states.len() as u8);
+        bluetooth::BluetoothUpdate(s)
+    }
 
-            use wifi::WifiState;
-            let states = [
-                WifiState::High,
-                WifiState::Medium,
-                WifiState::Low,
-                WifiState::None,
-                WifiState::X,
-            ];
-            let ws = states[self.wifi_step as usize];
-            self.wifi_step = (self.wifi_step + 1) % (states.len() as u8);
-
-            (bluetooth::BluetoothUpdate(s), wifi::WifiUpdate(ws))
-        } else {
-            (
-                bluetooth::BluetoothUpdate(bluetooth::BluetoothState::Off),
-                wifi::WifiUpdate(wifi::WifiState::High),
-            )
-        };
-
-        (clock, battery, bluetooth, wifi)
+    fn tick_wifi(&mut self) -> wifi::WifiUpdate {
+        use wifi::WifiState;
+        let states = [
+            WifiState::High,
+            WifiState::Medium,
+            WifiState::Low,
+            WifiState::None,
+            WifiState::X,
+        ];
+        let ws = states[self.wifi_step as usize];
+        self.wifi_step = (self.wifi_step + 1) % (states.len() as u8);
+        wifi::WifiUpdate(ws)
     }
 }
 // ── END REMOVE: demo ──────────────────────────────────────────────────────
@@ -169,7 +148,6 @@ impl StatusBarState {
                 battery_step: 0,
                 bluetooth_step: 0,
                 wifi_step: 0,
-                tick_count: 0,
             },
             // END REMOVE: demo
         }
@@ -491,8 +469,25 @@ fn main() {
             |s| s,
             // REMOVE: demo — replace with real hardware polling
             app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
-                let (clock, battery, bluetooth, wifi) = s.demo.tick();
-                app::prelude::hlist![clock, battery, bluetooth, wifi]
+                Some(s.demo.tick_clock())
+            }),
+        )
+        .mount(
+            |s| s,
+            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
+                Some(s.demo.tick_battery())
+            }),
+        )
+        .mount(
+            |s| s,
+            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
+                Some(s.demo.tick_bluetooth())
+            }),
+        )
+        .mount(
+            |s| s,
+            app::Module::new().on(|s: &mut StatusBarState, _: &timer::TimerEvent| {
+                Some(s.demo.tick_wifi())
             }),
         )
         .mount(

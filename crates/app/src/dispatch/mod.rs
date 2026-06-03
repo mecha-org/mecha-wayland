@@ -168,9 +168,8 @@ where
 
 /// Re-dispatches events collected from handler return values.
 ///
-/// Implemented for `()`, `HNil`, `HCons<E, Tail>` where `E: Event`,
-/// `HCons<Option<E>, Tail>`, `HCons<Many<Iter>, Tail>`, and their
-/// `Option<Many<…>>` variants.
+/// Implemented for `()`, `HNil`, `HCons<Option<E>, Tail>`,
+/// `HCons<Many<Iter>, Tail>`, and their `Option<Many<…>>` variants.
 pub trait Propagate<S> {
     fn propagate<ML: ModuleList<S>>(self, root: &ML, state: &mut S);
 }
@@ -191,14 +190,6 @@ impl<S, E: Event, Tail: Propagate<S>> Propagate<S> for HCons<Option<E>, Tail> {
         if let Some(e) = self.head {
             root.dispatch(&e, state);
         }
-        self.tail.propagate(root, state);
-    }
-}
-
-impl<S, E: Event, Tail: Propagate<S>> Propagate<S> for HCons<E, Tail> {
-    #[inline(always)]
-    fn propagate<ML: ModuleList<S>>(self, root: &ML, state: &mut S) {
-        root.dispatch(&self.head, state);
         self.tail.propagate(root, state);
     }
 }

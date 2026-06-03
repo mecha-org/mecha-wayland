@@ -11,24 +11,25 @@ pub fn render(
     s: &mut state::AppState,
     body_w: f32,
     body_h: f32,
-    win_w: f32,
-    win_h: f32,
+    _win_w: f32,
+    _win_h: f32,
     icon_tex: renderer::TextureId,
     hit_boxes: &mut HitBoxes,
 ) {
     use crate::ui::components::draw_centered_text;
     use layout::layout;
 
-    let theme_colors = s.theme.colors();
+    let theme_colors = s.ui.theme.colors();
 
-    let elapsed = s.stopwatch.accumulated_duration
-        + s.stopwatch
+    let elapsed = s.ui.stopwatch.accumulated_duration
+        + s.ui
+            .stopwatch
             .start_instant
             .map(|i| i.elapsed())
             .unwrap_or(Duration::ZERO);
     let stopwatch_str = format_duration(elapsed);
-    let is_running = s.stopwatch.is_running;
-    let laps = &s.stopwatch.laps;
+    let is_running = s.ui.stopwatch.is_running;
+    let laps = &s.ui.stopwatch.laps;
 
     layout!(
         {
@@ -38,15 +39,13 @@ pub fn render(
             gap: 18.0,
             padding_top: 55.0,
 
-            // Stopwatch display
             layout!({ height: 60.0 },
                 {
                     let bb = Rect::xywh(x, y, width, height);
-                    draw_centered_text(&mut s.engine.renderer, &atlas::UI_FONT_MONO_48, icon_tex, stopwatch_str, &bb, 0.9, theme_colors.text_primary);
+                    draw_centered_text(&mut s.renderer, &atlas::UI_FONT_MONO_48, icon_tex, stopwatch_str, &bb, 0.9, theme_colors.text_primary);
                 }
             ),
 
-            // Action buttons
             layout!(
                 {
                     direction: row,
@@ -60,12 +59,9 @@ pub fn render(
                         hit_boxes.lap_reset_btn = bb;
                         let label = if is_running { "Lap" } else { "Reset" };
                         draw_action_button(
-                            &mut s.engine.renderer, icon_tex, label.to_string(),
-                            bb,
-                            0.5,
-                            theme_colors.btn_bg,
-                            theme_colors.btn_border,
-                            theme_colors.btn_text,
+                            &mut s.renderer, icon_tex, label.to_string(),
+                            bb, 0.5,
+                            theme_colors.btn_bg, theme_colors.btn_border, theme_colors.btn_text,
                         );
                     }),
 
@@ -78,18 +74,14 @@ pub fn render(
                             (theme_colors.stopwatch_success_bg, theme_colors.stopwatch_success_border, "Start")
                         };
                         draw_action_button(
-                            &mut s.engine.renderer, icon_tex, label.to_string(),
-                            bb,
-                            0.5,
-                            bg_color, border_color,
-                            Color::WHITE,
+                            &mut s.renderer, icon_tex, label.to_string(),
+                            bb, 0.5, bg_color, border_color, Color::WHITE,
                         );
                     }),
                 },
                 {}
             ),
 
-            // Lap List
             layout!(
                 {
                     direction: column,
@@ -102,26 +94,26 @@ pub fn render(
                     layout!({ height: 20.0 }, {
                         let bb = Rect::xywh(x, y, width, height);
                         if let Some(lap_str) = get_lap_label(laps, 0) {
-                            draw_centered_text(&mut s.engine.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_primary);
+                            draw_centered_text(&mut s.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_primary);
                         }
                     }),
                     layout!({ height: 20.0 }, {
                         let bb = Rect::xywh(x, y, width, height);
                         if let Some(lap_str) = get_lap_label(laps, 1) {
-                            draw_centered_text(&mut s.engine.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_secondary);
+                            draw_centered_text(&mut s.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_secondary);
                         }
                     }),
                     layout!({ height: 20.0 }, {
                         let bb = Rect::xywh(x, y, width, height);
                         if let Some(lap_str) = get_lap_label(laps, 2) {
-                            draw_centered_text(&mut s.engine.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_muted);
+                            draw_centered_text(&mut s.renderer, &atlas::UI_FONT_MONO_14, icon_tex, lap_str, &bb, 0.9, theme_colors.text_muted);
                         }
                     }),
                 },
-                { }
+                {}
             ),
-    },
-    { }
+        },
+        {}
     );
 }
 

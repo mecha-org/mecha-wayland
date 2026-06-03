@@ -8,3 +8,7 @@ tracing = []
 
 [dependencies]
 frunk = "0.4.4"
+app-macro = { path = "../app-macro" }
+
+[dev-dependencies]
+trybuild = "1"

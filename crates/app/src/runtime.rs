@@ -4,7 +4,7 @@ use frunk::{HCons, HNil};
 
 use crate::dispatch::{ModuleList, MountedModule};
 use crate::event::Event;
-use crate::module::RegisteredModule;
+use crate::module::{Lens, RegisteredModule};
 
 /// The top-level application runtime.
 ///
@@ -22,7 +22,7 @@ use crate::module::RegisteredModule;
 ///
 /// let module = Module::new().on(|s: &mut u32, _: &Reset| *s = 0);
 ///
-/// let mut app = App::new(42u32).mount(|s: &mut u32| s, module);
+/// let mut app = App::new(42u32).mount(module);
 /// app.dispatch(&Reset);
 /// assert_eq!(*app.state(), 0);
 /// ```
@@ -49,26 +49,24 @@ impl<S, Modules> App<S, Modules> {
 
     /// Attach a module to the app.
     ///
-    /// `lens` extracts the module's state slice from the root state `S`. It
-    /// must return a reference to a disjoint sub-field.
+    /// `S` must implement [`Lens<SubState>`](crate::Lens) to tell the runtime
+    /// how to extract the module's state slice from the root state. Use the
+    /// blanket identity impl when the module owns the whole state, or write a
+    /// manual impl per field otherwise.
     ///
     /// Mount order matters for event propagation: emitted events are
     /// re-dispatched across **all** modules from the beginning of the list,
     /// so modules mounted earlier will see events emitted by later ones.
     /// Mount shared consumers (e.g. a notification queue) before producers.
     #[allow(private_bounds)]
-    pub fn mount<SubState, M, LensFn>(
+    pub fn mount<SubState, M>(
         self,
-        lens: LensFn,
         module: M,
-    ) -> App<
-        S,
-        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>,
-    >
+    ) -> App<S, HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, M::SubModules>, Modules>>
     where
+        S: Lens<SubState>,
         M: RegisteredModule<SubState, S>,
-        LensFn: Fn(&mut S) -> &mut SubState,
-        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, LensFn, M::SubModules>, Modules>:
+        HCons<MountedModule<S, SubState, M::Emitted, M::Handlers, M::SubModules>, Modules>:
             ModuleList<S>,
     {
         let module = module.into_module();
@@ -76,7 +74,6 @@ impl<S, Modules> App<S, Modules> {
             state: self.state,
             modules: HCons {
                 head: MountedModule {
-                    lens,
                     module,
                     _phantom: PhantomData::<(S, M::Emitted)>,
                 },

@@ -42,19 +42,17 @@ impl DemoDriver {
         let battery = if count % 2 == 0 {
             const STATES: &[(u8, bool)] = &[
                 (100, false),
-                (90, false),
+                (100, true),
                 (80, false),
-                (70, false),
-                (60, false),
-                (50, false),
-                (40, false),
-                (30, false),
-                (20, false),
-                (10, false),
-                (0, false),
-                (20, true),
-                (50, true),
                 (80, true),
+                (60, false),
+                (60, true),
+                (40, false),
+                (40, true),
+                (20, false),
+                (20, true),
+                (0, false),
+                (0, true),
             ];
             let (pct, charging) = STATES[self.battery_step as usize];
             self.battery_step = (self.battery_step + 1) % (STATES.len() as u8);
@@ -87,10 +85,7 @@ impl DemoDriver {
             let ws = states[self.wifi_step as usize];
             self.wifi_step = (self.wifi_step + 1) % (states.len() as u8);
 
-            (
-                bluetooth::BluetoothUpdate(s),
-                wifi::WifiUpdate(ws),
-            )
+            (bluetooth::BluetoothUpdate(s), wifi::WifiUpdate(ws))
         } else {
             (
                 bluetooth::BluetoothUpdate(bluetooth::BluetoothState::Off),
@@ -107,6 +102,17 @@ const BAR_HEIGHT: u32 = 36;
 const ICON_SIZE: f32 = 24.0;
 const GAP: f32 = 12.0;
 const PADDING: f32 = 12.0;
+
+// ── REMOVE: charging overlay ─────────────────────────────────────────────
+// Monochrome sprites lose the SVG's green fill, so we fake charging with a
+// green DrawRect over the juice area. Remove these constants and the
+// DrawRect block in render_bar when multicolor sprites arrive; switch back
+// to the charging sprite variants in battery.rs.
+const JUICE_X_PAD: f32 = 6.0;
+const JUICE_Y_PAD: f32 = 9.0;
+const JUICE_MAX_W: f32 = 12.0;
+const JUICE_H: f32 = 6.0;
+// ── END REMOVE: charging overlay ──────────────────────────────────────────
 
 struct StatusBarState {
     ring: Ring,
@@ -305,20 +311,18 @@ impl StatusBarState {
                             color: Color::WHITE,
                         });
 
-                        if self.battery.state.show_percentage {
-                            let font = &atlas::UI_FONT_INTER_14;
-                            let text_w = font.measure_width(&self.battery.pct_text);
-                            let text_x = x + (ICON_SIZE - text_w) * 0.5;
-                            let baseline = y + font.get_baseline_offset(ICON_SIZE);
-                            renderer.send_command(DrawText {
-                                font,
-                                texture_id: icon_tex,
-                                text: self.battery.pct_text.clone(),
-                                origin: Point::new(text_x, baseline),
-                                z: 0.2,
-                                color: Color::WHITE,
+                        // REMOVE: charging overlay — use charging sprite variants instead
+                        if self.battery.state.charging {
+                            let juice_w =
+                                JUICE_MAX_W * self.battery.state.pct as f32 / 100.0;
+                            renderer.send_command(DrawRect {
+                                color: Color::rgb(0.2, 0.85, 0.2),
+                                origin: Point::new(x + JUICE_X_PAD, y + JUICE_Y_PAD),
+                                z: 0.15,
+                                size: Size::new(juice_w, JUICE_H),
                             });
                         }
+                        // END REMOVE: charging overlay
                     }),
 
                 }, {
@@ -555,9 +559,10 @@ fn create_wl_buffer(
         modifier_hi,
         modifier_lo,
     );
-    let buf_id = wayland
-        .buf_params
-        .create_immed(params_id, width, height, DrmFourcc::Argb8888 as u32, 0);
+    let buf_id =
+        wayland
+            .buf_params
+            .create_immed(params_id, width, height, DrmFourcc::Argb8888 as u32, 0);
     wayland.buf_params.destroy(params_id);
     buf_id
 }

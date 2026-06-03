@@ -276,7 +276,8 @@ impl Wayland {
                         self.process_messages(data);
                         self.submit_read();
                     } else if *result == 0 {
-                        eprintln!("[Wayland] connection closed by server");
+                        eprintln!("[Wayland] compositor disconnected, exiting");
+                        std::process::exit(1);
                     } else {
                         eprintln!("[Wayland] read error: {}", result);
                     }

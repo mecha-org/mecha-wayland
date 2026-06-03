@@ -336,7 +336,7 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
                         #cx = #px + #pad_l;
                         #cy = #cur_y_clone;
                     });
-                    cur_y = quote! { #cy + #ch + #gap };
+                    cur_y = quote! { #cy + #ch + if #ch > 0.0_f32 { #gap } else { 0.0_f32 } };
                 }
             }
             Dir::Row => match n.justify {
@@ -352,7 +352,7 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
                             #cx = #cur_x_clone;
                             #cy = #py + (#ph - #ch) / 2.0_f32;
                         });
-                        cur_x = quote! { #cx + #cw + #gap };
+                        cur_x = quote! { #cx + #cw + if #cw > 0.0_f32 { #gap } else { 0.0_f32 } };
                     }
                 }
                 Justify::SpaceBetween => {
@@ -379,7 +379,8 @@ fn emit_solver(nodes: &[NodeInfo]) -> TokenStream2 {
                             #cx = #cur_x_clone;
                             #cy = #py + (#ph - #ch) / 2.0_f32;
                         });
-                        cur_x = quote! { #cx + #cw + #space_id };
+                        cur_x =
+                            quote! { #cx + #cw + if #cw > 0.0_f32 { #space_id } else { 0.0_f32 } };
                     }
                 }
             },

@@ -1,0 +1,27 @@
+[package]
+name = "status-bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app = { path = "../../app" }
+renderer = { path = "../../renderer" }
+assets = { path = "../../assets" }
+utils = { path = "../../utils" }
+io-ring = { path = "../../io-ring" }
+timer = { path = "../../timer" }
+wayland = { path = "../../wayland" }
+layout = { path = "../../layout" }
+frunk = "0.4"
+anyhow = { workspace = true }
+glow = { workspace = true }
+png = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+io-uring = { workspace = true }
+drm-fourcc = "2.2"
+libc = { workspace = true }
+
+[build-dependencies]
+anyhow = { workspace = true }
+assets = { path = "../../assets", features = ["builder"] }

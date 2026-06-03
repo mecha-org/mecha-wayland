@@ -267,8 +267,8 @@ impl Wayland {
                         self.submit_read();
                         events
                     } else if *result == 0 {
-                        eprintln!("[Wayland] connection closed by server");
-                        Vec::new()
+                        eprintln!("[Wayland] compositor disconnected, exiting");
+                        std::process::exit(1);
                     } else {
                         eprintln!("[Wayland] read error: {}", result);
                         Vec::new()

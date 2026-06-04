@@ -11,7 +11,7 @@ use std::{os::fd::AsRawFd, time::Duration};
 use ::renderer::commands::{Color, Point};
 use io_ring::Ring;
 use layout::layout;
-use timer::{Timer, TimerSettings};
+use timer::{Relative, Timer};
 use wayland::Wayland;
 
 // ARGB8888 little-endian fourcc
@@ -288,7 +288,7 @@ fn main() {
             }),
         )
         .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
-            s.timer.start_timer(TimerSettings {
+            s.timer.start_timer(Relative {
                 duration: Duration::from_secs(2),
                 repeat: true,
             });

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use io_ring::Ring;
 use layout::layout;
-use timer::{Timer, TimerId, TimerSettings};
+use timer::{Relative, Timer, TimerId};
 use wayland::Wayland;
 use widgets::{battery, bluetooth, clock, wifi};
 
@@ -89,9 +89,7 @@ const JUICE_MAX_W: f32 = 10.0;
 const JUICE_H: f32 = 6.0;
 // ── END REMOVE: charging overlay ──────────────────────────────────────────
 
-fn secs_to_next_minute() -> u64 {
-    60 - (unsafe { libc::time(std::ptr::null_mut()) } as u64 % 60)
-}
+mod time;
 
 struct StatusBarTextures {
     icon: Option<renderer::TextureId>,
@@ -159,13 +157,6 @@ impl StatusBarState {
             },
             clock_timer_id: None,
         }
-    }
-
-    fn schedule_clock_tick(&mut self) {
-        self.clock_timer_id = Some(self.timer.start_timer(TimerSettings {
-            duration: Duration::from_secs(secs_to_next_minute()),
-            repeat: false,
-        }));
     }
 
     fn try_redraw(&mut self) {
@@ -378,11 +369,11 @@ fn main() {
                 s.wayland.surface.commit(surface_id);
                 s.wayland.flush();
 
-                s.timer.start_timer(TimerSettings {
+                s.timer.start_timer(Relative {
                     duration: Duration::from_secs(1),
                     repeat: true,
                 });
-                s.schedule_clock_tick();
+                time::arm_clock(&mut s.timer, &mut s.clock_timer_id, s.clock.precision());
             }),
         )
         .mount(app::Module::new().on(
@@ -490,12 +481,9 @@ fn main() {
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
-                if s.clock_timer_id != Some(ev.id()) {
-                    return None;
-                }
-                s.schedule_clock_tick();
-                let (h, m) = clock::local_time();
-                Some(clock::ClockUpdate(h, m))
+                let (h, m, sec, day, mon) = time::try_clock_tick(s.clock_timer_id, ev)?;
+                time::arm_clock(&mut s.timer, &mut s.clock_timer_id, s.clock.precision());
+                Some(clock::ClockUpdate(h, m, sec, day, mon))
             }),
         )
         .mount(

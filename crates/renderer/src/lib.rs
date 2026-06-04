@@ -128,6 +128,7 @@ pub struct Renderer {
     pub(crate) fn_destroy_image: PfnDestroyImageKHR,
     pub(crate) fn_rbo_image: PfnRboImageOES,
     textures: HashMap<TextureId, GpuTexture>,
+    atlas_map: HashMap<assets::AtlasId, TextureId>,
     next_texture_id: u32,
     viewport_width: u32,
     viewport_height: u32,
@@ -249,6 +250,7 @@ impl Renderer {
             fn_destroy_image,
             fn_rbo_image,
             textures: HashMap::new(),
+            atlas_map: HashMap::new(),
             next_texture_id: 0,
             viewport_width: 0,
             viewport_height: 0,
@@ -374,10 +376,10 @@ impl Renderer {
         Ok(id)
     }
 
-    /// Decode a grayscale PNG atlas and upload it as an R8 texture.
-    /// Pass `atlas.png_bytes` from a generated atlas constant.
-    pub fn upload_atlas(&mut self, png_bytes: &[u8]) -> Result<TextureId> {
-        let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    /// Decode a grayscale PNG atlas, upload it as an R8 texture, and register the
+    /// `AtlasId → TextureId` mapping so [`get_texture_id`] can resolve it later.
+    pub fn upload_atlas(&mut self, atlas: &assets::AtlasData) -> Result<TextureId> {
+        let decoder = png::Decoder::new(std::io::Cursor::new(atlas.png_bytes));
         let mut reader = decoder.read_info().context("decode atlas PNG header")?;
         let mut buf = vec![
             0u8;
@@ -388,12 +390,18 @@ impl Renderer {
         let info = reader
             .next_frame(&mut buf)
             .context("decode atlas PNG frame")?;
-        self.create_texture(
+        let texture_id = self.create_texture(
             info.width,
             info.height,
             TextureFormat::R8,
             &buf[..info.buffer_size()],
-        )
+        )?;
+        self.atlas_map.insert(atlas.id, texture_id);
+        Ok(texture_id)
+    }
+
+    pub fn get_texture_id(&self, atlas_id: assets::AtlasId) -> TextureId {
+        *self.atlas_map.get(&atlas_id).expect("atlas not uploaded")
     }
 
     pub fn init_command_queue<C: Command>(&mut self) {

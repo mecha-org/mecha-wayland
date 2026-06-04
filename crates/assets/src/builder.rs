@@ -66,14 +66,14 @@ pub fn pack_atlas(toml_path: &Path, out_dir: &Path) -> Result<()> {
 
     let base_dir = toml_path.parent().unwrap_or(Path::new("."));
 
-    for atlas in &config.atlas {
-        pack_one_atlas(atlas, base_dir, out_dir)?;
+    for (idx, atlas) in config.atlas.iter().enumerate() {
+        pack_one_atlas(atlas, base_dir, out_dir, idx as u32)?;
     }
 
     Ok(())
 }
 
-fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result<()> {
+fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path, atlas_id: u32) -> Result<()> {
     // ── Load sprites ──────────────────────────────────────────────────────────
     let mut sprites: Vec<SpriteImage> = Vec::new();
     for entry in &atlas.sprite {
@@ -215,6 +215,7 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
     let atlas_upper = to_const_name(atlas_name);
     rs.push_str(&format!(
         "pub const {atlas_upper}: ::assets::AtlasData = ::assets::AtlasData {{\n    \
+         id: ::assets::AtlasId({atlas_id}),\n    \
          png_bytes: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{atlas_name}.png\")),\n    \
          width: {atlas_size},\n    \
          height: {atlas_size},\n}};\n"
@@ -235,10 +236,9 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
     for font_entry in &atlas.font {
         let font = &font_objs[font_obj_idx];
         for &px in &font_entry.sizes {
-            let line_height = font
-                .horizontal_line_metrics(px as f32)
-                .map(|lm| lm.new_line_size)
-                .unwrap_or(px as f32 * 1.2);
+            let hm = font.horizontal_line_metrics(px as f32);
+            let line_height = hm.map(|m| m.new_line_size).unwrap_or(px as f32 * 1.2);
+            let ascent = hm.map(|m| m.ascent).unwrap_or(px as f32 * 0.8);
             let const_name = format!(
                 "{atlas_upper}_FONT_{}_{px}",
                 to_const_name(&font_entry.name)
@@ -264,8 +264,10 @@ fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path) -> Result
                 "pub const {const_name}: ::assets::BakedFont = ::assets::BakedFont {{\n    \
                  size: {px}.0,\n    \
                  line_height: {lh},\n    \
+                 ascent: {asc},\n    \
                  glyphs: [\n{glyph_entries}    ],\n}};\n",
                 lh = f32_lit(line_height),
+                asc = f32_lit(ascent),
             ));
 
             run_idx += 1;

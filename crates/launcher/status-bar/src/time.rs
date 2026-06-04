@@ -7,8 +7,11 @@ pub enum Precision {
 }
 
 pub fn local_time() -> (u32, u32, u32, u32, u32) {
+    // SAFETY: time(NULL) is well-defined POSIX.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
+    // SAFETY: libc::tm is #[repr(C)], zero-init is valid.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: now and tm are valid pointers; null return handled below.
     if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
         return (0, 0, 0, 1, 0);
     }
@@ -22,6 +25,7 @@ pub fn local_time() -> (u32, u32, u32, u32, u32) {
 }
 
 pub fn next_deadline(precision: Precision) -> Duration {
+    // SAFETY: time(NULL) is well-defined POSIX.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     Duration::from_secs(match precision {
         Precision::Minutes => ((now / 60) + 1) * 60,

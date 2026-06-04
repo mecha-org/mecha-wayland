@@ -33,7 +33,7 @@ impl BatteryWidget {
                 charging: false,
                 show_percentage: false,
             },
-            pct_text: String::new(),
+            pct_text: String::from("100"),
         }
     }
 

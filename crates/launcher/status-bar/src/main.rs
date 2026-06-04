@@ -307,6 +307,21 @@ impl StatusBarState {
                             });
                         }
                         // END REMOVE: charging overlay
+
+                        if self.battery.state.show_percentage {
+                            let font = &atlas::UI_FONT_INTER_6;
+                            let text_w = font.measure_width(&self.battery.pct_text);
+                            let text_x = x + (ICON_SIZE - text_w) * 0.5;
+                            let baseline = y + font.get_baseline_offset(ICON_SIZE);
+                            renderer.send_command(DrawText {
+                                font,
+                                texture_id: icon_tex,
+                                text: self.battery.pct_text.clone(),
+                                origin: Point::new(text_x, baseline),
+                                z: 0.2,
+                                color: Color::BLACK,
+                            });
+                        }
                     }),
 
                 }, {
@@ -527,6 +542,7 @@ fn create_wl_buffer(
     let modifier = surface.backend.modifier;
     let modifier_hi = (modifier >> 32) as u32;
     let modifier_lo = (modifier & 0xffff_ffff) as u32;
+    // SAFETY: duplicating a valid fd for Wayland protocol fd-passing.
     let fd = unsafe { libc::dup(surface.backend.prime_fd.as_raw_fd()) };
     if fd < 0 {
         panic!(

@@ -1,8 +1,9 @@
 use super::{UI_BLUETOOTH_CONNECTED, UI_BLUETOOTH_ON};
 use assets::SpriteRegion;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BluetoothState {
+    #[default]
     Off,
     On,
     Connected,
@@ -21,11 +22,17 @@ pub struct BluetoothWidget {
     pub state: BluetoothState,
 }
 
+impl Default for BluetoothWidget {
+    fn default() -> Self {
+        Self {
+            state: BluetoothState::default(),
+        }
+    }
+}
+
 impl BluetoothWidget {
     pub fn new() -> Self {
-        Self {
-            state: BluetoothState::Off,
-        }
+        Self::default()
     }
 
     pub fn visible(&self) -> bool {

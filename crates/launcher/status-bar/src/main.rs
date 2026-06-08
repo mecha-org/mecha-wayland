@@ -18,6 +18,7 @@ use widgets::{battery, bluetooth, clock, wifi};
 
 // ── REMOVE: demo ──────────────────────────────────────────────────────────
 // Replace DemoDriver with real hardware event sources (D-Bus, sysfs, etc.)
+#[derive(Default)]
 struct DemoDriver {
     battery_step: u8,
     bluetooth_step: u8,
@@ -91,6 +92,7 @@ const JUICE_H: f32 = 6.0;
 
 mod time;
 
+#[derive(Default)]
 struct StatusBarTextures {
     icon: Option<renderer::TextureId>,
     gradient: Option<renderer::TextureId>,
@@ -115,10 +117,11 @@ struct StatusBarState {
     // REMOVE: demo — replace with real hardware event source
     demo: DemoDriver,
     clock_timer_id: Option<TimerId>,
+    needs_redraw: bool,
 }
 
-impl StatusBarState {
-    fn new() -> Self {
+impl Default for StatusBarState {
+    fn default() -> Self {
         let ring = Ring::default();
         let timer = Timer::new(ring.get_proxy());
         let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
@@ -141,36 +144,36 @@ impl StatusBarState {
             dmabuf: Default::default(),
             wl_buf_ids: [0, 0],
             buf_in_flight: [false, false],
-            textures: StatusBarTextures {
-                icon: None,
-                gradient: None,
-            },
+            textures: StatusBarTextures::default(),
             battery: battery::BatteryWidget::new(),
             clock: clock::ClockWidget::new(),
             bluetooth: bluetooth::BluetoothWidget::new(),
             wifi: wifi::WifiWidget::new(),
             // REMOVE: demo
-            demo: DemoDriver {
-                battery_step: 0,
-                bluetooth_step: 0,
-                wifi_step: 0,
-            },
+            demo: DemoDriver::default(),
             clock_timer_id: None,
+            needs_redraw: false,
         }
     }
+}
 
-    fn try_redraw(&mut self) {
+impl StatusBarState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn try_redraw(&mut self) -> bool {
         let free_idx = if !self.buf_in_flight[0] {
             0
         } else if !self.buf_in_flight[1] {
             1
         } else {
-            return;
+            return false;
         };
 
         let surface = match &self.dmabuf[free_idx] {
             Some(s) => s,
-            None => return,
+            None => return false,
         };
 
         self.renderer.active_surface(surface);
@@ -187,7 +190,13 @@ impl StatusBarState {
         self.wayland.surface.damage(self.surface_id, 0, 0, w, h);
         self.wayland.surface.commit(self.surface_id);
         self.buf_in_flight[free_idx] = true;
+
         self.wayland.flush();
+        true
+    }
+
+    fn request_redraw(&mut self) {
+        self.needs_redraw = true;
     }
 
     fn render_bar(&mut self, win_w: f32, icon_tex: renderer::TextureId) {
@@ -470,6 +479,12 @@ fn main() {
                         break;
                     }
                 }
+                if s.needs_redraw {
+                    s.needs_redraw = false;
+                    if !s.try_redraw() {
+                        s.needs_redraw = true;
+                    }
+                }
             }),
         )
         .mount(
@@ -477,6 +492,16 @@ fn main() {
                 if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
                     if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
                         std::process::exit(0);
+                    }
+                }
+            }),
+        )
+        .mount(
+            app::Module::new().on(|s: &mut StatusBarState, _: &app::PrePoll| {
+                if s.needs_redraw {
+                    s.needs_redraw = false;
+                    if !s.try_redraw() {
+                        s.needs_redraw = true;
                     }
                 }
             }),
@@ -503,22 +528,22 @@ fn main() {
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &battery::BatteryChanged| {
-                s.try_redraw();
+                s.request_redraw();
             }),
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &clock::ClockChanged| {
-                s.try_redraw();
+                s.request_redraw();
             }),
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &bluetooth::BluetoothChanged| {
-                s.try_redraw();
+                s.request_redraw();
             }),
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &wifi::WifiChanged| {
-                s.try_redraw();
+                s.request_redraw();
             }),
         )
         .mount(battery::module())

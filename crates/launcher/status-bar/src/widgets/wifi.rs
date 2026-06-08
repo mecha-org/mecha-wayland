@@ -1,8 +1,9 @@
 use super::{UI_WIFI_HIGH, UI_WIFI_LOW, UI_WIFI_MEDIUM, UI_WIFI_NONE, UI_WIFI_X};
 use assets::SpriteRegion;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WifiState {
+    #[default]
     High,
     Medium,
     Low,
@@ -23,11 +24,17 @@ pub struct WifiWidget {
     pub state: WifiState,
 }
 
+impl Default for WifiWidget {
+    fn default() -> Self {
+        Self {
+            state: WifiState::default(),
+        }
+    }
+}
+
 impl WifiWidget {
     pub fn new() -> Self {
-        Self {
-            state: WifiState::High,
-        }
+        Self::default()
     }
 
     pub fn sprite_region(&self) -> &'static SpriteRegion {

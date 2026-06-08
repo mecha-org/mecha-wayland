@@ -8,6 +8,16 @@ pub struct BatteryState {
     pub show_percentage: bool,
 }
 
+impl Default for BatteryState {
+    fn default() -> Self {
+        Self {
+            pct: 100,
+            charging: false,
+            show_percentage: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BatteryChanged;
 impl app::Event for BatteryChanged {}
@@ -25,16 +35,18 @@ pub struct BatteryWidget {
     pub pct_text: String,
 }
 
-impl BatteryWidget {
-    pub fn new() -> Self {
+impl Default for BatteryWidget {
+    fn default() -> Self {
         Self {
-            state: BatteryState {
-                pct: 100,
-                charging: false,
-                show_percentage: false,
-            },
+            state: BatteryState::default(),
             pct_text: String::from("100"),
         }
+    }
+}
+
+impl BatteryWidget {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn sprite_arrays() -> ([&'static SpriteRegion; 11], [&'static SpriteRegion; 11]) {

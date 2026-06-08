@@ -7,15 +7,14 @@ members = [
     "crates/assets",
     "crates/io-ring",
     "crates/timer",
-    "crates/counter",
-    "crates/clock",
     "crates/wayland",
     "crates/wayland-gen",
-    "crates/layout",
-    "crates/layout-macro",
     "crates/utils",
+    "crates/ui",
+    "crates/ui-macro",
+    "crates/counter",
 ]
-default-members = ["crates/counter"]
+default-members = ["crates/ui"]
 resolver = "2"
 
 [workspace.dependencies]

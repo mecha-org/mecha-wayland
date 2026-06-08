@@ -3,74 +3,110 @@
 mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
+mod button;
 mod renderer;
 
 use app::prelude::*;
-use std::{os::fd::AsRawFd, time::Duration};
+use std::os::fd::AsRawFd;
+use std::time::Duration;
 
-use ::renderer::commands::{Color, Point};
+use assets::AtlasId;
+use button::Button;
+use taffy::Style;
+use taffy::prelude::*;
+use ui::widgets::{Div, Text};
+use ui::{RenderCommand, Widget, WidgetTree};
+
+use ::renderer::commands::{ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
 use io_ring::Ring;
-use layout::layout;
 use timer::{Timer, TimerSettings};
 use wayland::Wayland;
 
-// ARGB8888 little-endian fourcc
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
-#[derive(Default, Clone, Copy, Debug)]
-struct BoundingBox {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-}
-
-impl BoundingBox {
-    fn contains(&self, px: f64, py: f64) -> bool {
-        let px = px as f32;
-        let py = py as f32;
-        px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
-    }
-}
-
-#[derive(Default, Clone, Copy, Debug)]
-struct HitBoxes {
-    minus: BoundingBox,
-    plus: BoundingBox,
-}
-
-#[derive(Default)]
-struct Counter {
-    count: i32,
-}
+type RowDiv = Div<(Button, Button)>;
+type RootDiv = Div<(Text, Text, RowDiv)>;
 
 struct UiState {
-    counter: Counter,
+    tree: WidgetTree,
+    root: RootDiv,
+    count: i32,
     surface_id: u32,
     surface_size: (i32, i32),
     dmabuf: [Option<::renderer::RenderableSurface<::renderer::DmaBuf>>; 2],
     wl_buf_ids: [u32; 2],
     buf_in_flight: [bool; 2],
-    icon_tex: Option<::renderer::TextureId>,
     cursor_x: f64,
     cursor_y: f64,
-    hit_boxes: HitBoxes,
 }
 
 impl UiState {
     fn new() -> Self {
+        let (tree, root) = build_ui(atlas::UI.id);
         Self {
-            counter: Counter::default(),
+            tree,
+            root,
+            count: 0,
             surface_id: 0,
             surface_size: (0, 0),
             dmabuf: [None, None],
             wl_buf_ids: [0, 0],
             buf_in_flight: [false, false],
-            icon_tex: None,
             cursor_x: 0.0,
             cursor_y: 0.0,
-            hit_boxes: HitBoxes::default(),
         }
+    }
+
+    fn set_count(&mut self, count: i32) {
+        self.count = count;
+        self.root
+            .children
+            .1
+            .set_text(&mut self.tree, format!("{count}"));
+    }
+
+    fn recompute_layout(&mut self) {
+        let (w, h) = self.surface_size;
+        ui::compute_layout(
+            &mut self.tree,
+            self.root.node_id(),
+            taffy::Size {
+                width: AvailableSpace::Definite(w as f32),
+                height: AvailableSpace::Definite(h as f32),
+            },
+        );
+    }
+
+    fn render_commands(&self) -> Vec<RenderCommand> {
+        let layout = self.tree.layout(self.root.node_id()).unwrap();
+        self.root
+            .render_node(layout, &self.tree, ui::Point::new(0.0, 0.0))
+    }
+
+    fn minus_contains(&self, x: f64, y: f64) -> bool {
+        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
+        let btn = self
+            .tree
+            .layout(self.root.children.2.children.0.node_id())
+            .unwrap();
+        let lx = (row.location.x + btn.location.x) as f64;
+        let ly = (row.location.y + btn.location.y) as f64;
+        let lw = btn.size.width as f64;
+        let lh = btn.size.height as f64;
+        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
+    }
+
+    fn plus_contains(&self, x: f64, y: f64) -> bool {
+        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
+        let btn = self
+            .tree
+            .layout(self.root.children.2.children.1.node_id())
+            .unwrap();
+        let lx = (row.location.x + btn.location.x) as f64;
+        let ly = (row.location.y + btn.location.y) as f64;
+        let lw = btn.size.width as f64;
+        let lh = btn.size.height as f64;
+        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
     }
 }
 
@@ -115,6 +151,11 @@ fn main() {
         .mount(timer::module())
         .mount(renderer::module())
         .mount(wayland::module())
+        .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
+            s.renderer
+                .upload_atlas(&atlas::UI)
+                .expect("failed to upload atlas");
+        }))
         .mount(
             app::Module::new().on(|s: &mut AppState, _: &wayland::Initilised| {
                 use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
@@ -170,19 +211,10 @@ fn main() {
                 s.wayland.wl_buffer.register(buf_id1);
                 s.ui.wl_buf_ids = [buf_id0, buf_id1];
 
-                if s.ui.icon_tex.is_none() {
-                    s.ui.icon_tex = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
-                }
+                s.ui.recompute_layout();
 
                 s.renderer.active_surface(&surface0);
-                s.ui.hit_boxes = render_counter_ui(
-                    &mut s.renderer,
-                    w as f32,
-                    h as f32,
-                    s.ui.counter.count,
-                    s.ui.icon_tex.unwrap(),
-                );
-                s.renderer.finish();
+                render_ui(&mut s.renderer, &s.ui);
 
                 s.ui.dmabuf = [Some(surface0), Some(surface1)];
                 s.ui.buf_in_flight = [true, false];
@@ -210,17 +242,7 @@ fn main() {
 
                 let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
                 s.renderer.active_surface(surface);
-                if let Some(icon_tex) = s.ui.icon_tex {
-                    let (w, h) = s.ui.surface_size;
-                    s.ui.hit_boxes = render_counter_ui(
-                        &mut s.renderer,
-                        w as f32,
-                        h as f32,
-                        s.ui.counter.count,
-                        icon_tex,
-                    );
-                    s.renderer.finish();
-                }
+                render_ui(&mut s.renderer, &s.ui);
 
                 let (w, h) = s.ui.surface_size;
                 s.wayland
@@ -269,8 +291,10 @@ fn main() {
                 wayland::PointerEvent::Button {
                     button: _, state, ..
                 } if *state == wayland::ButtonState::Pressed => {
-                    if let Some(delta) = hit_button(&s.ui.hit_boxes, s.ui.cursor_x, s.ui.cursor_y) {
-                        s.ui.counter.count += delta;
+                    let delta = hit_button(&s.ui, s.ui.cursor_x, s.ui.cursor_y);
+                    if let Some(delta) = delta {
+                        let new_count = s.ui.count + delta;
+                        s.ui.set_count(new_count);
                         redraw(s);
                     }
                 }
@@ -280,8 +304,9 @@ fn main() {
         .mount(
             app::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(&s.ui.hit_boxes, *x, *y) {
-                        s.ui.counter.count += delta;
+                    if let Some(delta) = hit_button(&s.ui, *x, *y) {
+                        let new_count = s.ui.count + delta;
+                        s.ui.set_count(new_count);
                         redraw(s);
                     }
                 }
@@ -302,11 +327,11 @@ fn main() {
     }
 }
 
-fn hit_button(hit_boxes: &HitBoxes, x: f64, y: f64) -> Option<i32> {
-    if hit_boxes.minus.contains(x, y) {
+fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
+    if ui.minus_contains(x, y) {
         return Some(-1);
     }
-    if hit_boxes.plus.contains(x, y) {
+    if ui.plus_contains(x, y) {
         return Some(1);
     }
     None
@@ -323,17 +348,8 @@ fn redraw(s: &mut AppState) {
 
     let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
     s.renderer.active_surface(surface);
-    if let Some(icon_tex) = s.ui.icon_tex {
-        let (w, h) = s.ui.surface_size;
-        s.ui.hit_boxes = render_counter_ui(
-            &mut s.renderer,
-            w as f32,
-            h as f32,
-            s.ui.counter.count,
-            icon_tex,
-        );
-        s.renderer.finish();
-    }
+    s.ui.recompute_layout();
+    render_ui(&mut s.renderer, &s.ui);
 
     let (w, h) = s.ui.surface_size;
     s.wayland
@@ -349,116 +365,142 @@ fn redraw(s: &mut AppState) {
     s.wayland.flush();
 }
 
-fn draw_centered_text(
-    renderer: &mut ::renderer::Renderer,
-    font: &'static assets::BakedFont,
-    texture_id: ::renderer::TextureId,
-    text: &str,
-    box_bounds: &BoundingBox,
-    z_index: f32,
-) {
-    let text_w = font.measure_width(text);
-    let center_x = box_bounds.x + (box_bounds.w - text_w) / 2.0;
-    let center_y = box_bounds.y + font.get_baseline_offset(box_bounds.h);
-
-    renderer.send_command(::renderer::commands::DrawText {
-        font,
-        texture_id,
-        text: text.to_string(),
-        origin: Point::new(center_x, center_y),
-        z: z_index,
-        color: Color::rgb(1.0, 1.0, 1.0),
-    });
-}
-
-fn render_counter_ui(
-    renderer: &mut ::renderer::Renderer,
-    win_w: f32,
-    win_h: f32,
-    count: i32,
-    icon_tex: ::renderer::TextureId,
-) -> HitBoxes {
-    use ::renderer::commands::*;
-
-    let mut hit_boxes = HitBoxes::default();
-    let count_str = format!("{count}");
-
+fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
     renderer.send_command(ClearColor::rgb(0.32, 0.32, 0.32));
 
-    layout!(
-        {
-            available_width: win_w,
-            available_height: win_h,
-            direction: column,
-            gap: 40.0,
-            padding_top: 16.0,
-
-            layout!({ height: 50.0 }, {
-                let bb = BoundingBox { x, y, w: width, h: height };
-                draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "Counter", &bb, 0.95);
-            }),
-            layout!({ height: 120.0 }, {
-                let bb = BoundingBox { x, y, w: width, h: height };
-                draw_centered_text(renderer, &atlas::UI_FONT_INTER_100, icon_tex, &count_str, &bb, 0.95);
-            }),
-            layout!({
-                direction: row,
-                height: 52.0,
-                padding_left: 60.0,
-                padding_right: 60.0,
-                justify: space_between,
-
-                layout!({ width: 110.0, height: 52.0 }, {
-                    let bb = BoundingBox { x, y, w: width, h: height };
-                    renderer.send_command(DrawQuad {
-                        color: Color::rgb(0.2, 0.4, 0.9),
-                        border_color: Color::rgb(0.4, 0.6, 1.0),
-                        origin: Point::new(bb.x, bb.y),
-                        z: 1.0,
-                        size: Size::new(bb.w, bb.h),
-                        border_radius: 12.0,
-                        border_thickness: 2.0,
-                    });
-                    draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "-", &bb, 0.4);
-                    hit_boxes.minus = bb;
-                }),
-                layout!({ width: 110.0, height: 52.0 }, {
-                    let bb = BoundingBox { x, y, w: width, h: height };
-                    renderer.send_command(DrawQuad {
-                        color: Color::rgb(0.2, 0.7, 0.3),
-                        border_color: Color::rgb(0.4, 0.9, 0.5),
-                        origin: Point::new(bb.x, bb.y),
-                        z: 1.0,
-                        size: Size::new(bb.w, bb.h),
-                        border_radius: 12.0,
-                        border_thickness: 2.0,
-                    });
-                    draw_centered_text(renderer, &atlas::UI_FONT_INTER_24, icon_tex, "+", &bb, 0.5);
-                    hit_boxes.plus = bb;
-                }),
-            }, {
-            }),
-        },
-        {
-            renderer.send_command(DrawQuad {
-                color: Color::rgb(0.16, 0.16, 0.18),
-                border_color: Color::rgb(0.30, 0.30, 0.35),
-                origin: Point::new(x, y),
-                z: 0.0,
-                size: Size::new(width, height),
-                border_radius: 20.0,
-                border_thickness: 2.0,
-            });
+    for cmd in ui.render_commands() {
+        match cmd {
+            ui::RenderCommand::DrawQuad {
+                color,
+                border_color,
+                origin,
+                z,
+                size,
+                border_radius,
+                border_thickness,
+            } => {
+                renderer.send_command(::renderer::commands::DrawQuad {
+                    color,
+                    border_color,
+                    origin,
+                    z,
+                    size,
+                    border_radius,
+                    border_thickness,
+                });
+            }
+            RenderCommand::DrawText {
+                font,
+                text,
+                origin,
+                z,
+                color,
+                atlas_id: Some(aid),
+            } => {
+                let texture_id = renderer.get_texture_id(aid);
+                renderer.send_command(::renderer::commands::DrawText {
+                    font,
+                    texture_id,
+                    text,
+                    origin,
+                    z,
+                    color,
+                });
+            }
+            RenderCommand::DrawText { atlas_id: None, .. } => {}
         }
-    );
+    }
 
     renderer.process_command_queue::<ClearColor>();
     renderer.process_command_queue::<DrawRect>();
     renderer.process_command_queue::<DrawQuad>();
     renderer.process_command_queue::<DrawMonochromeSprite>();
     renderer.process_command_queue::<DrawText>();
+    renderer.finish();
+}
 
-    hit_boxes
+fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
+    let mut tree = WidgetTree::new();
+
+    let mut title = Text::new(Style::default());
+    title.font = Some(&atlas::UI_FONT_INTER_24);
+    title.text = "Counter".to_string();
+    title.color = Color::WHITE;
+    title.z = 0.95;
+    title.atlas_id = Some(atlas_id);
+
+    let mut count_text = Text::new(Style::default());
+    count_text.font = Some(&atlas::UI_FONT_INTER_100);
+    count_text.text = "0".to_string();
+    count_text.color = Color::WHITE;
+    count_text.z = 0.95;
+    count_text.atlas_id = Some(atlas_id);
+
+    let mut minus = Button::new("-");
+    minus.div.color = Color::rgb(0.2, 0.4, 0.9);
+    minus.div.border_color = Color::rgb(0.4, 0.6, 1.0);
+    minus.div.border_radius = 12.0;
+    minus.div.border_thickness = 2.0;
+    minus.div.z = 1.0;
+    minus.div.children.font = Some(&atlas::UI_FONT_INTER_24);
+    minus.div.children.color = Color::WHITE;
+    minus.div.children.z = 0.4;
+    minus.div.children.atlas_id = Some(atlas_id);
+
+    let mut plus = Button::new("+");
+    plus.div.color = Color::rgb(0.2, 0.7, 0.3);
+    plus.div.border_color = Color::rgb(0.4, 0.9, 0.5);
+    plus.div.border_radius = 12.0;
+    plus.div.border_thickness = 2.0;
+    plus.div.z = 1.0;
+    plus.div.children.font = Some(&atlas::UI_FONT_INTER_24);
+    plus.div.children.color = Color::WHITE;
+    plus.div.children.z = 0.5;
+    plus.div.children.atlas_id = Some(atlas_id);
+
+    let row_style = Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Row,
+        size: Size {
+            width: percent(1.0),
+            height: length(52.0),
+        },
+        padding: Rect {
+            left: length(60.0),
+            right: length(60.0),
+            top: zero(),
+            bottom: zero(),
+        },
+        justify_content: Some(JustifyContent::SpaceBetween),
+        align_items: Some(AlignItems::Center),
+        ..Default::default()
+    };
+    let row = Div::new(row_style, (minus, plus));
+
+    let root_style = Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        justify_content: Some(JustifyContent::Center),
+        align_items: Some(AlignItems::Center),
+        size: Size {
+            width: percent(1.0),
+            height: percent(1.0),
+        },
+        gap: Size {
+            width: zero(),
+            height: length(40.0),
+        },
+        ..Default::default()
+    };
+    let mut root = Div::new(root_style, (title, count_text, row));
+    root.color = Color::rgb(0.16, 0.16, 0.18);
+    root.border_color = Color::rgb(0.30, 0.30, 0.35);
+    root.border_radius = 20.0;
+    root.border_thickness = 2.0;
+
+    root.build_tree(&mut tree);
+
+    (tree, root)
 }
 
 fn create_wl_buffer(

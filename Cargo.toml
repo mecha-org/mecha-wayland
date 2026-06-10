@@ -13,6 +13,7 @@ members = [
     "crates/ui",
     "crates/ui-macro",
     "crates/counter",
+    "crates/volume",
 ]
 default-members = ["crates/ui"]
 resolver = "2"

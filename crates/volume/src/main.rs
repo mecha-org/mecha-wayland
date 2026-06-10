@@ -4,6 +4,7 @@ mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
 mod button;
+mod slider;
 mod renderer;
 
 use app::prelude::*;
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use assets::AtlasId;
 use button::Button;
+use slider::Slider;
 use taffy::Style;
 use taffy::prelude::*;
 use ui::widgets::{Div, Text};
@@ -25,7 +27,7 @@ use wayland::Wayland;
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
 type RowDiv = Div<(Button, Text, Button)>;
-type RootDiv = Div<(Text, RowDiv)>;
+type RootDiv = Div<(Text, Slider, RowDiv)>;
 
 struct UiState {
     tree: WidgetTree,
@@ -61,7 +63,7 @@ impl UiState {
         self.count = count;
         self.root
             .children
-            .1
+            .2
             .children.1
             .set_text(&mut self.tree, format!("{count}"));
     }
@@ -88,7 +90,7 @@ impl UiState {
         let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
         let btn = self
             .tree
-            .layout(self.root.children.1.children.0.node_id())
+            .layout(self.root.children.2.children.0.node_id())
             .unwrap();
         let lx = (row.location.x + btn.location.x) as f64;
         let ly = (row.location.y + btn.location.y) as f64;
@@ -101,7 +103,7 @@ impl UiState {
         let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
         let btn = self
             .tree
-            .layout(self.root.children.1.children.2.node_id())
+            .layout(self.root.children.2.children.2.node_id())
             .unwrap();
         let lx = (row.location.x + btn.location.x) as f64;
         let ly = (row.location.y + btn.location.y) as f64;
@@ -430,6 +432,8 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
 
+    let slider = Slider::new(0.2);
+
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);
     minus.div.border_color = Color::rgb(0.4, 0.6, 1.0);
@@ -493,7 +497,7 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         },
         ..Default::default()
     };
-    let mut root = Div::new(root_style, (title, row));
+    let mut root = Div::new(root_style, (title, slider, row));
     root.color = Color::rgb(0.16, 0.16, 0.18);
     root.border_color = Color::rgb(0.30, 0.30, 0.35);
     root.border_radius = 20.0;

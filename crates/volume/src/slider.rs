@@ -3,6 +3,8 @@ use taffy::Style;
 use taffy::prelude::*;
 use ui::Point;
 
+use ui::Widget;
+use ui::WidgetTree;
 use ui::widgets::{Div, Rect};
 use ui::{Render, RenderCommand};
 
@@ -52,6 +54,21 @@ impl Slider {
             div,
             value,
         }
+    }
+
+    pub fn set_value(&mut self, tree: &mut WidgetTree, value: f32) {
+        self.value = value;
+        self.div.children.set_style(
+            tree,
+            Style {
+                size: Size {
+                    width: percent(1.0_f32),
+                    height: percent(value),
+                },
+                ..Default::default()
+            },
+        );
+        tree.mark_dirty(self.div.children.node_id()).unwrap();
     }
 }
 

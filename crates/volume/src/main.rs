@@ -67,6 +67,10 @@ impl UiState {
             .children
             .1
             .set_text(&mut self.tree, format!("{count}"));
+        self.root
+            .children
+            .1
+            .set_value(&mut self.tree, (count as f32 / 10.0).clamp(0.0, 1.0));
     }
 
     fn recompute_layout(&mut self) {
@@ -433,7 +437,7 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
 
-    let slider = Slider::new(0.2);
+    let slider = Slider::new(0.0);
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);

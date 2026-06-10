@@ -5,6 +5,8 @@ mod atlas {
 }
 mod widgets;
 
+use animation::AnimationId;
+use animation::Animator;
 use app::prelude::*;
 use drm_fourcc::DrmFourcc;
 use std::os::fd::AsRawFd;
@@ -118,6 +120,12 @@ struct StatusBarState {
     demo: DemoDriver,
     clock_timer_id: Option<TimerId>,
     needs_redraw: bool,
+    // REMOVE: demo — wifi glow
+    animator: Animator,
+    wifi_pulse_id: Option<AnimationId>,
+    wifi_pulse_value: f32,
+    pingpong_timer_id: TimerId,
+    // END REMOVE: demo — wifi glow
 }
 
 impl Default for StatusBarState {
@@ -133,6 +141,19 @@ impl Default for StatusBarState {
         renderer.init_command_queue::<DrawQuad>();
         renderer.init_command_queue::<DrawMonochromeSprite>();
         renderer.init_command_queue::<DrawText>();
+
+        // REMOVE: demo — wifi glow
+        let mut animator = Animator::new();
+        let wifi_pulse_id = animator.animate_pingpong(
+            animation::AnimationConfig::immediate(
+                1.0,
+                1.15,
+                Duration::from_millis(1500),
+                animation::Easing::EaseInOut,
+            ),
+            Duration::from_secs(3),
+        );
+        // END REMOVE: demo — wifi glow
 
         Self {
             ring,
@@ -153,6 +174,10 @@ impl Default for StatusBarState {
             demo: DemoDriver::default(),
             clock_timer_id: None,
             needs_redraw: false,
+            animator,
+            wifi_pulse_id: Some(wifi_pulse_id),
+            wifi_pulse_value: 1.0,
+            pingpong_timer_id: TimerId(0),
         }
     }
 }
@@ -188,6 +213,14 @@ impl StatusBarState {
             .surface
             .attach(self.surface_id, self.wl_buf_ids[free_idx], 0, 0);
         self.wayland.surface.damage(self.surface_id, 0, 0, w, h);
+
+        // REMOVE: demo — wifi glow
+        if self.animator.is_active() {
+            let cb_id = self.wayland.surface.frame(self.surface_id);
+            self.wayland.callback.register_frame(cb_id);
+        }
+        // END REMOVE: demo — wifi glow
+
         self.wayland.surface.commit(self.surface_id);
         self.buf_in_flight[free_idx] = true;
 
@@ -280,14 +313,58 @@ impl StatusBarState {
                         height: ICON_SIZE,
                     }, {
                         let region = self.wifi.sprite_region();
+                        // REMOVE: demo — wifi glow
+                        let pulse = self.wifi_pulse_value;
+                        let glow = (pulse - 1.0) / 0.15;
+                        let (cr, cg, cb) = animation::lerp_color(
+                            (1.0, 1.0, 1.0),
+                            (0.1, 0.85, 0.2),
+                            glow,
+                        );
+                        let icon_size = ICON_SIZE * pulse;
+                        if glow > 0.01 {
+                            let outer_size = icon_size * 1.5;
+                            let outer_offset = (outer_size - ICON_SIZE) * 0.5;
+                            renderer.send_command(DrawMonochromeSprite {
+                                texture_id: icon_tex,
+                                region: Rect::new(region.x, region.y, region.w, region.h),
+                                origin: Point::new(x - outer_offset, y - outer_offset),
+                                z: 0.05,
+                                size: Size::new(outer_size, outer_size),
+                                color: Color::rgba(cr, cg, cb, 0.08 * glow),
+                            });
+                            let mid_size = icon_size * 1.3;
+                            let mid_offset = (mid_size - ICON_SIZE) * 0.5;
+                            renderer.send_command(DrawMonochromeSprite {
+                                texture_id: icon_tex,
+                                region: Rect::new(region.x, region.y, region.w, region.h),
+                                origin: Point::new(x - mid_offset, y - mid_offset),
+                                z: 0.06,
+                                size: Size::new(mid_size, mid_size),
+                                color: Color::rgba(cr, cg, cb, 0.18 * glow),
+                            });
+                        }
+                        let main_offset = (icon_size - ICON_SIZE) * 0.5;
                         renderer.send_command(DrawMonochromeSprite {
                             texture_id: icon_tex,
                             region: Rect::new(region.x, region.y, region.w, region.h),
-                            origin: Point::new(x, y),
+                            origin: Point::new(x - main_offset, y - main_offset),
                             z: 0.1,
-                            size: Size::new(ICON_SIZE, ICON_SIZE),
-                            color: Color::WHITE,
+                            size: Size::new(icon_size, icon_size),
+                            color: Color::rgb(cr, cg, cb),
                         });
+                        // END REMOVE: demo — wifi glow
+                        // KEEP: draw normal icon (unreachable while demo is active)
+                        if false {
+                            renderer.send_command(DrawMonochromeSprite {
+                                texture_id: icon_tex,
+                                region: Rect::new(region.x, region.y, region.w, region.h),
+                                origin: Point::new(x, y),
+                                z: 0.1,
+                                size: Size::new(ICON_SIZE, ICON_SIZE),
+                                color: Color::WHITE,
+                            });
+                        }
                     }),
 
                     layout!({
@@ -359,6 +436,14 @@ fn main() {
         .mount(io_ring::module())
         .mount(timer::module())
         .mount(wayland::module())
+        // REMOVE: demo — wifi glow
+        .mount(animation::module())
+        .mount(
+            app::Module::new().on(|s: &mut StatusBarState, _: &animation::AnimationTick| {
+                s.request_redraw();
+            }),
+        )
+        // END REMOVE: demo — wifi glow
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &wayland::Initilised| {
                 use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
@@ -498,6 +583,23 @@ fn main() {
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &app::PrePoll| {
+                // REMOVE: demo — wifi glow
+                if let Some(id) = s.wifi_pulse_id {
+                    s.wifi_pulse_value = s.animator.get(id);
+                }
+                if !s.animator.is_active() && s.pingpong_timer_id == TimerId(0) {
+                    if let Some(resume_at) = s.animator.next_resume_at() {
+                        let delay = resume_at.saturating_duration_since(std::time::Instant::now());
+                        if delay > Duration::ZERO {
+                            s.pingpong_timer_id = s.timer.start_timer(Relative {
+                                duration: delay,
+                                repeat: false,
+                            });
+                        }
+                    }
+                }
+                // END REMOVE: demo — wifi glow
+
                 if s.needs_redraw {
                     s.needs_redraw = false;
                     if !s.try_redraw() {
@@ -506,6 +608,16 @@ fn main() {
                 }
             }),
         )
+        // REMOVE: demo — wifi glow
+        .mount(
+            app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                if ev.id() == s.pingpong_timer_id {
+                    s.pingpong_timer_id = TimerId(0);
+                    s.request_redraw();
+                }
+            }),
+        )
+        // END REMOVE: demo — wifi glow
         .mount(
             // REMOVE: demo — replace with real hardware polling
             app::Module::new()

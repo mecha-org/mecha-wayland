@@ -3,7 +3,6 @@ use taffy::Style;
 use taffy::prelude::*;
 use ui::Point;
 
-// use ui::widgets::{Div, Text};
 use ui::widgets::{Div, Rect};
 use ui::{Render, RenderCommand};
 
@@ -24,7 +23,7 @@ impl Slider {
             },
             ..Default::default()
         };
-        // background rect parent panel
+        // background parent div
         let div_style = Style {
             // display: Display::Flex,
             size: Size {

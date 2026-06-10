@@ -4,8 +4,8 @@ mod atlas {
     include!(concat!(env!("OUT_DIR"), "/ui_gen.rs"));
 }
 mod button;
-mod slider;
 mod renderer;
+mod slider;
 
 use app::prelude::*;
 use std::os::fd::AsRawFd;
@@ -64,7 +64,8 @@ impl UiState {
         self.root
             .children
             .2
-            .children.1
+            .children
+            .1
             .set_text(&mut self.tree, format!("{count}"));
     }
 

@@ -11,7 +11,7 @@ use ui::{Render, RenderCommand};
 pub struct Slider {
     #[widget(child)]
     pub div: Div<Rect>,
-    pub value: f32
+    pub value: f32,
 }
 
 impl Slider {
@@ -43,7 +43,7 @@ impl Slider {
             },
             ..Default::default()
         });
-        rect.color =  Color::rgb(0.5, 0.5, 0.5); // foreground
+        rect.color = Color::rgb(0.5, 0.5, 0.5); // foreground
         let mut div = Div::new(div_style, rect);
         div.color = Color::rgb(0.2, 0.2, 0.2); // background
 
@@ -51,7 +51,7 @@ impl Slider {
             node_id: taffy::NodeId::new(u64::MAX),
             style,
             div,
-            value
+            value,
         }
     }
 }

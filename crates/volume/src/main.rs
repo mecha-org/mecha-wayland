@@ -24,8 +24,8 @@ use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
-type RowDiv = Div<(Button, Button)>;
-type RootDiv = Div<(Text, Text, RowDiv)>;
+type RowDiv = Div<(Button, Text, Button)>;
+type RootDiv = Div<(Text, RowDiv)>;
 
 struct UiState {
     tree: WidgetTree,
@@ -62,6 +62,7 @@ impl UiState {
         self.root
             .children
             .1
+            .children.1
             .set_text(&mut self.tree, format!("{count}"));
     }
 
@@ -84,10 +85,10 @@ impl UiState {
     }
 
     fn minus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
+        let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
         let btn = self
             .tree
-            .layout(self.root.children.2.children.0.node_id())
+            .layout(self.root.children.1.children.0.node_id())
             .unwrap();
         let lx = (row.location.x + btn.location.x) as f64;
         let ly = (row.location.y + btn.location.y) as f64;
@@ -97,10 +98,10 @@ impl UiState {
     }
 
     fn plus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
+        let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
         let btn = self
             .tree
-            .layout(self.root.children.2.children.1.node_id())
+            .layout(self.root.children.1.children.2.node_id())
             .unwrap();
         let lx = (row.location.x + btn.location.x) as f64;
         let ly = (row.location.y + btn.location.y) as f64;
@@ -424,17 +425,10 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
 
     let mut title = Text::new(Style::default());
     title.font = Some(&atlas::UI_FONT_INTER_24);
-    title.text = "Counter".to_string();
+    title.text = "Volume".to_string();
     title.color = Color::WHITE;
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
-
-    let mut count_text = Text::new(Style::default());
-    count_text.font = Some(&atlas::UI_FONT_INTER_100);
-    count_text.text = "0".to_string();
-    count_text.color = Color::WHITE;
-    count_text.z = 0.95;
-    count_text.atlas_id = Some(atlas_id);
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);
@@ -446,6 +440,13 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     minus.div.children.color = Color::WHITE;
     minus.div.children.z = 0.4;
     minus.div.children.atlas_id = Some(atlas_id);
+
+    let mut count_text = Text::new(Style::default());
+    count_text.font = Some(&atlas::UI_FONT_INTER_24);
+    count_text.text = "0".to_string();
+    count_text.color = Color::WHITE;
+    count_text.z = 0.95;
+    count_text.atlas_id = Some(atlas_id);
 
     let mut plus = Button::new("+");
     plus.div.color = Color::rgb(0.2, 0.7, 0.3);
@@ -475,7 +476,7 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         align_items: Some(AlignItems::Center),
         ..Default::default()
     };
-    let row = Div::new(row_style, (minus, plus));
+    let row = Div::new(row_style, (minus, count_text, plus));
 
     let root_style = Style {
         display: Display::Flex,
@@ -492,7 +493,7 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         },
         ..Default::default()
     };
-    let mut root = Div::new(root_style, (title, count_text, row));
+    let mut root = Div::new(root_style, (title, row));
     root.color = Color::rgb(0.16, 0.16, 0.18);
     root.border_color = Color::rgb(0.30, 0.30, 0.35);
     root.border_radius = 20.0;

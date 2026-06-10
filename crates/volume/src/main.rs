@@ -88,7 +88,7 @@ impl UiState {
     }
 
     fn minus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
+        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
         let btn = self
             .tree
             .layout(self.root.children.2.children.0.node_id())
@@ -101,7 +101,7 @@ impl UiState {
     }
 
     fn plus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.1.node_id()).unwrap();
+        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
         let btn = self
             .tree
             .layout(self.root.children.2.children.2.node_id())

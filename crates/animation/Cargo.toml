@@ -3,8 +3,15 @@ name = "animation"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["wayland"]
+wayland = ["dep:app", "dep:wayland"]
+
 [dependencies]
-app = { path = "../app" }
-wayland = { path = "../wayland" }
+app = { path = "../app", optional = true }
+wayland = { path = "../wayland", optional = true }
 smallvec = "1"
 oklab = "1"
+
+[dev-dependencies]
+crossterm = "0.28"

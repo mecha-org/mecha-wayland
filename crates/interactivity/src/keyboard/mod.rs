@@ -2,7 +2,10 @@ mod event;
 
 pub use event::{KeyEvent, Modifiers};
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use wayland::{KeyState, KeyboardEvent as WlKeyboardEvent};
 
@@ -20,6 +23,8 @@ pub struct KeyboardState {
     /// Milliseconds before the first key repeat fires after initial press.
     /// `-1` means the compositor hasn't sent `repeat_info` yet.
     pub repeat_delay: i32,
+    /// Tracks active repeating keys (key code -> (next repeat time, repeat interval)).
+    pub(crate) repeating_keys: HashMap<u32, (Instant, Duration)>,
 }
 
 impl KeyboardState {
@@ -36,11 +41,6 @@ impl KeyboardState {
         self.held_keys.contains(&key)
     }
 
-    /// Returns `true` if key repeat is enabled (compositor sent a non-zero rate).
-    pub fn repeat_enabled(&self) -> bool {
-        self.repeat_rate > 0
-    }
-
     /// Translate one raw Wayland [`WlKeyboardEvent`] into a semantic [`KeyEvent`].
     pub(crate) fn process(&mut self, ev: &WlKeyboardEvent) -> Option<KeyEvent> {
         match ev {
@@ -49,6 +49,13 @@ impl KeyboardState {
             } => match state {
                 KeyState::Pressed => {
                     self.held_keys.insert(*key);
+                    if self.repeat_rate > 0 && self.repeat_delay >= 0 {
+                        let delay = Duration::from_millis(self.repeat_delay as u64);
+                        let interval =
+                            Duration::from_millis((1000.0 / self.repeat_rate as f64) as u64);
+                        let next_repeat = Instant::now() + delay;
+                        self.repeating_keys.insert(*key, (next_repeat, interval));
+                    }
                     Some(KeyEvent::Press {
                         key: *key,
                         modifiers: self.modifiers,
@@ -57,6 +64,7 @@ impl KeyboardState {
                 }
                 KeyState::Released => {
                     self.held_keys.remove(key);
+                    self.repeating_keys.remove(key);
                     Some(KeyEvent::Release {
                         key: *key,
                         modifiers: self.modifiers,
@@ -92,6 +100,7 @@ impl KeyboardState {
 
             WlKeyboardEvent::Leave { surface, .. } => {
                 self.held_keys.clear();
+                self.repeating_keys.clear();
                 Some(KeyEvent::FocusLeave { surface: *surface })
             }
 
@@ -110,5 +119,23 @@ impl KeyboardState {
                 size: *size,
             }),
         }
+    }
+
+    /// Check repeating keys and return any Hold events.
+    /// Catches up if multiple intervals have elapsed since last tick.
+    pub(crate) fn tick(&mut self) -> Vec<KeyEvent> {
+        let now = Instant::now();
+        let mut events = Vec::new();
+
+        for (&key, (next_repeat, interval)) in &mut self.repeating_keys {
+            while now >= *next_repeat {
+                events.push(KeyEvent::Hold {
+                    key,
+                    modifiers: self.modifiers,
+                });
+                *next_repeat += *interval;
+            }
+        }
+        events
     }
 }

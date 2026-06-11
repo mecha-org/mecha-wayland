@@ -26,9 +26,6 @@ use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
-const BTN_MINUS: u64 = 1;
-const BTN_PLUS: u64 = 2;
-
 type RowDiv = Div<(Button, Button)>;
 type RootDiv = Div<(Text, Text, RowDiv)>;
 
@@ -83,38 +80,11 @@ impl UiState {
 
     fn rebuild_hit_areas(&mut self) {
         self.hit_areas.clear();
-
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
-        let row_x = row.location.x;
-        let row_y = row.location.y;
-
-        let minus = self
-            .tree
-            .layout(self.root.children.2.children.0.node_id())
-            .unwrap();
-        self.hit_areas.push(HitArea {
-            id: BTN_MINUS,
-            rect: utils::Rect::new(
-                row_x + minus.location.x,
-                row_y + minus.location.y,
-                minus.size.width,
-                minus.size.height,
-            ),
-        });
-
-        let plus = self
-            .tree
-            .layout(self.root.children.2.children.1.node_id())
-            .unwrap();
-        self.hit_areas.push(HitArea {
-            id: BTN_PLUS,
-            rect: utils::Rect::new(
-                row_x + plus.location.x,
-                row_y + plus.location.y,
-                plus.size.width,
-                plus.size.height,
-            ),
-        });
+        for cmd in self.render_commands() {
+            if let RenderCommand::RegisterHitArea { id, rect } = cmd {
+                self.hit_areas.push(HitArea { id, rect });
+            }
+        }
     }
 
     fn render_commands(&self) -> Vec<RenderCommand> {
@@ -288,7 +258,8 @@ fn main() {
         )
         .mount(
             app::Module::new().on(|_: &mut AppState, ev: &interactivity::KeyEvent| {
-                if let interactivity::KeyEvent::Press { key: 1 | 16, .. } = ev {
+                // Key 1 is escape
+                if let interactivity::KeyEvent::Press { key: 1, .. } = ev {
                     std::process::exit(0);
                 }
             }),
@@ -322,10 +293,15 @@ fn main() {
 }
 
 fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
-    match ui.hit_areas.hit_test(x, y) {
-        Some(BTN_MINUS) => Some(-1),
-        Some(BTN_PLUS) => Some(1),
-        _ => None,
+    let hit_id = ui.hit_areas.hit_test(x, y)?;
+    let minus_id: u64 = ui.root.children.2.children.0.node_id().into();
+    let plus_id: u64 = ui.root.children.2.children.1.node_id().into();
+    if hit_id == minus_id {
+        Some(-1)
+    } else if hit_id == plus_id {
+        Some(1)
+    } else {
+        None
     }
 }
 
@@ -400,6 +376,7 @@ fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
                 });
             }
             RenderCommand::DrawText { atlas_id: None, .. } => {}
+            ui::RenderCommand::RegisterHitArea { .. } => {}
         }
     }
 
@@ -454,12 +431,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         display: Display::Flex,
         flex_direction: FlexDirection::Row,
         size: Size {
-            width: percent(1.0),
-            height: length(52.0),
+            width: percent(1.0_f32),
+            height: length(52.0_f32),
         },
         padding: Rect {
-            left: length(60.0),
-            right: length(60.0),
+            left: length(60.0_f32),
+            right: length(60.0_f32),
             top: zero(),
             bottom: zero(),
         },
@@ -475,12 +452,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         justify_content: Some(JustifyContent::Center),
         align_items: Some(AlignItems::Center),
         size: Size {
-            width: percent(1.0),
-            height: percent(1.0),
+            width: percent(1.0_f32),
+            height: percent(1.0_f32),
         },
         gap: Size {
             width: zero(),
-            height: length(40.0),
+            height: length(40.0_f32),
         },
         ..Default::default()
     };

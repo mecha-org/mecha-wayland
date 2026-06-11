@@ -2,7 +2,7 @@ extern crate self as ui;
 
 use assets::BakedFont;
 use taffy::{AvailableSpace, Layout, NodeId, Size, Style, TaffyTree};
-use utils::{Color, Size as USize};
+use utils::{Color, Size as USize, Rect};
 
 pub use utils::Point;
 
@@ -36,6 +36,10 @@ pub enum RenderCommand {
         z: f32,
         color: Color,
         atlas_id: Option<assets::AtlasId>,
+    },
+    RegisterHitArea {
+        id: u64,
+        rect: Rect,
     },
 }
 

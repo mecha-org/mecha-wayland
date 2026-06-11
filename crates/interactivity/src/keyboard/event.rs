@@ -9,6 +9,7 @@ pub struct Modifiers {
     pub logo: bool,
     pub caps_lock: bool,
     pub num_lock: bool,
+    pub scroll_lock: bool,
 }
 
 impl Modifiers {
@@ -16,11 +17,12 @@ impl Modifiers {
     pub(super) fn from_xkb(combined: u32) -> Self {
         Self {
             shift: combined & 0x01 != 0,
+            caps_lock: combined & 0x02 != 0,
             ctrl: combined & 0x04 != 0,
             alt: combined & 0x08 != 0,
-            logo: combined & 0x40 != 0,
-            caps_lock: combined & 0x02 != 0,
             num_lock: combined & 0x10 != 0,
+            scroll_lock: combined & 0x20 != 0,
+            logo: combined & 0x40 != 0,
         }
     }
 
@@ -46,6 +48,9 @@ pub enum KeyEvent {
         modifiers: Modifiers,
         time: u32,
     },
+
+    /// A key is held down and repeating.
+    Hold { key: u32, modifiers: Modifiers },
 
     /// The active modifier set changed.
     ModifiersChanged { modifiers: Modifiers },

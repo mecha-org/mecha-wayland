@@ -35,13 +35,7 @@ impl TouchState {
         let mut events = Vec::new();
 
         match ev {
-            WlTouchEvent::Down {
-                id,
-                x,
-                y,
-                time,
-                ..
-            } => {
+            WlTouchEvent::Down { id, x, y, time, .. } => {
                 let active = ActiveTouch {
                     start_x: *x,
                     start_y: *y,
@@ -59,12 +53,7 @@ impl TouchState {
                 });
             }
 
-            WlTouchEvent::Motion {
-                id,
-                x,
-                y,
-                time,
-            } => {
+            WlTouchEvent::Motion { id, x, y, time } => {
                 if let Some(active) = self.active_touches.get_mut(id) {
                     let dx = x - active.last_x;
                     let dy = y - active.last_y;
@@ -82,11 +71,7 @@ impl TouchState {
                 }
             }
 
-            WlTouchEvent::Up {
-                id,
-                time,
-                ..
-            } => {
+            WlTouchEvent::Up { id, time, .. } => {
                 if let Some(active) = self.active_touches.remove(id) {
                     let x = active.last_x;
                     let y = active.last_y;
@@ -104,12 +89,9 @@ impl TouchState {
 
                     // Check for Tap: small movement and short duration
                     if distance < TAP_MAX_DISTANCE && duration_ms < TAP_MAX_DURATION_MS {
-                        events.push(TouchEvent::Tap {
-                            id: *id,
-                            x,
-                            y,
-                        });
-                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS {
+                        events.push(TouchEvent::Tap { id: *id, x, y });
+                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS
+                    {
                         // Check for Swipe: larger movement (>=40px) and fast motion (<=500ms)
                         let direction = if dx.abs() > dy.abs() {
                             if dx > 0.0 {
@@ -137,6 +119,8 @@ impl TouchState {
                             start_y: active.start_y,
                             end_x: x,
                             end_y: y,
+                            start_time: active.start_time,
+                            end_time: *time,
                             duration_ms,
                             velocity,
                         });

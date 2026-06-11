@@ -11,20 +11,10 @@ pub enum SwipeDirection {
 #[derive(Clone, Debug)]
 pub enum TouchEvent {
     /// A touch contact was pressed down.
-    Down {
-        id: i32,
-        x: f64,
-        y: f64,
-        time: u32,
-    },
+    Down { id: i32, x: f64, y: f64, time: u32 },
 
     /// A touch contact was released.
-    Up {
-        id: i32,
-        x: f64,
-        y: f64,
-        time: u32,
-    },
+    Up { id: i32, x: f64, y: f64, time: u32 },
 
     /// A touch contact moved.
     Motion {
@@ -37,11 +27,7 @@ pub enum TouchEvent {
     },
 
     /// A single tap gesture was detected.
-    Tap {
-        id: i32,
-        x: f64,
-        y: f64,
-    },
+    Tap { id: i32, x: f64, y: f64 },
 
     /// A swipe gesture was detected.
     Swipe {
@@ -50,6 +36,8 @@ pub enum TouchEvent {
         start_y: f64,
         end_x: f64,
         end_y: f64,
+        start_time: u32,
+        end_time: u32,
         duration_ms: u32,
         velocity: f64, // pixels per millisecond
     },

@@ -1,10 +1,19 @@
 mod easing;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use smallvec::SmallVec;
 
 pub use easing::Easing;
+
+fn monotonic_now() -> Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
 
 /// Perceptually-uniform sRGB color interpolation via Oklab.
 /// `t` is 0.0→1.0 progress. All channels expected in [0, 1].
@@ -61,8 +70,8 @@ pub enum RepeatMode {
     PingPong {
         /// Pause between cycles. The animation runs forward then backward
         /// (2 × duration), then idles for `interval`. During the interval
-        /// `is_active()` returns false and `next_resume_at()` returns the
-        /// wall-clock time when the next cycle begins.
+        /// `is_active()` returns false and `next_resume_deadline()` returns the
+        /// monotonic deadline when the next cycle begins.
         interval: Duration,
     },
 }
@@ -71,15 +80,15 @@ struct Entry {
     id: AnimationId,
     config: AnimationConfig,
     repeat: RepeatMode,
-    started_at: Instant,
+    started_at: Duration,
 }
 
 impl Entry {
-    fn active_from(&self) -> Instant {
+    fn active_from(&self) -> Duration {
         self.started_at + self.config.delay
     }
 
-    fn progress(&self, now: Instant) -> Option<f32> {
+    fn progress(&self, now: Duration) -> Option<f32> {
         let active_from = self.active_from();
         if now < active_from {
             return None;
@@ -89,7 +98,7 @@ impl Entry {
         Some(self.config.easing.apply(t))
     }
 
-    fn value(&self, now: Instant) -> f32 {
+    fn value(&self, now: Duration) -> f32 {
         match self.repeat {
             RepeatMode::PingPong { interval } => {
                 let active_from = self.active_from();
@@ -122,7 +131,7 @@ impl Entry {
         }
     }
 
-    fn is_in_cycle(&self, now: Instant) -> bool {
+    fn is_in_cycle(&self, now: Duration) -> bool {
         match self.repeat {
             RepeatMode::None => {
                 now >= self.active_from() && now < self.active_from() + self.config.duration
@@ -140,7 +149,7 @@ impl Entry {
         }
     }
 
-    fn resume_at(&self, now: Instant) -> Option<Instant> {
+    fn resume_deadline(&self, now: Duration) -> Option<Duration> {
         match self.repeat {
             RepeatMode::None => {
                 let active_from = self.active_from();
@@ -200,7 +209,7 @@ impl Animator {
             id,
             config,
             repeat,
-            started_at: Instant::now(),
+            started_at: monotonic_now(),
         });
         id
     }
@@ -214,7 +223,7 @@ impl Animator {
     }
 
     pub fn animate_by(&mut self, id: AnimationId, delta: f32, dur: Duration, easing: Easing) {
-        let now = Instant::now();
+        let now = monotonic_now();
         let current = self.get(id);
         let cfg = AnimationConfig {
             from: current,
@@ -233,7 +242,7 @@ impl Animator {
     }
 
     pub fn get(&self, id: AnimationId) -> f32 {
-        let now = Instant::now();
+        let now = monotonic_now();
         self.entries
             .iter()
             .find(|e| e.id == id)
@@ -246,15 +255,18 @@ impl Animator {
     }
 
     pub fn is_active(&self) -> bool {
-        let now = Instant::now();
+        let now = monotonic_now();
         self.entries.iter().any(|e| e.is_in_cycle(now))
     }
 
-    /// Earliest wall-clock time any paused entry resumes.
-    /// Arm a deadline timer to this instant to wake up precisely.
-    pub fn next_resume_at(&self) -> Option<Instant> {
-        let now = Instant::now();
-        self.entries.iter().filter_map(|e| e.resume_at(now)).min()
+    /// Absolute monotonic deadline when the next paused entry resumes.
+    /// Feed this directly into a deadline timer.
+    pub fn next_resume_deadline(&self) -> Option<Duration> {
+        let now = monotonic_now();
+        self.entries
+            .iter()
+            .filter_map(|e| e.resume_deadline(now))
+            .min()
     }
 }
 
@@ -267,10 +279,6 @@ impl app::Event for AnimationTick {}
 
 #[cfg(feature = "wayland")]
 pub fn module<S>() -> impl app::RegisteredModule<Animator, S> {
-    // Emits a tick on every frame callback while any entry is active, and
-    // one extra tick after the last entry deactivates.  This extra tick
-    // guarantees the terminal value is rendered even when the compositor
-    // delivers the final callback late (e.g. after a freeze).
     app::Module::<Animator, _, _>::new().on(|anim: &mut Animator, _: &wayland::WlCallbackEvent| {
         let active = anim.is_active();
         let was = std::mem::replace(&mut anim.was_active, active);
@@ -389,25 +397,25 @@ mod tests {
     }
 
     #[test]
-    fn resume_at_none_while_active() {
+    fn resume_deadline_none_while_active() {
         let mut a = Animator::new();
         a.animate(config(0.0, 1.0));
-        assert!(a.next_resume_at().is_none());
+        assert!(a.next_resume_deadline().is_none());
     }
 
     #[test]
-    fn resume_at_some_during_delay() {
+    fn resume_deadline_some_during_delay() {
         let mut a = Animator::new();
         a.animate(config_with_delay());
-        let r = a.next_resume_at().unwrap();
-        assert!(r > std::time::Instant::now());
+        let d = a.next_resume_deadline().unwrap();
+        assert!(d > monotonic_now());
     }
 
     #[test]
-    fn resume_at_pingpong_some_during_delay() {
+    fn resume_deadline_pingpong_some_during_delay() {
         let mut a = Animator::new();
         a.animate_pingpong(config_with_delay(), Duration::from_secs(5));
-        let r = a.next_resume_at().unwrap();
-        assert!(r > std::time::Instant::now());
+        let d = a.next_resume_deadline().unwrap();
+        assert!(d > monotonic_now());
     }
 }

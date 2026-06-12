@@ -17,6 +17,20 @@ use timer::{Absolute, Clock, Relative, Timer, TimerId};
 use wayland::Wayland;
 use widgets::{battery, bluetooth, clock, wifi};
 
+/// Newtype for the pending frame callback ID to avoid `Lens<u32>` conflicts
+/// with `surface_id` in the `State` derive.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CallbackId(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DemoTimerId(TimerId);
+
+impl Default for DemoTimerId {
+    fn default() -> Self {
+        DemoTimerId(TimerId(0))
+    }
+}
+
 // ── REMOVE: demo ──────────────────────────────────────────────────────────
 // Replace DemoDriver with real hardware event sources (D-Bus, sysfs, etc.)
 #[derive(Default)]
@@ -117,8 +131,10 @@ struct StatusBarState {
     wifi: wifi::WifiWidget,
     // REMOVE: demo — replace with real hardware event source
     demo: DemoDriver,
+    demo_timer_id: Option<DemoTimerId>,
     clock_timer_id: Option<TimerId>,
     needs_redraw: bool,
+    pending_callback_id: CallbackId,
     // REMOVE: demo — wifi glow
     animator: Animator,
     wifi_pulse_id: Option<AnimationId>,
@@ -171,8 +187,10 @@ impl Default for StatusBarState {
             wifi: wifi::WifiWidget::new(),
             // REMOVE: demo
             demo: DemoDriver::default(),
+            demo_timer_id: None,
             clock_timer_id: None,
             needs_redraw: false,
+            pending_callback_id: CallbackId(0),
             animator,
             wifi_pulse_id: Some(wifi_pulse_id),
             wifi_pulse_value: 1.0,
@@ -186,7 +204,7 @@ impl StatusBarState {
         Self::default()
     }
 
-    fn try_redraw(&mut self) -> bool {
+    fn try_redraw(&mut self, chain: bool) -> bool {
         let free_idx = if !self.buf_in_flight[0] {
             0
         } else if !self.buf_in_flight[1] {
@@ -207,18 +225,17 @@ impl StatusBarState {
             self.renderer.finish();
         }
 
+        if chain && self.pending_callback_id == CallbackId(0) {
+            let cb_id = self.wayland.surface.frame(self.surface_id);
+            self.wayland.callback.register_frame(cb_id);
+            self.pending_callback_id = CallbackId(cb_id);
+        }
+
         let (w, h) = self.surface_size;
         self.wayland
             .surface
             .attach(self.surface_id, self.wl_buf_ids[free_idx], 0, 0);
         self.wayland.surface.damage(self.surface_id, 0, 0, w, h);
-
-        // REMOVE: demo — wifi glow
-        if self.animator.is_active() {
-            let cb_id = self.wayland.surface.frame(self.surface_id);
-            self.wayland.callback.register_frame(cb_id);
-        }
-        // END REMOVE: demo — wifi glow
 
         self.wayland.surface.commit(self.surface_id);
         self.buf_in_flight[free_idx] = true;
@@ -229,6 +246,12 @@ impl StatusBarState {
 
     fn request_redraw(&mut self) {
         self.needs_redraw = true;
+        if self.pending_callback_id == CallbackId(0) {
+            self.needs_redraw = false;
+            if !self.try_redraw(self.animator.is_active()) {
+                self.needs_redraw = true;
+            }
+        }
     }
 
     fn render_bar(&mut self, win_w: f32, icon_tex: renderer::TextureId) {
@@ -279,19 +302,17 @@ impl StatusBarState {
         let icon_y = (BAR_HEIGHT as f32 - ICON_SIZE) * 0.5;
         let mut cursor = right_x;
 
-        {
+        if bluetooth_w > 0.0 {
             let x = cursor;
-            if self.bluetooth.visible() {
-                let region = self.bluetooth.sprite_region();
-                renderer.send_command(DrawMonochromeSprite {
-                    texture_id: icon_tex,
-                    region: Rect::new(region.x, region.y, region.w, region.h),
-                    origin: Point::new(x, icon_y),
-                    z: 0.1,
-                    size: Size::new(ICON_SIZE, ICON_SIZE),
-                    color: Color::WHITE,
-                });
-            }
+            let region = self.bluetooth.sprite_region();
+            renderer.send_command(DrawMonochromeSprite {
+                texture_id: icon_tex,
+                region: Rect::new(region.x, region.y, region.w, region.h),
+                origin: Point::new(x, icon_y),
+                z: 0.1,
+                size: Size::new(ICON_SIZE, ICON_SIZE),
+                color: Color::WHITE,
+            });
             cursor += bluetooth_w + GAP;
         }
 
@@ -413,14 +434,6 @@ fn main() {
         .mount(io_ring::module())
         .mount(timer::module())
         .mount(wayland::module())
-        // REMOVE: demo — wifi glow
-        .mount(animation::module())
-        .mount(
-            app::Module::new().on(|s: &mut StatusBarState, _: &animation::AnimationTick| {
-                s.request_redraw();
-            }),
-        )
-        // END REMOVE: demo — wifi glow
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &wayland::Initilised| {
                 use wayland::zwlr_layer_shell::{KeyboardInteractivity, Layer};
@@ -455,10 +468,11 @@ fn main() {
                 s.wayland.surface.commit(surface_id);
                 s.wayland.flush();
 
-                s.timer.start_timer(Relative {
+                let demo_timer_id = s.timer.start_timer(Relative {
                     duration: Duration::from_secs(1),
                     repeat: true,
                 });
+                s.demo_timer_id = Some(DemoTimerId(demo_timer_id));
                 time::arm_clock(&mut s.timer, &mut s.clock_timer_id, s.clock.precision());
             }),
         )
@@ -529,9 +543,30 @@ fn main() {
                 s.buf_in_flight = [false, false];
 
                 s.wayland.layer_surface.ack_configure(*id, *serial);
-                s.try_redraw();
+                s.try_redraw(s.animator.is_active());
             },
         ))
+        .mount(
+            app::Module::new().on(|s: &mut StatusBarState, ev: &wayland::WlCallbackEvent| {
+                let wayland::WlCallbackEvent::Done { id, callback_data: _ } = ev;
+                if CallbackId(*id) != s.pending_callback_id {
+                    return;
+                }
+                s.pending_callback_id = CallbackId(0);
+
+                if let Some(wifi_id) = s.wifi_pulse_id {
+                    s.wifi_pulse_value = s.animator.get(wifi_id);
+                }
+
+                let chain = s.animator.is_active();
+                if s.needs_redraw || chain {
+                    s.needs_redraw = false;
+                    if !s.try_redraw(chain) {
+                        s.needs_redraw = true;
+                    }
+                }
+            }),
+        )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, ev: &wayland::WlBufferEvent| {
                 let wayland::WlBufferEvent::Release { id } = ev;
@@ -539,12 +574,6 @@ fn main() {
                     if s.wl_buf_ids[i] == *id {
                         s.buf_in_flight[i] = false;
                         break;
-                    }
-                }
-                if s.needs_redraw {
-                    s.needs_redraw = false;
-                    if !s.try_redraw() {
-                        s.needs_redraw = true;
                     }
                 }
             }),
@@ -573,13 +602,6 @@ fn main() {
                     }
                 }
                 // END REMOVE: demo — wifi glow
-
-                if s.needs_redraw {
-                    s.needs_redraw = false;
-                    if !s.try_redraw() {
-                        s.needs_redraw = true;
-                    }
-                }
             }),
         )
         // REMOVE: demo — wifi glow
@@ -593,17 +615,31 @@ fn main() {
         )
         // END REMOVE: demo — wifi glow
         .mount(
-            // REMOVE: demo — replace with real hardware polling
             app::Module::new()
-                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_battery())),
+                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                    if ev.id() != s.demo_timer_id?.0 {
+                        return None;
+                    }
+                    Some(s.demo.tick_battery())
+                }),
         )
         .mount(
             app::Module::new()
-                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_bluetooth())),
+                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                    if ev.id() != s.demo_timer_id?.0 {
+                        return None;
+                    }
+                    Some(s.demo.tick_bluetooth())
+                }),
         )
         .mount(
             app::Module::new()
-                .on(|s: &mut StatusBarState, _: &timer::TimerEvent| Some(s.demo.tick_wifi())),
+                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                    if ev.id() != s.demo_timer_id?.0 {
+                        return None;
+                    }
+                    Some(s.demo.tick_wifi())
+                }),
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {

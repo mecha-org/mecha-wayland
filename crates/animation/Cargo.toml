@@ -3,13 +3,7 @@ name = "animation"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["wayland"]
-wayland = ["dep:app", "dep:wayland"]
-
 [dependencies]
-app = { path = "../app", optional = true }
-wayland = { path = "../wayland", optional = true }
 libc = "0.2"
 smallvec = "1"
 oklab = "1"

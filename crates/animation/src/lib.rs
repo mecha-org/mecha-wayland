@@ -182,8 +182,6 @@ impl Entry {
 pub struct Animator {
     entries: SmallVec<[Entry; 8]>,
     next_id: u64,
-    #[cfg(feature = "wayland")]
-    was_active: bool,
 }
 
 impl Default for Animator {
@@ -191,8 +189,6 @@ impl Default for Animator {
         Self {
             entries: SmallVec::new(),
             next_id: 0,
-            #[cfg(feature = "wayland")]
-            was_active: false,
         }
     }
 }
@@ -268,26 +264,6 @@ impl Animator {
             .filter_map(|e| e.resume_deadline(now))
             .min()
     }
-}
-
-#[cfg(feature = "wayland")]
-#[derive(Debug)]
-pub struct AnimationTick;
-
-#[cfg(feature = "wayland")]
-impl app::Event for AnimationTick {}
-
-#[cfg(feature = "wayland")]
-pub fn module<S>() -> impl app::RegisteredModule<Animator, S> {
-    app::Module::<Animator, _, _>::new().on(|anim: &mut Animator, _: &wayland::WlCallbackEvent| {
-        let active = anim.is_active();
-        let was = std::mem::replace(&mut anim.was_active, active);
-        if active || was {
-            Some(AnimationTick)
-        } else {
-            None::<AnimationTick>
-        }
-    })
 }
 
 #[cfg(test)]

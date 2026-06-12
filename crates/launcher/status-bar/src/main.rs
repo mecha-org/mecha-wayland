@@ -13,7 +13,6 @@ use std::os::fd::AsRawFd;
 use std::time::Duration;
 
 use io_ring::Ring;
-use layout::layout;
 use timer::{Absolute, Clock, Relative, Timer, TimerId};
 use wayland::Wayland;
 use widgets::{battery, bluetooth, clock, wifi};
@@ -252,7 +251,6 @@ impl StatusBarState {
         let battery_w = self.battery.slot_width();
         let bluetooth_w = self.bluetooth.slot_width();
         let wifi_w = self.wifi.slot_width();
-        let clock_w = self.clock.slot_width();
 
         let right_visible = [wifi_w, bluetooth_w, battery_w]
             .iter()
@@ -260,162 +258,141 @@ impl StatusBarState {
             .count() as f32;
         let right_w = wifi_w + bluetooth_w + battery_w + GAP * (right_visible - 1.0).max(0.0);
 
-        layout!(
-            {
-                available_width: win_w,
-                available_height: BAR_HEIGHT as f32,
-                direction: row,
-                justify: space_between,
-                padding_left: PADDING,
-                padding_right: PADDING,
+        // ── clock (left aligned) ─────────────────────────────────────────
+        {
+            let x: f32 = PADDING;
+            let y: f32 = 0.0;
+            let font = &atlas::UI_FONT_INTER_16;
+            let baseline = y + font.get_baseline_offset(BAR_HEIGHT as f32);
+            renderer.send_command(DrawText {
+                font,
+                texture_id: icon_tex,
+                text: self.clock.time_str.clone(),
+                origin: Point::new(x, baseline),
+                z: 0.5,
+                color: Color::WHITE,
+            });
+        }
 
-                layout!({
-                    width: clock_w,
-                    height: BAR_HEIGHT as f32,
-                }, {
-                    let font = &atlas::UI_FONT_INTER_16;
-                    let baseline = y + font.get_baseline_offset(BAR_HEIGHT as f32);
-                    renderer.send_command(DrawText {
-                        font,
-                        texture_id: icon_tex,
-                        text: self.clock.time_str.clone(),
-                        origin: Point::new(x, baseline),
-                        z: 0.5,
-                        color: Color::WHITE,
-                    });
-                }),
+        // ── right icons ──────────────────────────────────────────────────
+        let right_x = win_w - PADDING - right_w;
+        let icon_y = (BAR_HEIGHT as f32 - ICON_SIZE) * 0.5;
+        let mut cursor = right_x;
 
-                layout!({
-                    direction: row,
-                    width: right_w,
-                    height: BAR_HEIGHT as f32,
-                    gap: GAP,
-
-                    layout!({
-                        width: bluetooth_w,
-                        height: ICON_SIZE,
-                    }, {
-                        if self.bluetooth.visible() {
-                            let region = self.bluetooth.sprite_region();
-                            renderer.send_command(DrawMonochromeSprite {
-                                texture_id: icon_tex,
-                                region: Rect::new(region.x, region.y, region.w, region.h),
-                                origin: Point::new(x, y),
-                                z: 0.1,
-                                size: Size::new(ICON_SIZE, ICON_SIZE),
-                                color: Color::WHITE,
-                            });
-                        }
-                    }),
-
-                    layout!({
-                        width: wifi_w,
-                        height: ICON_SIZE,
-                    }, {
-                        let region = self.wifi.sprite_region();
-                        // REMOVE: demo — wifi glow
-                        let pulse = self.wifi_pulse_value;
-                        let glow = (pulse - 1.0) / 0.15;
-                        let (cr, cg, cb) = animation::lerp_color(
-                            (1.0, 1.0, 1.0),
-                            (0.1, 0.85, 0.2),
-                            glow,
-                        );
-                        let icon_size = ICON_SIZE * pulse;
-                        if glow > 0.01 {
-                            let outer_size = icon_size * 1.5;
-                            let outer_offset = (outer_size - ICON_SIZE) * 0.5;
-                            renderer.send_command(DrawMonochromeSprite {
-                                texture_id: icon_tex,
-                                region: Rect::new(region.x, region.y, region.w, region.h),
-                                origin: Point::new(x - outer_offset, y - outer_offset),
-                                z: 0.05,
-                                size: Size::new(outer_size, outer_size),
-                                color: Color::rgba(cr, cg, cb, 0.08 * glow),
-                            });
-                            let mid_size = icon_size * 1.3;
-                            let mid_offset = (mid_size - ICON_SIZE) * 0.5;
-                            renderer.send_command(DrawMonochromeSprite {
-                                texture_id: icon_tex,
-                                region: Rect::new(region.x, region.y, region.w, region.h),
-                                origin: Point::new(x - mid_offset, y - mid_offset),
-                                z: 0.06,
-                                size: Size::new(mid_size, mid_size),
-                                color: Color::rgba(cr, cg, cb, 0.18 * glow),
-                            });
-                        }
-                        let main_offset = (icon_size - ICON_SIZE) * 0.5;
-                        renderer.send_command(DrawMonochromeSprite {
-                            texture_id: icon_tex,
-                            region: Rect::new(region.x, region.y, region.w, region.h),
-                            origin: Point::new(x - main_offset, y - main_offset),
-                            z: 0.1,
-                            size: Size::new(icon_size, icon_size),
-                            color: Color::rgb(cr, cg, cb),
-                        });
-                        // END REMOVE: demo — wifi glow
-                        // KEEP: draw normal icon (unreachable while demo is active)
-                        if false {
-                            renderer.send_command(DrawMonochromeSprite {
-                                texture_id: icon_tex,
-                                region: Rect::new(region.x, region.y, region.w, region.h),
-                                origin: Point::new(x, y),
-                                z: 0.1,
-                                size: Size::new(ICON_SIZE, ICON_SIZE),
-                                color: Color::WHITE,
-                            });
-                        }
-                    }),
-
-                    layout!({
-                        width: battery_w,
-                        height: ICON_SIZE,
-                    }, {
-                        let region = self.battery.sprite_region();
-                        renderer.send_command(DrawMonochromeSprite {
-                            texture_id: icon_tex,
-                            region: Rect::new(region.x, region.y, region.w, region.h),
-                            origin: Point::new(x, y),
-                            z: 0.1,
-                            size: Size::new(ICON_SIZE, ICON_SIZE),
-                            color: Color::WHITE,
-                        });
-
-                        // REMOVE: charging overlay — use charging sprite variants instead
-                        if self.battery.state.charging {
-                            let juice_w =
-                                JUICE_MAX_W * self.battery.state.pct as f32 / 100.0;
-                            renderer.send_command(DrawRect {
-                                color: Color::rgb(0.2, 0.85, 0.2),
-                                origin: Point::new(x + JUICE_X_PAD, y + JUICE_Y_PAD),
-                                z: 0.15,
-                                size: Size::new(juice_w, JUICE_H),
-                            });
-                        }
-                        // END REMOVE: charging overlay
-
-                        if self.battery.state.show_percentage {
-                            let font = &atlas::UI_FONT_INTER_6;
-                            let text_w = font.measure_width(&self.battery.pct_text);
-                            let text_x = x + (ICON_SIZE - text_w) * 0.5;
-                            let baseline = y + font.get_baseline_offset(ICON_SIZE);
-                            renderer.send_command(DrawText {
-                                font,
-                                texture_id: icon_tex,
-                                text: self.battery.pct_text.clone(),
-                                origin: Point::new(text_x, baseline),
-                                z: 0.2,
-                                color: Color::BLACK,
-                            });
-                        }
-                    }),
-
-                }, {
-                }),
-            },
-            {
+        {
+            let x = cursor;
+            if self.bluetooth.visible() {
+                let region = self.bluetooth.sprite_region();
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: icon_tex,
+                    region: Rect::new(region.x, region.y, region.w, region.h),
+                    origin: Point::new(x, icon_y),
+                    z: 0.1,
+                    size: Size::new(ICON_SIZE, ICON_SIZE),
+                    color: Color::WHITE,
+                });
             }
-        );
+            cursor += bluetooth_w + GAP;
+        }
+
+        {
+            let x = cursor;
+            let region = self.wifi.sprite_region();
+            // REMOVE: demo — wifi glow
+            let pulse = self.wifi_pulse_value;
+            let glow = (pulse - 1.0) / 0.15;
+            let (cr, cg, cb) = animation::lerp_color(
+                (1.0, 1.0, 1.0),
+                (0.1, 0.85, 0.2),
+                glow,
+            );
+            let icon_size = ICON_SIZE * pulse;
+            if glow > 0.01 {
+                let outer_size = icon_size * 1.5;
+                let outer_offset = (outer_size - ICON_SIZE) * 0.5;
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: icon_tex,
+                    region: Rect::new(region.x, region.y, region.w, region.h),
+                    origin: Point::new(x - outer_offset, icon_y - outer_offset),
+                    z: 0.05,
+                    size: Size::new(outer_size, outer_size),
+                    color: Color::rgba(cr, cg, cb, 0.08 * glow),
+                });
+                let mid_size = icon_size * 1.3;
+                let mid_offset = (mid_size - ICON_SIZE) * 0.5;
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: icon_tex,
+                    region: Rect::new(region.x, region.y, region.w, region.h),
+                    origin: Point::new(x - mid_offset, icon_y - mid_offset),
+                    z: 0.06,
+                    size: Size::new(mid_size, mid_size),
+                    color: Color::rgba(cr, cg, cb, 0.18 * glow),
+                });
+            }
+            let main_offset = (icon_size - ICON_SIZE) * 0.5;
+            renderer.send_command(DrawMonochromeSprite {
+                texture_id: icon_tex,
+                region: Rect::new(region.x, region.y, region.w, region.h),
+                origin: Point::new(x - main_offset, icon_y - main_offset),
+                z: 0.1,
+                size: Size::new(icon_size, icon_size),
+                color: Color::rgb(cr, cg, cb),
+            });
+            // END REMOVE: demo — wifi glow
+            // KEEP: draw normal icon (unreachable while demo is active)
+            if false {
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: icon_tex,
+                    region: Rect::new(region.x, region.y, region.w, region.h),
+                    origin: Point::new(x, icon_y),
+                    z: 0.1,
+                    size: Size::new(ICON_SIZE, ICON_SIZE),
+                    color: Color::WHITE,
+                });
+            }
+            cursor += wifi_w + GAP;
+        }
+
+        {
+            let x = cursor;
+            let region = self.battery.sprite_region();
+            renderer.send_command(DrawMonochromeSprite {
+                texture_id: icon_tex,
+                region: Rect::new(region.x, region.y, region.w, region.h),
+                origin: Point::new(x, icon_y),
+                z: 0.1,
+                size: Size::new(ICON_SIZE, ICON_SIZE),
+                color: Color::WHITE,
+            });
+
+            // REMOVE: charging overlay — use charging sprite variants instead
+            if self.battery.state.charging {
+                let juice_w =
+                    JUICE_MAX_W * self.battery.state.pct as f32 / 100.0;
+                renderer.send_command(DrawRect {
+                    color: Color::rgb(0.2, 0.85, 0.2),
+                    origin: Point::new(x + JUICE_X_PAD, icon_y + JUICE_Y_PAD),
+                    z: 0.15,
+                    size: Size::new(juice_w, JUICE_H),
+                });
+            }
+            // END REMOVE: charging overlay
+
+            if self.battery.state.show_percentage {
+                let font = &atlas::UI_FONT_INTER_6;
+                let text_w = font.measure_width(&self.battery.pct_text);
+                let text_x = x + (ICON_SIZE - text_w) * 0.5;
+                let baseline = icon_y + font.get_baseline_offset(ICON_SIZE);
+                renderer.send_command(DrawText {
+                    font,
+                    texture_id: icon_tex,
+                    text: self.battery.pct_text.clone(),
+                    origin: Point::new(text_x, baseline),
+                    z: 0.2,
+                    color: Color::BLACK,
+                });
+            }
+        }
 
         renderer.process_command_queue::<ClearColor>();
         renderer.process_command_queue::<DrawRect>();
@@ -523,7 +500,7 @@ fn main() {
                 s.wl_buf_ids = [buf_id0, buf_id1];
 
                 if s.textures.icon.is_none() {
-                    s.textures.icon = s.renderer.upload_atlas(atlas::UI.png_bytes).ok();
+                    s.textures.icon = s.renderer.upload_atlas(&atlas::UI).ok();
                 }
 
                 if s.textures.gradient.is_none() {

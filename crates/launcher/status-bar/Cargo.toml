@@ -11,7 +11,7 @@ utils = { path = "../../utils" }
 io-ring = { path = "../../io-ring" }
 timer = { path = "../../timer" }
 wayland = { path = "../../wayland" }
-layout = { path = "../../layout" }
+
 animation = { path = "../../animation" }
 frunk = "0.4"
 anyhow = { workspace = true }

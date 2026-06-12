@@ -1,5 +1,5 @@
 use std::time::Duration;
-use timer::{Absolute, Timer, TimerEvent, TimerId};
+use timer::{Absolute, Clock, Timer, TimerEvent, TimerId};
 
 pub enum Precision {
     Minutes,
@@ -36,6 +36,7 @@ pub fn next_deadline(precision: Precision) -> Duration {
 pub fn arm_clock(timer: &mut Timer, id: &mut Option<TimerId>, precision: Precision) {
     *id = Some(timer.start_deadline(Absolute {
         at: next_deadline(precision),
+        clock: Clock::Realtime,
     }));
 }
 

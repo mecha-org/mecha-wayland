@@ -15,6 +15,13 @@ pub struct Relative {
 #[derive(Clone, Copy, Debug)]
 pub struct Absolute {
     pub at: Duration,
+    pub clock: Clock,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Clock {
+    Monotonic,
+    Realtime,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -80,10 +87,13 @@ impl Timer {
     fn submit(&mut self, id: TimerId, timing: Timing) -> IoToken {
         let (duration, flags) = match timing {
             Timing::Relative(s) => (s.duration, types::TimeoutFlags::empty()),
-            Timing::Absolute(d) => (
-                d.at,
-                types::TimeoutFlags::ABS | types::TimeoutFlags::REALTIME,
-            ),
+            Timing::Absolute(d) => {
+                let clock_flag = match d.clock {
+                    Clock::Monotonic => types::TimeoutFlags::ABS,
+                    Clock::Realtime => types::TimeoutFlags::ABS | types::TimeoutFlags::REALTIME,
+                };
+                (d.at, clock_flag)
+            }
         };
 
         let ts = Box::new(
@@ -104,8 +114,6 @@ impl Timer {
         match event {
             IoEvent::Completed { token, result } => {
                 if let Some(active) = self.active_by_token.remove(token) {
-                    // io_uring timeouts return -ETIME.
-                    // result == 0 usually indicates the timer was explicitly canceled.
                     let is_timeout = *result == -libc::ETIME || *result == 0;
 
                     if is_timeout {

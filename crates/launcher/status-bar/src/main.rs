@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use io_ring::Ring;
 use layout::layout;
-use timer::{Relative, Timer, TimerId};
+use timer::{Absolute, Clock, Relative, Timer, TimerId};
 use wayland::Wayland;
 use widgets::{battery, bluetooth, clock, wifi};
 
@@ -588,14 +588,11 @@ fn main() {
                     s.wifi_pulse_value = s.animator.get(id);
                 }
                 if !s.animator.is_active() && s.pingpong_timer_id == TimerId(0) {
-                    if let Some(resume_at) = s.animator.next_resume_at() {
-                        let delay = resume_at.saturating_duration_since(std::time::Instant::now());
-                        if delay > Duration::ZERO {
-                            s.pingpong_timer_id = s.timer.start_timer(Relative {
-                                duration: delay,
-                                repeat: false,
-                            });
-                        }
+                    if let Some(deadline) = s.animator.next_resume_deadline() {
+                        s.pingpong_timer_id = s.timer.start_deadline(Absolute {
+                            at: deadline,
+                            clock: Clock::Monotonic,
+                        });
                     }
                 }
                 // END REMOVE: demo — wifi glow

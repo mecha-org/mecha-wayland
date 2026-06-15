@@ -114,6 +114,8 @@ impl Timer {
         match event {
             IoEvent::Completed { token, result } => {
                 if let Some(active) = self.active_by_token.remove(token) {
+                    // io_uring timeouts return -ETIME.
+                    // result == 0 usually indicates the timer was explicitly canceled.
                     let is_timeout = *result == -libc::ETIME || *result == 0;
 
                     if is_timeout {

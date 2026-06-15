@@ -441,6 +441,14 @@ impl Wayland {
             );
             libc::sendmsg(fd, &mhdr, 0);
         }
+
+        // Close our copy of each fd — sendmsg with SCM_RIGHTS duplicates
+        // the fd into the compositor, but our original stays open.
+        for raw_fd in raw_fds {
+            unsafe {
+                libc::close(raw_fd);
+            }
+        }
     }
 }
 

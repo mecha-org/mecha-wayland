@@ -282,7 +282,9 @@ impl StatusBarState {
         let right_w = wifi_w + bluetooth_w + battery_w + GAP * (right_visible - 1.0).max(0.0);
 
         // ── clock (left aligned) ─────────────────────────────────────────
-        {
+        let right_x = win_w - PADDING - right_w;
+        let clock_w = self.clock.slot_width();
+        if clock_w > 0.0 && (PADDING + clock_w + GAP) <= right_x {
             let x: f32 = PADDING;
             let y: f32 = 0.0;
             let font = &atlas::UI_FONT_INTER_16;
@@ -298,7 +300,6 @@ impl StatusBarState {
         }
 
         // ── right icons ──────────────────────────────────────────────────
-        let right_x = win_w - PADDING - right_w;
         let icon_y = (BAR_HEIGHT as f32 - ICON_SIZE) * 0.5;
         let mut cursor = right_x;
 
@@ -322,11 +323,7 @@ impl StatusBarState {
             // REMOVE: demo — wifi glow
             let pulse = self.wifi_pulse_value;
             let glow = (pulse - 1.0) / 0.15;
-            let (cr, cg, cb) = animation::lerp_color(
-                (1.0, 1.0, 1.0),
-                (0.1, 0.85, 0.2),
-                glow,
-            );
+            let (cr, cg, cb) = animation::lerp_color((1.0, 1.0, 1.0), (0.1, 0.85, 0.2), glow);
             let icon_size = ICON_SIZE * pulse;
             if glow > 0.01 {
                 let outer_size = icon_size * 1.5;
@@ -388,8 +385,7 @@ impl StatusBarState {
 
             // REMOVE: charging overlay — use charging sprite variants instead
             if self.battery.state.charging {
-                let juice_w =
-                    JUICE_MAX_W * self.battery.state.pct as f32 / 100.0;
+                let juice_w = JUICE_MAX_W * self.battery.state.pct as f32 / 100.0;
                 renderer.send_command(DrawRect {
                     color: Color::rgb(0.2, 0.85, 0.2),
                     origin: Point::new(x + JUICE_X_PAD, icon_y + JUICE_Y_PAD),
@@ -548,7 +544,10 @@ fn main() {
         ))
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, ev: &wayland::WlCallbackEvent| {
-                let wayland::WlCallbackEvent::Done { id, callback_data: _ } = ev;
+                let wayland::WlCallbackEvent::Done {
+                    id,
+                    callback_data: _,
+                } = ev;
                 if CallbackId(*id) != s.pending_callback_id {
                     return;
                 }
@@ -615,31 +614,28 @@ fn main() {
         )
         // END REMOVE: demo — wifi glow
         .mount(
-            app::Module::new()
-                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
-                    if ev.id() != s.demo_timer_id?.0 {
-                        return None;
-                    }
-                    Some(s.demo.tick_battery())
-                }),
+            app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                if ev.id() != s.demo_timer_id?.0 {
+                    return None;
+                }
+                Some(s.demo.tick_battery())
+            }),
         )
         .mount(
-            app::Module::new()
-                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
-                    if ev.id() != s.demo_timer_id?.0 {
-                        return None;
-                    }
-                    Some(s.demo.tick_bluetooth())
-                }),
+            app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                if ev.id() != s.demo_timer_id?.0 {
+                    return None;
+                }
+                Some(s.demo.tick_bluetooth())
+            }),
         )
         .mount(
-            app::Module::new()
-                .on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
-                    if ev.id() != s.demo_timer_id?.0 {
-                        return None;
-                    }
-                    Some(s.demo.tick_wifi())
-                }),
+            app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {
+                if ev.id() != s.demo_timer_id?.0 {
+                    return None;
+                }
+                Some(s.demo.tick_wifi())
+            }),
         )
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, ev: &timer::TimerEvent| {

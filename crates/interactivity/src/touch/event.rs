@@ -9,7 +9,7 @@ pub enum SwipeDirection {
 
 /// Phase of a drag gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DragPhase {
+pub enum DragState {
     Start,
     Move,
     End,
@@ -54,7 +54,7 @@ pub enum TouchEvent {
     /// A continuous drag gesture.
     Drag {
         id: i32,
-        phase: DragPhase,
+        state: DragState,
         start_x: f64,
         start_y: f64,
         x: f64,

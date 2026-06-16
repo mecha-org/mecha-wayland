@@ -1,6 +1,6 @@
 mod event;
 
-pub use event::{DragPhase, SwipeDirection, TouchEvent};
+pub use event::{DragState, SwipeDirection, TouchEvent};
 
 use std::collections::HashMap;
 use wayland::TouchEvent as WlTouchEvent;
@@ -53,7 +53,7 @@ impl TouchState {
                 });
                 events.push(TouchEvent::Drag {
                     id: *id,
-                    phase: DragPhase::Start,
+                    state: DragState::Start,
                     start_x: *x,
                     start_y: *y,
                     x: *x,
@@ -88,7 +88,7 @@ impl TouchState {
                     });
                     events.push(TouchEvent::Drag {
                         id: *id,
-                        phase: DragPhase::Move,
+                        state: DragState::Move,
                         start_x,
                         start_y,
                         x: *x,
@@ -117,7 +117,7 @@ impl TouchState {
 
                     events.push(TouchEvent::Drag {
                         id: *id,
-                        phase: DragPhase::End,
+                        state: DragState::End,
                         start_x: active.start_x,
                         start_y: active.start_y,
                         x,
@@ -178,7 +178,7 @@ impl TouchState {
                 for (id, active) in &self.active_touches {
                     events.push(TouchEvent::Drag {
                         id: *id,
-                        phase: DragPhase::Cancel,
+                        state: DragState::Cancel,
                         start_x: active.start_x,
                         start_y: active.start_y,
                         x: active.last_x,

@@ -81,6 +81,7 @@ impl BatteryWidget {
     }
 
     // REMOVE: charging overlay — restore charging sprite selection here
+    // Charging sprites are dead code for now.
     pub fn sprite_region(&self) -> &'static SpriteRegion {
         let (normal, _charging) = Self::sprite_arrays();
         let idx = (self.state.pct / 10).min(10) as usize;

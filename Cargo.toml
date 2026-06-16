@@ -15,6 +15,8 @@ members = [
     "crates/animation",
     "crates/counter",
     "crates/interactivity",
+    "crates/launcher/status-bar",
+    "crates/animation",
 ]
 default-members = ["crates/ui"]
 resolver = "2"

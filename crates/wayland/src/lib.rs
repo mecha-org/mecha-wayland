@@ -283,7 +283,8 @@ impl Wayland {
                         self.process_messages(data);
                         self.submit_read();
                     } else if *result == 0 {
-                        eprintln!("[Wayland] connection closed by server");
+                        eprintln!("[Wayland] compositor disconnected, exiting");
+                        std::process::exit(1);
                     } else {
                         eprintln!("[Wayland] read error: {}", result);
                     }
@@ -439,6 +440,14 @@ impl Wayland {
                 raw_fds.len(),
             );
             libc::sendmsg(fd, &mhdr, 0);
+        }
+
+        // Close our copy of each fd — sendmsg with SCM_RIGHTS duplicates
+        // the fd into the compositor, but our original stays open.
+        for raw_fd in raw_fds {
+            unsafe {
+                libc::close(raw_fd);
+            }
         }
     }
 }

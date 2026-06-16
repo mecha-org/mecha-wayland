@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem::size_of};
+use std::mem::size_of;
 
 use glow::{HasContext, NativeBuffer, NativeProgram, NativeUniformLocation};
 use utils::{Color, Point, Rect, Size};
@@ -33,7 +33,7 @@ pub(crate) struct MonoSpriteQueue {
     u_viewport_inv_res_loc: Option<NativeUniformLocation>,
     u_tex_inv_size_loc: Option<NativeUniformLocation>,
     u_texture_loc: Option<NativeUniformLocation>,
-    batches: HashMap<TextureId, Vec<DrawMonochromeSprite>>,
+    sprites: Vec<DrawMonochromeSprite>,
 }
 
 // Interleaved vertex layout: aPos(2) aColor(4) aOrigin(3) aSize(2) aRegion(4) = 15 floats/vertex
@@ -159,21 +159,22 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
     }
 
     fn enqueue(&mut self, command: DrawMonochromeSprite) {
-        self.batches
-            .entry(command.texture_id)
-            .or_default()
-            .push(command);
+        self.sprites.push(command);
     }
 
     fn process(&mut self, ctx: &RenderContext) {
-        if self.batches.is_empty() {
+        let mut sprites = std::mem::take(&mut self.sprites);
+        if sprites.is_empty() {
             return;
         }
 
         let Some(program) = self.shader_program else {
-            self.batches.clear();
             return;
         };
+
+        // Back-to-front sort: farthest first, closest last — so closer
+        // sprites at higher z overwrite farther ones for correct blending.
+        sprites.sort_unstable_by(|a, b| a.z.total_cmp(&b.z));
 
         let gl = ctx.gl;
         let vp_w = ctx.viewport_width as f32;
@@ -206,24 +207,28 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
             gl.blend_func_separate(
                 glow::SRC_ALPHA,
                 glow::ONE_MINUS_SRC_ALPHA,
-                glow::ZERO,
                 glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
             );
 
             gl.active_texture(glow::TEXTURE0);
             gl.uniform_1_i32(self.u_texture_loc.as_ref(), 0);
 
-            for (tex_id, batch) in &mut self.batches {
-                if batch.is_empty() {
-                    continue;
-                }
-                let Some(gpu_tex) = ctx.textures.get(tex_id) else {
-                    batch.clear();
-                    continue;
+            let mut i = 0usize;
+            while i < sprites.len() {
+                let tex_id = sprites[i].texture_id;
+                let end = {
+                    let mut e = i + 1;
+                    while e < sprites.len() && sprites[e].texture_id == tex_id {
+                        e += 1;
+                    }
+                    e
                 };
 
-                // Back-to-front sort for correct alpha blending within each batch.
-                batch.sort_unstable_by(|a, b| a.z.total_cmp(&b.z));
+                let Some(gpu_tex) = ctx.textures.get(&tex_id) else {
+                    i = end;
+                    continue;
+                };
 
                 gl.bind_texture(glow::TEXTURE_2D, Some(gpu_tex.handle));
                 gl.uniform_2_f32(
@@ -232,6 +237,7 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
                     1.0 / gpu_tex.height as f32,
                 );
 
+                let batch = &sprites[i..end];
                 let verts = build_sprite_verts(batch);
                 gl.buffer_data_u8_slice(
                     glow::ARRAY_BUFFER,
@@ -239,9 +245,8 @@ impl CommandQueue<DrawMonochromeSprite> for MonoSpriteQueue {
                     glow::STREAM_DRAW,
                 );
                 gl.draw_arrays(glow::TRIANGLES, 0, (batch.len() * 6) as i32);
-                batch.clear();
+                i = end;
             }
-            self.batches.clear();
 
             gl.depth_mask(true);
             gl.disable(glow::DEPTH_TEST);

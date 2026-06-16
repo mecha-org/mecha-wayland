@@ -7,6 +7,15 @@ pub enum SwipeDirection {
     Down,
 }
 
+/// Phase of a drag gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragPhase {
+    Start,
+    Move,
+    End,
+    Cancel,
+}
+
 /// High-level touch event emitted by the interactivity module.
 #[derive(Clone, Debug)]
 pub enum TouchEvent {
@@ -40,6 +49,20 @@ pub enum TouchEvent {
         end_time: u32,
         duration_ms: u32,
         velocity: f64, // pixels per millisecond
+    },
+
+    /// A continuous drag gesture.
+    Drag {
+        id: i32,
+        phase: DragPhase,
+        start_x: f64,
+        start_y: f64,
+        x: f64,
+        y: f64,
+        delta_x: f64,
+        delta_y: f64,
+        total_dx: f64,
+        total_dy: f64,
     },
 
     /// The compositor cancelled the active touch points.

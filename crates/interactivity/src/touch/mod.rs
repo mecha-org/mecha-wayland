@@ -1,6 +1,6 @@
 mod event;
 
-pub use event::{SwipeDirection, TouchEvent};
+pub use event::{DragPhase, SwipeDirection, TouchEvent};
 
 use std::collections::HashMap;
 use wayland::TouchEvent as WlTouchEvent;
@@ -51,15 +51,33 @@ impl TouchState {
                     y: *y,
                     time: *time,
                 });
+                events.push(TouchEvent::Drag {
+                    id: *id,
+                    phase: DragPhase::Start,
+                    start_x: *x,
+                    start_y: *y,
+                    x: *x,
+                    y: *y,
+                    delta_x: 0.0,
+                    delta_y: 0.0,
+                    total_dx: 0.0,
+                    total_dy: 0.0,
+                });
             }
 
             WlTouchEvent::Motion { id, x, y, time } => {
                 if let Some(active) = self.active_touches.get_mut(id) {
                     let dx = x - active.last_x;
                     let dy = y - active.last_y;
+                    let total_dx = x - active.start_x;
+                    let total_dy = y - active.start_y;
+                    let start_x = active.start_x;
+                    let start_y = active.start_y;
+
                     active.last_x = *x;
                     active.last_y = *y;
                     active.last_time = *time;
+
                     events.push(TouchEvent::Motion {
                         id: *id,
                         x: *x,
@@ -67,6 +85,18 @@ impl TouchState {
                         dx,
                         dy,
                         time: *time,
+                    });
+                    events.push(TouchEvent::Drag {
+                        id: *id,
+                        phase: DragPhase::Move,
+                        start_x,
+                        start_y,
+                        x: *x,
+                        y: *y,
+                        delta_x: dx,
+                        delta_y: dy,
+                        total_dx,
+                        total_dy,
                     });
                 }
             }
@@ -80,6 +110,22 @@ impl TouchState {
                         x,
                         y,
                         time: *time,
+                    });
+
+                    let total_dx = x - active.start_x;
+                    let total_dy = y - active.start_y;
+
+                    events.push(TouchEvent::Drag {
+                        id: *id,
+                        phase: DragPhase::End,
+                        start_x: active.start_x,
+                        start_y: active.start_y,
+                        x,
+                        y,
+                        delta_x: 0.0,
+                        delta_y: 0.0,
+                        total_dx,
+                        total_dy,
                     });
 
                     let dx = x - active.start_x;
@@ -129,6 +175,20 @@ impl TouchState {
             }
 
             WlTouchEvent::Cancel => {
+                for (id, active) in &self.active_touches {
+                    events.push(TouchEvent::Drag {
+                        id: *id,
+                        phase: DragPhase::Cancel,
+                        start_x: active.start_x,
+                        start_y: active.start_y,
+                        x: active.last_x,
+                        y: active.last_y,
+                        delta_x: 0.0,
+                        delta_y: 0.0,
+                        total_dx: active.last_x - active.start_x,
+                        total_dy: active.last_y - active.start_y,
+                    });
+                }
                 self.active_touches.clear();
                 events.push(TouchEvent::Cancel);
             }

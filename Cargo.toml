@@ -12,6 +12,7 @@ members = [
     "crates/utils",
     "crates/ui",
     "crates/ui-macro",
+    "crates/animation",
     "crates/counter",
     "crates/interactivity",
 ]

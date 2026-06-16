@@ -1,0 +1,12 @@
+[package]
+name = "animation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc = "0.2"
+smallvec = "1"
+oklab = "1"
+
+[dev-dependencies]
+crossterm = "0.28"

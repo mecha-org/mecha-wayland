@@ -5,8 +5,7 @@ mod atlas {
 }
 mod widgets;
 
-use animation::AnimationId;
-use animation::Animator;
+use animation::Animated;
 use app::prelude::*;
 use drm_fourcc::DrmFourcc;
 use std::os::fd::AsRawFd;
@@ -136,9 +135,7 @@ struct StatusBarState {
     needs_redraw: bool,
     pending_callback_id: CallbackId,
     // REMOVE: demo — wifi glow
-    animator: Animator,
-    wifi_pulse_id: Option<AnimationId>,
-    wifi_pulse_value: f32,
+    wifi_pulse: Animated<f32>,
     pingpong_timer_id: TimerId,
     // END REMOVE: demo — wifi glow
 }
@@ -158,14 +155,11 @@ impl Default for StatusBarState {
         renderer.init_command_queue::<DrawText>();
 
         // REMOVE: demo — wifi glow
-        let mut animator = Animator::new();
-        let wifi_pulse_id = animator.animate_pingpong(
-            animation::AnimationConfig::immediate(
-                1.0,
-                1.15,
-                Duration::from_millis(1500),
-                animation::Easing::EaseInOut,
-            ),
+        let wifi_pulse = Animated::new_pingpong(
+            1.0,
+            1.15,
+            Duration::from_millis(1500),
+            animation::Easing::EaseInOut,
             Duration::from_secs(3),
         );
         // END REMOVE: demo — wifi glow
@@ -191,9 +185,7 @@ impl Default for StatusBarState {
             clock_timer_id: None,
             needs_redraw: false,
             pending_callback_id: CallbackId(0),
-            animator,
-            wifi_pulse_id: Some(wifi_pulse_id),
-            wifi_pulse_value: 1.0,
+            wifi_pulse,
             pingpong_timer_id: TimerId(0),
         }
     }
@@ -248,7 +240,7 @@ impl StatusBarState {
         self.needs_redraw = true;
         if self.pending_callback_id == CallbackId(0) {
             self.needs_redraw = false;
-            if !self.try_redraw(self.animator.is_active()) {
+            if !self.try_redraw(self.wifi_pulse.is_animating()) {
                 self.needs_redraw = true;
             }
         }
@@ -321,7 +313,7 @@ impl StatusBarState {
             let x = cursor;
             let region = self.wifi.sprite_region();
             // REMOVE: demo — wifi glow
-            let pulse = self.wifi_pulse_value;
+            let pulse = self.wifi_pulse.get();
             let glow = (pulse - 1.0) / 0.15;
             let (cr, cg, cb) = animation::lerp_color((1.0, 1.0, 1.0), (0.1, 0.85, 0.2), glow);
             let icon_size = ICON_SIZE * pulse;
@@ -539,7 +531,7 @@ fn main() {
                 s.buf_in_flight = [false, false];
 
                 s.wayland.layer_surface.ack_configure(*id, *serial);
-                s.try_redraw(s.animator.is_active());
+                s.try_redraw(s.wifi_pulse.is_animating());
             },
         ))
         .mount(
@@ -553,11 +545,7 @@ fn main() {
                 }
                 s.pending_callback_id = CallbackId(0);
 
-                if let Some(wifi_id) = s.wifi_pulse_id {
-                    s.wifi_pulse_value = s.animator.get(wifi_id);
-                }
-
-                let chain = s.animator.is_active();
+                let chain = s.wifi_pulse.is_animating();
                 if s.needs_redraw || chain {
                     s.needs_redraw = false;
                     if !s.try_redraw(chain) {
@@ -589,11 +577,8 @@ fn main() {
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &app::PrePoll| {
                 // REMOVE: demo — wifi glow
-                if let Some(id) = s.wifi_pulse_id {
-                    s.wifi_pulse_value = s.animator.get(id);
-                }
-                if !s.animator.is_active() && s.pingpong_timer_id == TimerId(0) {
-                    if let Some(deadline) = s.animator.next_resume_deadline() {
+                if !s.wifi_pulse.is_animating() && s.pingpong_timer_id == TimerId(0) {
+                    if let Some(deadline) = s.wifi_pulse.resume_deadline() {
                         s.pingpong_timer_id = s.timer.start_deadline(Absolute {
                             at: deadline,
                             clock: Clock::Monotonic,

@@ -36,7 +36,7 @@ dependencies = [
  "crossterm",
  "libc",
  "oklab",
- "smallvec",
+ "utils",
 ]
 
 [[package]]

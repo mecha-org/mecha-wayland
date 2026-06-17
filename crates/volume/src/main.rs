@@ -21,7 +21,7 @@ use ui::{RenderCommand, Widget, WidgetTree};
 
 use ::renderer::commands::{ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
 use io_ring::Ring;
-use timer::{Timer, TimerSettings};
+use timer::{Timer, Relative};
 use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
@@ -321,7 +321,7 @@ fn main() {
             }),
         )
         .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
-            s.timer.start_timer(TimerSettings {
+            s.timer.start_timer(Relative {
                 duration: Duration::from_secs(2),
                 repeat: true,
             });
@@ -416,6 +416,7 @@ fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
                 });
             }
             RenderCommand::DrawText { atlas_id: None, .. } => {}
+            RenderCommand::RegisterHitArea { .. } => {}
         }
     }
 

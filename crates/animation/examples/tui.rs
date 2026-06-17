@@ -1,7 +1,7 @@
 use std::io::{self, Write, stdout};
 use std::time::{Duration, Instant};
 
-use animation::{AnimationConfig, Animator, Easing};
+use animation::{Animated, AnimationConfig, Easing};
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal;
 use crossterm::{cursor, execute};
@@ -30,38 +30,44 @@ fn color_bar(val: f32, width: usize) -> String {
 
 macro_rules! L { ($($arg:tt)*) => { format!($($arg)*) + "\r\n" }; }
 
-fn maybe_bar(
-    opt: Option<animation::AnimationId>,
-    anim: &Animator,
-    label: &str,
-    wb: usize,
-) -> String {
+fn maybe_bar(opt: &Option<Animated<f32>>, label: &str, wb: usize) -> String {
     match opt {
-        Some(id) => bar(label, anim.get(id), wb),
+        Some(a) => bar(label, a.get(), wb),
         None => bar("[cancelled] ", 0.0, wb),
     }
 }
 
-fn bump_bar(opt: Option<animation::AnimationId>, anim: &Animator, wb: usize) -> String {
+fn bump_bar(opt: &Option<Animated<f32>>, wb: usize) -> String {
     match opt {
-        Some(id) => {
-            let raw = anim.get(id);
+        Some(a) => {
+            let raw = a.get();
             bar(&format!("7 raw:{raw:.2}"), (raw / 3.0).clamp(0.0, 1.0), wb)
         }
         None => bar("[cancelled] ", 0.0, wb),
     }
 }
 
-fn maybe_color(opt: Option<animation::AnimationId>, anim: &Animator, wb: usize) -> String {
+fn maybe_color(opt: &Option<Animated<f32>>, wb: usize) -> String {
     match opt {
-        Some(id) => format!("9           {}", color_bar(anim.get(id), wb)),
+        Some(a) => format!("9           {}", color_bar(a.get(), wb)),
         None => bar("[cancelled] ", 0.0, wb),
     }
 }
 
+fn any_active(ids: &TrackIds) -> bool {
+    ids.lin.as_ref().map_or(false, |a| a.is_animating())
+        || ids.ein.as_ref().map_or(false, |a| a.is_animating())
+        || ids.eout.as_ref().map_or(false, |a| a.is_animating())
+        || ids.eio.as_ref().map_or(false, |a| a.is_animating())
+        || ids.one.as_ref().map_or(false, |a| a.is_animating())
+        || ids.pp.as_ref().map_or(false, |a| a.is_animating())
+        || ids.by.as_ref().map_or(false, |a| a.is_animating())
+        || ids.del.as_ref().map_or(false, |a| a.is_animating())
+        || ids.clr.as_ref().map_or(false, |a| a.is_animating())
+}
+
 fn draw(
     w: &mut impl Write,
-    anim: &Animator,
     ids: &TrackIds,
     start: Instant,
     cols: u16,
@@ -81,25 +87,25 @@ fn draw(
             "{:<w$}",
             format!(
                 "ANIMATION TUI  t={t:.1}s  active={}{mode_hint}",
-                anim.is_active()
+                any_active(ids)
             ),
             w = cols as usize
         ),
         L!("═══ EASING — 4s one-shot, delay=0  [keys 1-4]"),
-        L!("{}", maybe_bar(ids.lin, anim, "1 Linear", wb)),
-        L!("{}", maybe_bar(ids.ein, anim, "2 EaseIn", wb)),
-        L!("{}", maybe_bar(ids.eout, anim, "3 EaseOut", wb)),
-        L!("{}", maybe_bar(ids.eio, anim, "4 EaseInOut", wb)),
+        L!("{}", maybe_bar(&ids.lin, "1 Linear", wb)),
+        L!("{}", maybe_bar(&ids.ein, "2 EaseIn", wb)),
+        L!("{}", maybe_bar(&ids.eout, "3 EaseOut", wb)),
+        L!("{}", maybe_bar(&ids.eio, "4 EaseInOut", wb)),
         L!("═══ ONE-SHOT — 3s, EaseInOut, delay=0  [key 5]"),
-        L!("{}", maybe_bar(ids.one, anim, "5", wb)),
+        L!("{}", maybe_bar(&ids.one, "5", wb)),
         L!("═══ PING-PONG — 1.5s/1.5s, EaseInOut, 2s idle, delay=0  [key 6]"),
-        L!("{}", maybe_bar(ids.pp, anim, "6", wb)),
-        L!("═══ ANIMATE-BY — \u{b1}0.3 bump, EaseOut 300ms, cap 3.0  [+/- bump, key 7]"),
-        L!("{}", bump_bar(ids.by, anim, wb)),
+        L!("{}", maybe_bar(&ids.pp, "6", wb)),
+        L!("═══ ANIMATE-BY — ±0.3 bump, EaseOut 300ms, cap 3.0  [+/- bump, key 7]"),
+        L!("{}", bump_bar(&ids.by, wb)),
         L!("═══ DELAY — 2s delay, 3s EaseInOut one-shot  [key 8]"),
-        L!("{}", maybe_bar(ids.del, anim, "8", wb)),
-        L!("═══ COLOR LERP — red\u{2192}blue, 4s EaseInOut ping-pong, 1s idle  [key 9]"),
-        L!("{}", maybe_color(ids.clr, anim, wb)),
+        L!("{}", maybe_bar(&ids.del, "8", wb)),
+        L!("═══ COLOR LERP — red→blue, 4s EaseInOut ping-pong, 1s idle  [key 9]"),
+        L!("{}", maybe_color(&ids.clr, wb)),
         L!("─── +/-:bump  c:cancel  r:restart  q:quit ───"),
     );
 
@@ -115,19 +121,19 @@ enum Mode {
 }
 
 struct TrackIds {
-    lin: Option<animation::AnimationId>,
-    ein: Option<animation::AnimationId>,
-    eout: Option<animation::AnimationId>,
-    eio: Option<animation::AnimationId>,
-    one: Option<animation::AnimationId>,
-    pp: Option<animation::AnimationId>,
-    by: Option<animation::AnimationId>,
-    del: Option<animation::AnimationId>,
-    clr: Option<animation::AnimationId>,
+    lin: Option<Animated<f32>>,
+    ein: Option<Animated<f32>>,
+    eout: Option<Animated<f32>>,
+    eio: Option<Animated<f32>>,
+    one: Option<Animated<f32>>,
+    pp: Option<Animated<f32>>,
+    by: Option<Animated<f32>>,
+    del: Option<Animated<f32>>,
+    clr: Option<Animated<f32>>,
 }
 
 impl TrackIds {
-    fn at(&mut self, digit: char) -> Option<&mut Option<animation::AnimationId>> {
+    fn at(&mut self, digit: char) -> Option<&mut Option<Animated<f32>>> {
         match digit {
             '1' => Some(&mut self.lin),
             '2' => Some(&mut self.ein),
@@ -143,74 +149,76 @@ impl TrackIds {
     }
 }
 
-fn create_one(anim: &mut Animator, d: char) -> animation::AnimationId {
+fn create_one(d: char) -> Animated<f32> {
     match d {
-        '1' => anim.animate(AnimationConfig::immediate(
+        '1' => Animated::new(
             0.0,
             1.0,
-            Duration::from_secs(4),
-            Easing::Linear,
-        )),
-        '2' => anim.animate(AnimationConfig::immediate(
+            AnimationConfig::new(Duration::from_secs(4), Easing::Linear),
+        ),
+        '2' => Animated::new(
             0.0,
             1.0,
-            Duration::from_secs(4),
-            Easing::EaseIn,
-        )),
-        '3' => anim.animate(AnimationConfig::immediate(
+            AnimationConfig::new(Duration::from_secs(4), Easing::EaseIn),
+        ),
+        '3' => Animated::new(
             0.0,
             1.0,
-            Duration::from_secs(4),
-            Easing::EaseOut,
-        )),
-        '4' => anim.animate(AnimationConfig::immediate(
+            AnimationConfig::new(Duration::from_secs(4), Easing::EaseOut),
+        ),
+        '4' => Animated::new(
             0.0,
             1.0,
-            Duration::from_secs(4),
+            AnimationConfig::new(Duration::from_secs(4), Easing::EaseInOut),
+        ),
+        '5' => Animated::new(
+            0.0,
+            1.0,
+            AnimationConfig::new(Duration::from_secs(3), Easing::EaseInOut),
+        ),
+        '6' => Animated::new_pingpong(
+            0.0,
+            1.0,
+            Duration::from_millis(1500),
             Easing::EaseInOut,
-        )),
-        '5' => anim.animate(AnimationConfig::immediate(
-            0.0,
-            1.0,
-            Duration::from_secs(3),
-            Easing::EaseInOut,
-        )),
-        '6' => anim.animate_pingpong(
-            AnimationConfig::immediate(0.0, 1.0, Duration::from_millis(1500), Easing::EaseInOut),
             Duration::from_secs(2),
         ),
-        '7' => anim.animate(AnimationConfig::immediate(
+        '7' => Animated::new(
             0.0,
             0.0,
-            Duration::from_secs(1000),
-            Easing::Linear,
-        )),
-        '8' => anim.animate(AnimationConfig {
-            from: 0.0,
-            to: 1.0,
-            duration: Duration::from_secs(3),
-            easing: Easing::EaseInOut,
-            delay: Duration::from_secs(2),
-        }),
-        '9' => anim.animate_pingpong(
-            AnimationConfig::immediate(0.0, 1.0, Duration::from_secs(4), Easing::EaseInOut),
+            AnimationConfig::new(Duration::from_secs(1000), Easing::Linear),
+        ),
+        '8' => Animated::new(
+            0.0,
+            1.0,
+            AnimationConfig {
+                duration: Duration::from_secs(3),
+                easing: Easing::EaseInOut,
+                delay: Duration::from_secs(2),
+            },
+        ),
+        '9' => Animated::new_pingpong(
+            0.0,
+            1.0,
+            Duration::from_secs(4),
+            Easing::EaseInOut,
             Duration::from_secs(1),
         ),
         _ => unreachable!(),
     }
 }
 
-fn create_all(anim: &mut Animator) -> TrackIds {
+fn create_all() -> TrackIds {
     TrackIds {
-        lin: Some(create_one(anim, '1')),
-        ein: Some(create_one(anim, '2')),
-        eout: Some(create_one(anim, '3')),
-        eio: Some(create_one(anim, '4')),
-        one: Some(create_one(anim, '5')),
-        pp: Some(create_one(anim, '6')),
-        by: Some(create_one(anim, '7')),
-        del: Some(create_one(anim, '8')),
-        clr: Some(create_one(anim, '9')),
+        lin: Some(create_one('1')),
+        ein: Some(create_one('2')),
+        eout: Some(create_one('3')),
+        eio: Some(create_one('4')),
+        one: Some(create_one('5')),
+        pp: Some(create_one('6')),
+        by: Some(create_one('7')),
+        del: Some(create_one('8')),
+        clr: Some(create_one('9')),
     }
 }
 
@@ -221,13 +229,12 @@ fn main() -> io::Result<()> {
 
     let (cols, _rows) = terminal::size()?;
 
-    let mut anim = Animator::new();
-    let mut ids = create_all(&mut anim);
+    let mut ids = create_all();
     let start = Instant::now();
     let mut mode = Mode::Normal;
 
     loop {
-        draw(&mut stdout, &anim, &ids, start, cols, mode)?;
+        draw(&mut stdout, &ids, start, cols, mode)?;
 
         while event::poll(Duration::ZERO)? {
             match event::read()? {
@@ -240,71 +247,63 @@ fn main() -> io::Result<()> {
                     (Mode::Normal, KeyCode::Char('c')) => mode = Mode::Cancel,
                     (Mode::Normal, KeyCode::Char('r')) => mode = Mode::Restart,
                     (Mode::Normal, KeyCode::Char('+')) => {
-                        if let Some(id) = ids.by {
-                            let v = anim.get(id);
+                        if let Some(ref mut a) = ids.by {
+                            let v = a.get();
                             if v < 3.0 {
-                                anim.animate_by(
-                                    id,
-                                    0.3,
-                                    Duration::from_millis(300),
-                                    Easing::EaseOut,
+                                a.animate_to(
+                                    v + 0.3,
+                                    AnimationConfig::new(
+                                        Duration::from_millis(300),
+                                        Easing::EaseOut,
+                                    ),
                                 );
                             }
                         }
                     }
                     (Mode::Normal, KeyCode::Char('-')) => {
-                        if let Some(id) = ids.by {
-                            let v = anim.get(id);
+                        if let Some(ref mut a) = ids.by {
+                            let v = a.get();
                             if v > 0.0 {
-                                anim.animate_by(
-                                    id,
-                                    -0.3,
-                                    Duration::from_millis(300),
-                                    Easing::EaseOut,
+                                a.animate_to(
+                                    v - 0.3,
+                                    AnimationConfig::new(
+                                        Duration::from_millis(300),
+                                        Easing::EaseOut,
+                                    ),
                                 );
                             }
                         }
                     }
 
                     (Mode::Cancel, KeyCode::Char('c')) => {
-                        for slot in [
-                            &mut ids.lin,
-                            &mut ids.ein,
-                            &mut ids.eout,
-                            &mut ids.eio,
-                            &mut ids.one,
-                            &mut ids.pp,
-                            &mut ids.by,
-                            &mut ids.del,
-                            &mut ids.clr,
-                        ] {
-                            if let Some(id) = slot.take() {
-                                anim.cancel(id);
-                            }
-                        }
+                        ids = TrackIds {
+                            lin: None,
+                            ein: None,
+                            eout: None,
+                            eio: None,
+                            one: None,
+                            pp: None,
+                            by: None,
+                            del: None,
+                            clr: None,
+                        };
                         mode = Mode::Normal;
                     }
                     (Mode::Cancel, KeyCode::Char(d)) if d.is_ascii_digit() => {
                         if let Some(slot) = ids.at(d) {
-                            if let Some(id) = slot.take() {
-                                anim.cancel(id);
-                            }
+                            *slot = None;
                         }
                         mode = Mode::Normal;
                     }
                     (Mode::Cancel, _) => mode = Mode::Normal,
 
                     (Mode::Restart, KeyCode::Char('r')) => {
-                        anim = Animator::new();
-                        ids = create_all(&mut anim);
+                        ids = create_all();
                         mode = Mode::Normal;
                     }
                     (Mode::Restart, KeyCode::Char(d)) if d.is_ascii_digit() => {
                         if let Some(slot) = ids.at(d) {
-                            if let Some(id) = slot.take() {
-                                anim.cancel(id);
-                            }
-                            *slot = Some(create_one(&mut anim, d));
+                            *slot = Some(create_one(d));
                         }
                         mode = Mode::Normal;
                     }

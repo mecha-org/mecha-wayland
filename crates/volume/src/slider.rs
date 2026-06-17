@@ -5,13 +5,13 @@ use ui::Point;
 
 use ui::Widget;
 use ui::WidgetTree;
-use ui::widgets::{Div, Rect};
+use ui::widgets::{Div};
 use ui::{Render, RenderCommand};
 
 #[ui::widget]
 pub struct Slider {
     #[widget(child)]
-    pub div: Div<Rect>,
+    pub div: Div<Div<()>>,
     pub value: f32,
 }
 
@@ -37,13 +37,13 @@ impl Slider {
             ..Default::default()
         };
         // foreground rect
-        let mut rect = Rect::new(Style {
+        let mut rect = Div::new(Style {
             size: Size {
                 width: percent(1.0_f32),
                 height: percent(value),
             },
             ..Default::default()
-        });
+        }, ());
         rect.color = Color::rgb(0.5, 0.5, 0.5); // foreground
         let mut div = Div::new(div_style, rect);
         div.color = Color::rgb(0.2, 0.2, 0.2); // background

@@ -63,6 +63,15 @@ pub trait WidgetList {
     fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand>;
 }
 
+impl WidgetList for () {
+    fn build_children(&mut self, _: &mut WidgetTree) -> Vec<NodeId> {
+        vec![]
+    }
+    fn render_children(&self, _: &WidgetTree, _: Point) -> Vec<RenderCommand> {
+        vec![]
+    }
+}
+
 impl<W: Widget> WidgetList for W {
     fn build_children(&mut self, tree: &mut WidgetTree) -> Vec<NodeId> {
         vec![self.build_tree(tree)]

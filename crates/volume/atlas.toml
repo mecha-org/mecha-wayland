@@ -1,0 +1,13 @@
+[[atlas]]
+name = "ui"
+
+[[atlas.sprite]]
+name = "icon"
+path = "assets/icon.svg"
+width = 128
+height = 42
+
+[[atlas.font]]
+name = "inter"
+path = "../../assets/Inter-Regular.ttf"
+sizes = [14, 16, 24, 100]

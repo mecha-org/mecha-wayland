@@ -21,7 +21,7 @@ use ui::{RenderCommand, Widget, WidgetTree};
 
 use ::renderer::commands::{ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
 use io_ring::Ring;
-use timer::{Timer, Relative};
+use timer::{Relative, Timer};
 use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;

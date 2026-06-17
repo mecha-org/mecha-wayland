@@ -14,6 +14,7 @@ members = [
     "crates/ui-macro",
     "crates/animation",
     "crates/counter",
+    "crates/volume",
     "crates/interactivity",
     "crates/launcher/status-bar",
     "crates/animation",

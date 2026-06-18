@@ -2,7 +2,7 @@ extern crate self as ui;
 
 use assets::BakedFont;
 use taffy::{AvailableSpace, Layout, NodeId, Size, Style, TaffyTree};
-use utils::{Color, Size as USize, Rect};
+use utils::{Color, Rect, Size as USize};
 
 pub use utils::Point;
 
@@ -13,9 +13,13 @@ pub mod widgets;
 pub type WidgetTree = TaffyTree<Box<dyn Measure>>;
 
 pub fn compute_layout(tree: &mut WidgetTree, node: NodeId, available_space: Size<AvailableSpace>) {
-    tree.compute_layout_with_measure(node, available_space, |known_dims, avail, _node_id, ctx, _style| {
-        ctx.map_or(Size::ZERO, |m| m.measure(known_dims, avail))
-    })
+    tree.compute_layout_with_measure(
+        node,
+        available_space,
+        |known_dims, avail, _node_id, ctx, _style| {
+            ctx.map_or(Size::ZERO, |m| m.measure(known_dims, avail))
+        },
+    )
     .unwrap();
 }
 
@@ -44,7 +48,11 @@ pub enum RenderCommand {
 }
 
 pub trait Measure {
-    fn measure(&self, known_dimensions: Size<Option<f32>>, available_space: Size<AvailableSpace>) -> Size<f32>;
+    fn measure(
+        &self,
+        known_dimensions: Size<Option<f32>>,
+        available_space: Size<AvailableSpace>,
+    ) -> Size<f32>;
 }
 
 pub trait Render {

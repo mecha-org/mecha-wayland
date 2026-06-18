@@ -73,7 +73,12 @@ pub fn pack_atlas(toml_path: &Path, out_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn pack_one_atlas(atlas: &AtlasEntry, base_dir: &Path, out_dir: &Path, atlas_id: u32) -> Result<()> {
+fn pack_one_atlas(
+    atlas: &AtlasEntry,
+    base_dir: &Path,
+    out_dir: &Path,
+    atlas_id: u32,
+) -> Result<()> {
     // ── Load sprites ──────────────────────────────────────────────────────────
     let mut sprites: Vec<SpriteImage> = Vec::new();
     for entry in &atlas.sprite {

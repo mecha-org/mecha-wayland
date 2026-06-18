@@ -54,11 +54,7 @@ impl ExtSessionLockSurfaceV1 {
 
     pub fn ack_configure(&self, id: u32, serial: u32) {
         let h = Handle::<proto::ExtSessionLockSurfaceV1>::new(id);
-        send(
-            &self.conn,
-            &h,
-            &proto::request::AckConfigure { serial },
-        );
+        send(&self.conn, &h, &proto::request::AckConfigure { serial });
     }
 
     pub fn process(&mut self, raw: &WaylandRawEvent) -> Option<ExtSessionLockSurfaceV1Event> {

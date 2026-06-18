@@ -1,7 +1,7 @@
 use taffy::prelude::*;
 use taffy::{Layout, Size, Style};
-use ui::{self, Render, RenderCommand, Widget, WidgetList, WidgetTree, compute_layout, widget};
 use ui::widgets::{Div, Text};
+use ui::{self, Render, RenderCommand, Widget, WidgetList, WidgetTree, compute_layout, widget};
 
 /// A generic container widget built with the macro — exercises the generic
 /// widget + #[widget(child)] path end-to-end.
@@ -70,7 +70,9 @@ impl<T: Widget> Card2<T> {
 }
 
 impl<T: Widget> Render for Card2<T> {
-    fn render(&self, _layout: &Layout, _abs_pos: ui::Point) -> Vec<RenderCommand> { vec![] }
+    fn render(&self, _layout: &Layout, _abs_pos: ui::Point) -> Vec<RenderCommand> {
+        vec![]
+    }
 }
 
 #[test]

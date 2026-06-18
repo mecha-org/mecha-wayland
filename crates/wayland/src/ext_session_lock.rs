@@ -29,7 +29,6 @@ impl ExtSessionLockV1 {
         self.handle = Handle::new(id);
     }
 
-
     pub fn destroy(&self) {
         send(&self.conn, &self.handle, &proto::request::Destroy);
     }

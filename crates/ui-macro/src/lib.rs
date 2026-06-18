@@ -1,7 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Field, Fields, Ident, ItemStruct, parse::Parse, parse::ParseStream, parse_macro_input, parse_quote};
+use syn::{
+    Field, Fields, Ident, ItemStruct, parse::Parse, parse::ParseStream, parse_macro_input,
+    parse_quote,
+};
 
 enum WidgetArg {
     None,
@@ -16,7 +19,10 @@ impl Parse for WidgetArg {
         let ident: Ident = input.parse()?;
         match ident.to_string().as_str() {
             "measure" => Ok(WidgetArg::Measure),
-            other => Err(syn::Error::new(ident.span(), format!("unknown #[widget] arg `{other}`; expected `measure`"))),
+            other => Err(syn::Error::new(
+                ident.span(),
+                format!("unknown #[widget] arg `{other}`; expected `measure`"),
+            )),
         }
     }
 }
@@ -108,8 +114,7 @@ pub fn widget(attr: TokenStream, input: TokenStream) -> TokenStream {
 
 fn is_widget_child(field: &Field) -> bool {
     field.attrs.iter().any(|a| {
-        a.path().is_ident("widget")
-            && a.parse_args::<Ident>().map_or(false, |i| i == "child")
+        a.path().is_ident("widget") && a.parse_args::<Ident>().map_or(false, |i| i == "child")
     })
 }
 

@@ -33,22 +33,31 @@ impl Text {
 
     pub fn set_text(&mut self, tree: &mut WidgetTree, text: String) {
         self.text = text;
-        tree.set_node_context(self.node_id, Some(Box::new(self.clone()))).unwrap();
+        tree.set_node_context(self.node_id, Some(Box::new(self.clone())))
+            .unwrap();
         tree.mark_dirty(self.node_id).unwrap();
     }
 
     pub fn set_font(&mut self, tree: &mut WidgetTree, font: Option<&'static BakedFont>) {
         self.font = font;
-        tree.set_node_context(self.node_id, Some(Box::new(self.clone()))).unwrap();
+        tree.set_node_context(self.node_id, Some(Box::new(self.clone())))
+            .unwrap();
         tree.mark_dirty(self.node_id).unwrap();
     }
 }
 
 impl Measure for Text {
-    fn measure(&self, _known_dimensions: Size<Option<f32>>, _available_space: Size<AvailableSpace>) -> Size<f32> {
+    fn measure(
+        &self,
+        _known_dimensions: Size<Option<f32>>,
+        _available_space: Size<AvailableSpace>,
+    ) -> Size<f32> {
         match self.font {
             None => Size::ZERO,
-            Some(font) => Size { width: font.measure_width(&self.text), height: font.line_height },
+            Some(font) => Size {
+                width: font.measure_width(&self.text),
+                height: font.line_height,
+            },
         }
     }
 }

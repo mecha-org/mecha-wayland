@@ -8,7 +8,15 @@ use utils::Color;
 static TEST_FONT: BakedFont = BakedFont {
     size: 16.0,
     line_height: 20.0,
-    glyphs: [GlyphInfo { x: 0.0, y: 0.0, w: 8.0, h: 14.0, bearing_x: 0.0, bearing_y: 11.0, advance: 10.0 }; 95],
+    glyphs: [GlyphInfo {
+        x: 0.0,
+        y: 0.0,
+        w: 8.0,
+        h: 14.0,
+        bearing_x: 0.0,
+        bearing_y: 11.0,
+        advance: 10.0,
+    }; 95],
 };
 
 #[test]
@@ -24,7 +32,10 @@ fn text_build_tree_registers_node() {
 fn text_layout_produces_correct_size() {
     let mut tree = WidgetTree::new();
     let style = Style {
-        size: Size { width: length(100.0_f32), height: length(50.0_f32) },
+        size: Size {
+            width: length(100.0_f32),
+            height: length(50.0_f32),
+        },
         ..Style::default()
     };
     let mut text = Text::new(style);
@@ -39,8 +50,14 @@ fn text_layout_produces_correct_size() {
 fn text_placeholder_measure_returns_zero() {
     let text = Text::placeholder();
     let result = text.measure(
-        Size { width: None, height: None },
-        Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+        Size {
+            width: None,
+            height: None,
+        },
+        Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
     );
     assert_eq!(result, Size::ZERO);
 }
@@ -61,7 +78,13 @@ fn text_render_emits_draw_text_with_correct_fields() {
 
     assert_eq!(commands.len(), 1);
     match &commands[0] {
-        RenderCommand::DrawText { font, text: t, origin, color, .. } => {
+        RenderCommand::DrawText {
+            font,
+            text: t,
+            origin,
+            color,
+            ..
+        } => {
             assert!(std::ptr::eq(*font as *const _, &TEST_FONT as *const _));
             assert_eq!(t, "hi");
             assert_eq!(origin.x(), abs_pos.x());
@@ -79,8 +102,14 @@ fn text_measure_uses_font_metrics() {
     text.text = "ab".to_string(); // 2 glyphs × advance 10.0 = 20.0 wide
 
     let result = text.measure(
-        Size { width: None, height: None },
-        Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+        Size {
+            width: None,
+            height: None,
+        },
+        Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
     );
     assert_eq!(result.width, 20.0);
     assert_eq!(result.height, TEST_FONT.line_height);

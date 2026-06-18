@@ -10,7 +10,10 @@ fn div_set_style_triggers_layout_recompute() {
     use ui::widgets::Div;
 
     let style = Style {
-        size: Size { width: length(100.0_f32), height: length(50.0_f32) },
+        size: Size {
+            width: length(100.0_f32),
+            height: length(50.0_f32),
+        },
         ..Style::default()
     };
     let mut div = Div::new(style, (ui::widgets::Text::placeholder(),));
@@ -20,7 +23,10 @@ fn div_set_style_triggers_layout_recompute() {
     assert_eq!(tree.layout(id).unwrap().size.width, 100.0);
 
     let new_style = Style {
-        size: Size { width: length(200.0_f32), height: length(80.0_f32) },
+        size: Size {
+            width: length(200.0_f32),
+            height: length(80.0_f32),
+        },
         ..Style::default()
     };
     div.set_style(&mut tree, new_style);
@@ -43,8 +49,19 @@ fn div_build_tree_wires_children() {
 fn div_render_node_is_preorder() {
     let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(vec![]));
 
-    let child = LoggingWidget { node_id: NodeId::new(u64::MAX), style: Style::default(), label: "child", log: log.clone() };
-    let mut div = LoggingDiv { node_id: NodeId::new(u64::MAX), style: Style::default(), child, label: "parent", log: log.clone() };
+    let child = LoggingWidget {
+        node_id: NodeId::new(u64::MAX),
+        style: Style::default(),
+        label: "child",
+        log: log.clone(),
+    };
+    let mut div = LoggingDiv {
+        node_id: NodeId::new(u64::MAX),
+        style: Style::default(),
+        child,
+        label: "parent",
+        log: log.clone(),
+    };
 
     let mut tree = WidgetTree::new();
     let div_id = div.build_tree(&mut tree);
@@ -62,7 +79,10 @@ fn div_render_emits_draw_quad_at_layout_bounds() {
     use utils::Color;
 
     let style = Style {
-        size: Size { width: length(100.0_f32), height: length(50.0_f32) },
+        size: Size {
+            width: length(100.0_f32),
+            height: length(50.0_f32),
+        },
         ..Style::default()
     };
     let mut div = Div::new(style, (ui::widgets::Text::placeholder(),));
@@ -77,7 +97,12 @@ fn div_render_emits_draw_quad_at_layout_bounds() {
 
     assert_eq!(commands.len(), 1);
     match &commands[0] {
-        RenderCommand::DrawQuad { color, origin, size, .. } => {
+        RenderCommand::DrawQuad {
+            color,
+            origin,
+            size,
+            ..
+        } => {
             assert_eq!(*color, Color::rgb(1.0, 0.0, 0.0));
             assert_eq!(origin.x(), abs_pos.x());
             assert_eq!(origin.y(), abs_pos.y());
@@ -97,7 +122,15 @@ fn div_render_node_collects_commands_preorder() {
     static FONT: BakedFont = BakedFont {
         size: 16.0,
         line_height: 20.0,
-        glyphs: [GlyphInfo { x: 0.0, y: 0.0, w: 8.0, h: 14.0, bearing_x: 0.0, bearing_y: 11.0, advance: 10.0 }; 95],
+        glyphs: [GlyphInfo {
+            x: 0.0,
+            y: 0.0,
+            w: 8.0,
+            h: 14.0,
+            bearing_x: 0.0,
+            bearing_y: 11.0,
+            advance: 10.0,
+        }; 95],
     };
 
     let mut text = Text::new(Style::default());
@@ -105,7 +138,10 @@ fn div_render_node_collects_commands_preorder() {
     text.text = "x".to_string();
 
     let div_style = Style {
-        size: Size { width: length(100.0_f32), height: length(50.0_f32) },
+        size: Size {
+            width: length(100.0_f32),
+            height: length(50.0_f32),
+        },
         ..Style::default()
     };
     let mut div = Div::new(div_style, (text,));
@@ -134,13 +170,24 @@ fn nested_div_renders_children_at_absolute_position() {
     let outer_style = Style {
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
-        size: Size { width: length(200.0_f32), height: length(200.0_f32) },
-        padding: Rect { top: length(50.0_f32), left: zero(), right: zero(), bottom: zero() },
+        size: Size {
+            width: length(200.0_f32),
+            height: length(200.0_f32),
+        },
+        padding: Rect {
+            top: length(50.0_f32),
+            left: zero(),
+            right: zero(),
+            bottom: zero(),
+        },
         ..Style::default()
     };
     // Inner div: 40x40, sits inside outer's content area.
     let inner_style = Style {
-        size: Size { width: length(40.0_f32), height: length(40.0_f32) },
+        size: Size {
+            width: length(40.0_f32),
+            height: length(40.0_f32),
+        },
         ..Style::default()
     };
     let mut inner = Div::new(inner_style, (Text::placeholder(),));
@@ -161,7 +208,11 @@ fn nested_div_renders_children_at_absolute_position() {
         RenderCommand::DrawQuad { origin, .. } => {
             // Inner div is in outer's content area which starts at y=50 (padding-top).
             // Its own location.y inside that content area is 0, so absolute y = 50.
-            assert_eq!(origin.y(), 50.0, "inner div should render at absolute y=50, not at its parent-relative y=0");
+            assert_eq!(
+                origin.y(),
+                50.0,
+                "inner div should render at absolute y=50, not at its parent-relative y=0"
+            );
         }
         _ => unreachable!(),
     }
@@ -189,19 +240,30 @@ impl Render for LoggingWidget {
 }
 
 impl Widget for LoggingWidget {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn style(&self) -> &Style { &self.style }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn style(&self) -> &Style {
+        &self.style
+    }
     fn build_tree(&mut self, tree: &mut WidgetTree) -> NodeId {
         let id = tree.new_leaf(self.style.clone()).unwrap();
         self.node_id = id;
         id
     }
-    fn render_node(&self, layout: &Layout, _tree: &WidgetTree, offset: ui::Point) -> Vec<RenderCommand> {
-        let abs_pos = ui::Point::new(offset.x() + layout.location.x, offset.y() + layout.location.y);
+    fn render_node(
+        &self,
+        layout: &Layout,
+        _tree: &WidgetTree,
+        offset: ui::Point,
+    ) -> Vec<RenderCommand> {
+        let abs_pos = ui::Point::new(
+            offset.x() + layout.location.x,
+            offset.y() + layout.location.y,
+        );
         self.render(layout, abs_pos)
     }
 }
-
 
 struct LoggingDiv {
     node_id: NodeId,
@@ -219,16 +281,30 @@ impl Render for LoggingDiv {
 }
 
 impl Widget for LoggingDiv {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn style(&self) -> &Style { &self.style }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn style(&self) -> &Style {
+        &self.style
+    }
     fn build_tree(&mut self, tree: &mut WidgetTree) -> NodeId {
         let child_id = self.child.build_tree(tree);
-        let id = tree.new_with_children(self.style.clone(), &[child_id]).unwrap();
+        let id = tree
+            .new_with_children(self.style.clone(), &[child_id])
+            .unwrap();
         self.node_id = id;
         id
     }
-    fn render_node(&self, layout: &Layout, tree: &WidgetTree, offset: ui::Point) -> Vec<RenderCommand> {
-        let abs_pos = ui::Point::new(offset.x() + layout.location.x, offset.y() + layout.location.y);
+    fn render_node(
+        &self,
+        layout: &Layout,
+        tree: &WidgetTree,
+        offset: ui::Point,
+    ) -> Vec<RenderCommand> {
+        let abs_pos = ui::Point::new(
+            offset.x() + layout.location.x,
+            offset.y() + layout.location.y,
+        );
         let mut commands = self.render(layout, abs_pos);
         let child_layout = tree.layout(self.child.node_id()).unwrap();
         commands.extend(self.child.render_node(child_layout, tree, abs_pos));
@@ -243,29 +319,51 @@ fn root_percent_height_resolves_against_available_space() {
 
     let mut tree = ui::WidgetTree::new();
     let mk = |t: &mut ui::WidgetTree, w: f32, h: f32| {
-        t.new_leaf(Style { size: Size { width: length(w), height: length(h) }, ..Default::default() }).unwrap()
+        t.new_leaf(Style {
+            size: Size {
+                width: length(w),
+                height: length(h),
+            },
+            ..Default::default()
+        })
+        .unwrap()
     };
 
     let c1 = mk(&mut tree, 80.0, 24.0);
     let c2 = mk(&mut tree, 60.0, 120.0);
     let c3 = mk(&mut tree, 400.0, 52.0);
 
-    let root_pct = tree.new_with_children(Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        justify_content: Some(JustifyContent::Center),
-        size: Size { width: percent(1.0), height: percent(1.0) },
-        gap: Size { width: zero(), height: length(40.0) },
-        ..Default::default()
-    }, &[c1, c2, c3]).unwrap();
+    let root_pct = tree
+        .new_with_children(
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                justify_content: Some(JustifyContent::Center),
+                size: Size {
+                    width: percent(1.0),
+                    height: percent(1.0),
+                },
+                gap: Size {
+                    width: zero(),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            &[c1, c2, c3],
+        )
+        .unwrap();
 
-    ui::compute_layout(&mut tree, root_pct, Size {
-        width: AvailableSpace::Definite(400.0),
-        height: AvailableSpace::Definite(360.0),
-    });
+    ui::compute_layout(
+        &mut tree,
+        root_pct,
+        Size {
+            width: AvailableSpace::Definite(400.0),
+            height: AvailableSpace::Definite(360.0),
+        },
+    );
 
     let root_h = tree.layout(root_pct).unwrap().size.height;
-    let c1_y   = tree.layout(c1).unwrap().location.y;
+    let c1_y = tree.layout(c1).unwrap().location.y;
     println!("percent: root_h={root_h}, c1.y={c1_y}");
     // If percent doesn't resolve: root_h = content height ~276, c1.y = 0
     // If percent resolves to 360: root_h = 360, c1.y = (360-276)/2 = 42

@@ -8,6 +8,8 @@ mod renderer;
 mod slider;
 
 use app::prelude::*;
+use interactivity::InteractivityState;
+use interactivity::hit::{HitArea, HitAreaRegistry};
 use std::os::fd::AsRawFd;
 use std::time::Duration;
 
@@ -38,8 +40,7 @@ struct UiState {
     dmabuf: [Option<::renderer::RenderableSurface<::renderer::DmaBuf>>; 2],
     wl_buf_ids: [u32; 2],
     buf_in_flight: [bool; 2],
-    cursor_x: f64,
-    cursor_y: f64,
+    hit_areas: HitAreaRegistry,
 }
 
 impl UiState {
@@ -54,8 +55,7 @@ impl UiState {
             dmabuf: [None, None],
             wl_buf_ids: [0, 0],
             buf_in_flight: [false, false],
-            cursor_x: 0.0,
-            cursor_y: 0.0,
+            hit_areas: HitAreaRegistry::new(),
         }
     }
 
@@ -83,38 +83,22 @@ impl UiState {
                 height: AvailableSpace::Definite(h as f32),
             },
         );
+        self.rebuild_hit_areas();
+    }
+
+    fn rebuild_hit_areas(&mut self) {
+        self.hit_areas.clear();
+        for cmd in self.render_commands() {
+            if let RenderCommand::RegisterHitArea { id, rect } = cmd {
+                self.hit_areas.push(HitArea { id, rect });
+            }
+        }
     }
 
     fn render_commands(&self) -> Vec<RenderCommand> {
         let layout = self.tree.layout(self.root.node_id()).unwrap();
         self.root
             .render_node(layout, &self.tree, ui::Point::new(0.0, 0.0))
-    }
-
-    fn minus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
-        let btn = self
-            .tree
-            .layout(self.root.children.2.children.0.node_id())
-            .unwrap();
-        let lx = (row.location.x + btn.location.x) as f64;
-        let ly = (row.location.y + btn.location.y) as f64;
-        let lw = btn.size.width as f64;
-        let lh = btn.size.height as f64;
-        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
-    }
-
-    fn plus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
-        let btn = self
-            .tree
-            .layout(self.root.children.2.children.2.node_id())
-            .unwrap();
-        let lx = (row.location.x + btn.location.x) as f64;
-        let ly = (row.location.y + btn.location.y) as f64;
-        let lw = btn.size.width as f64;
-        let lh = btn.size.height as f64;
-        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
     }
 }
 
@@ -123,6 +107,7 @@ struct AppState {
     ring: Ring,
     timer: Timer,
     wayland: Wayland,
+    interactivity: InteractivityState,
     renderer: ::renderer::Renderer,
     ui: UiState,
 }
@@ -139,6 +124,7 @@ impl AppState {
             timer,
             wayland,
             renderer,
+            interactivity: InteractivityState::new(),
             ui: UiState::new(),
         }
     }
@@ -159,6 +145,7 @@ fn main() {
         .mount(timer::module())
         .mount(renderer::module())
         .mount(wayland::module())
+        .mount(interactivity::module())
         .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
             s.renderer
                 .upload_atlas(&atlas::UI)
@@ -278,35 +265,24 @@ fn main() {
             }),
         )
         .mount(
-            app::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
-                if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
-                    if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
-                        std::process::exit(0);
-                    }
+            app::Module::new().on(|_: &mut AppState, ev: &interactivity::KeyEvent| {
+                // Key 1 is escape
+                if let interactivity::KeyEvent::Press { key: 1, .. } = ev {
+                    std::process::exit(0);
                 }
             }),
         )
         .mount(
-            app::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| match ev {
-                wayland::PointerEvent::Motion {
-                    surface_x,
-                    surface_y,
-                    ..
-                } => {
-                    s.ui.cursor_x = *surface_x;
-                    s.ui.cursor_y = *surface_y;
+            app::Module::new().on(|s: &mut AppState, ev: &interactivity::PointerEvent| {
+                if let interactivity::PointerEvent::ButtonPress {
+                    button: 272, x, y, ..
+                } = ev
+                    && let Some(delta) = hit_button(&s.ui, *x, *y)
+                {
+                    let new_count = s.ui.count + delta;
+                    s.ui.set_count(new_count);
+                    redraw(s);
                 }
-                wayland::PointerEvent::Button {
-                    button: _, state, ..
-                } if *state == wayland::ButtonState::Pressed => {
-                    let delta = hit_button(&s.ui, s.ui.cursor_x, s.ui.cursor_y);
-                    if let Some(delta) = delta {
-                        let new_count = s.ui.count + delta;
-                        s.ui.set_count(new_count);
-                        redraw(s);
-                    }
-                }
-                _ => {}
             }),
         )
         .mount(
@@ -336,13 +312,16 @@ fn main() {
 }
 
 fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
-    if ui.minus_contains(x, y) {
-        return Some(-1);
+    let hit_id = ui.hit_areas.hit_test(x, y)?;
+    let minus_id: u64 = ui.root.children.2.children.0.node_id().into();
+    let plus_id: u64 = ui.root.children.2.children.2.node_id().into();
+    if hit_id == minus_id {
+        Some(-1)
+    } else if hit_id == plus_id {
+        Some(1)
+    } else {
+        None
     }
-    if ui.plus_contains(x, y) {
-        return Some(1);
-    }
-    None
 }
 
 fn redraw(s: &mut AppState) {

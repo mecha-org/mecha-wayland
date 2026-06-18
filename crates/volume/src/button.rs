@@ -44,7 +44,16 @@ impl Button {
 }
 
 impl Render for Button {
-    fn render(&self, _layout: &taffy::Layout, _abs_pos: Point) -> Vec<RenderCommand> {
-        vec![]
+    fn render(&self, layout: &taffy::Layout, abs_pos: Point) -> Vec<RenderCommand> {
+        let id: u64 = self.node_id.into();
+        vec![RenderCommand::RegisterHitArea {
+            id,
+            rect: utils::Rect::new(
+                abs_pos.x(),
+                abs_pos.y(),
+                layout.size.width,
+                layout.size.height,
+            ),
+        }]
     }
 }

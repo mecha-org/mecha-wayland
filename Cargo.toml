@@ -17,6 +17,7 @@ members = [
     "crates/volume",
     "crates/interactivity",
     "crates/launcher/status-bar",
+    "crates/launcher/lock-screen",
 ]
 default-members = ["crates/ui"]
 resolver = "2"

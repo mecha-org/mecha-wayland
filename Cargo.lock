@@ -780,6 +780,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
+name = "lock-screen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "app",
+ "assets",
+ "interactivity",
+ "io-ring",
+ "libc",
+ "renderer",
+ "taffy",
+ "timer",
+ "ui",
+ "utils",
+ "wayland",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

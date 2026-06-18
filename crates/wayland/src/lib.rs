@@ -1,6 +1,9 @@
 pub mod proto;
 pub mod wire;
 
+pub mod ext_session_lock;
+pub mod ext_session_lock_manager;
+pub mod ext_session_lock_surface;
 pub mod wl_buffer;
 pub mod wl_callback;
 pub mod wl_compositor;
@@ -15,6 +18,9 @@ pub mod wl_touch;
 pub mod zwlr_layer_shell;
 pub mod zwp_linux_dmabuf;
 
+pub use ext_session_lock::{ExtSessionLockEvent, ExtSessionLockV1};
+pub use ext_session_lock_manager::ExtSessionLockManagerV1;
+pub use ext_session_lock_surface::{ExtSessionLockSurfaceV1, ExtSessionLockSurfaceV1Event};
 pub use wl_buffer::{WlBuffer, WlBufferEvent};
 pub use wl_callback::{WlCallback, WlCallbackEvent};
 pub use wl_compositor::WlCompositor;
@@ -136,6 +142,9 @@ pub struct Wayland {
     pub dmabuf: ZwpLinuxDmabufV1,
     pub buf_params: ZwpLinuxBufferParamsV1,
     pub wl_buffer: WlBuffer,
+    pub session_lock_manager: ExtSessionLockManagerV1,
+    pub session_lock: ExtSessionLockV1,
+    pub session_lock_surface: ExtSessionLockSurfaceV1,
 }
 
 impl Wayland {
@@ -171,6 +180,9 @@ impl Wayland {
             dmabuf: ZwpLinuxDmabufV1::new(conn.clone()),
             buf_params: ZwpLinuxBufferParamsV1::new(conn.clone()),
             wl_buffer: WlBuffer::new(conn.clone()),
+            session_lock_manager: ExtSessionLockManagerV1::new(conn.clone()),
+            session_lock: ExtSessionLockV1::new(conn.clone()),
+            session_lock_surface: ExtSessionLockSurfaceV1::new(conn.clone()),
             conn,
             ring_proxy,
             read_buf: ReadBuf(vec![0u8; 4096]),
@@ -249,9 +261,24 @@ impl Wayland {
             );
         }
 
+        if let Some((lock_name, lock_ver)) = self.registry.find("ext_session_lock_manager_v1") {
+            let lock_id = self.conn.borrow_mut().alloc_id();
+            self.session_lock_manager.set_id(lock_id);
+            self.registry.bind(
+                lock_name,
+                "ext_session_lock_manager_v1",
+                lock_ver.min(1),
+                lock_id,
+            );
+        }
+
         self.flush_sync(fd);
         unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
         self.submit_read();
+    }
+
+    pub fn alloc_id(&mut self) -> u32 {
+        self.conn.borrow_mut().alloc_id()
     }
 
     pub fn flush(&mut self) {
@@ -478,6 +505,8 @@ pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
         .mount(wl_touch::module::<S>().into_module())
         .mount(zwp_linux_dmabuf::module::<S>().into_module())
         .mount(wl_buffer::module::<S>().into_module())
+        .mount(ext_session_lock::module::<S>().into_module())
+        .mount(ext_session_lock_surface::module::<S>().into_module())
         .on(|wl: &mut Wayland, ev: &SeatEvent| match ev {
             SeatEvent::Capabilities { capabilities } => {
                 if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {

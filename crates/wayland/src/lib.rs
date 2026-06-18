@@ -1,6 +1,9 @@
 pub mod proto;
 pub mod wire;
 
+pub mod ext_session_lock;
+pub mod ext_session_lock_manager;
+pub mod ext_session_lock_surface;
 pub mod wl_buffer;
 pub mod wl_callback;
 pub mod wl_compositor;
@@ -15,6 +18,9 @@ pub mod wl_touch;
 pub mod zwlr_layer_shell;
 pub mod zwp_linux_dmabuf;
 
+pub use ext_session_lock::{ExtSessionLockEvent, ExtSessionLockV1};
+pub use ext_session_lock_manager::ExtSessionLockManagerV1;
+pub use ext_session_lock_surface::{ExtSessionLockSurfaceV1, ExtSessionLockSurfaceV1Event};
 pub use wl_buffer::{WlBuffer, WlBufferEvent};
 pub use wl_callback::{WlCallback, WlCallbackEvent};
 pub use wl_compositor::WlCompositor;
@@ -41,6 +47,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use app::RegisteredModule as _;
+use app::prelude::State;
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
 
@@ -104,13 +111,19 @@ pub type SharedConnection = Rc<RefCell<Connection>>;
 
 // ── Wayland ───────────────────────────────────────────────────────────────────
 
+struct ReadBuf(Vec<u8>);
+struct WriteInFlight(Vec<u8>);
+struct ReadToken(Option<IoToken>);
+struct WriteToken(Option<IoToken>);
+
+#[derive(State)]
 pub struct Wayland {
     conn: SharedConnection,
     pub ring_proxy: RingProxy,
-    read_buf: Vec<u8>,
-    read_token: Option<IoToken>,
-    write_in_flight: Vec<u8>,
-    write_token: Option<IoToken>,
+    read_buf: ReadBuf,
+    read_token: ReadToken,
+    write_in_flight: WriteInFlight,
+    write_token: WriteToken,
     recv_overflow: Vec<u8>,
 
     pub pending: VecDeque<WaylandRawEvent>,
@@ -129,6 +142,9 @@ pub struct Wayland {
     pub dmabuf: ZwpLinuxDmabufV1,
     pub buf_params: ZwpLinuxBufferParamsV1,
     pub wl_buffer: WlBuffer,
+    pub session_lock_manager: ExtSessionLockManagerV1,
+    pub session_lock: ExtSessionLockV1,
+    pub session_lock_surface: ExtSessionLockSurfaceV1,
 }
 
 impl Wayland {
@@ -164,12 +180,15 @@ impl Wayland {
             dmabuf: ZwpLinuxDmabufV1::new(conn.clone()),
             buf_params: ZwpLinuxBufferParamsV1::new(conn.clone()),
             wl_buffer: WlBuffer::new(conn.clone()),
+            session_lock_manager: ExtSessionLockManagerV1::new(conn.clone()),
+            session_lock: ExtSessionLockV1::new(conn.clone()),
+            session_lock_surface: ExtSessionLockSurfaceV1::new(conn.clone()),
             conn,
             ring_proxy,
-            read_buf: vec![0u8; 4096],
-            read_token: None,
-            write_in_flight: Vec::new(),
-            write_token: None,
+            read_buf: ReadBuf(vec![0u8; 4096]),
+            read_token: ReadToken(None),
+            write_in_flight: WriteInFlight(Vec::new()),
+            write_token: WriteToken(None),
             recv_overflow: Vec::new(),
             pending: VecDeque::new(),
         })
@@ -242,9 +261,24 @@ impl Wayland {
             );
         }
 
+        if let Some((lock_name, lock_ver)) = self.registry.find("ext_session_lock_manager_v1") {
+            let lock_id = self.conn.borrow_mut().alloc_id();
+            self.session_lock_manager.set_id(lock_id);
+            self.registry.bind(
+                lock_name,
+                "ext_session_lock_manager_v1",
+                lock_ver.min(1),
+                lock_id,
+            );
+        }
+
         self.flush_sync(fd);
         unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
         self.submit_read();
+    }
+
+    pub fn alloc_id(&mut self) -> u32 {
+        self.conn.borrow_mut().alloc_id()
     }
 
     pub fn flush(&mut self) {
@@ -258,14 +292,14 @@ impl Wayland {
     pub fn handle_io(&mut self, event: &IoEvent) {
         match event {
             IoEvent::Completed { token, result } => {
-                if Some(*token) == self.write_token {
-                    self.write_token = None;
-                    self.write_in_flight.clear();
+                if Some(*token) == self.write_token.0 {
+                    self.write_token.0 = None;
+                    self.write_in_flight.0.clear();
                     self.submit_write();
-                } else if Some(*token) == self.read_token {
-                    self.read_token = None;
+                } else if Some(*token) == self.read_token.0 {
+                    self.read_token.0 = None;
                     if *result > 0 {
-                        let new_bytes = &self.read_buf[..*result as usize];
+                        let new_bytes = &self.read_buf.0[..*result as usize];
                         let data = if self.recv_overflow.is_empty() {
                             new_bytes.to_vec()
                         } else {
@@ -276,7 +310,8 @@ impl Wayland {
                         self.process_messages(data);
                         self.submit_read();
                     } else if *result == 0 {
-                        eprintln!("[Wayland] connection closed by server");
+                        eprintln!("[Wayland] compositor disconnected, exiting");
+                        std::process::exit(1);
                     } else {
                         eprintln!("[Wayland] read error: {}", result);
                     }
@@ -310,7 +345,7 @@ impl Wayland {
     }
 
     fn submit_write(&mut self) {
-        if self.write_token.is_some() || !self.write_in_flight.is_empty() {
+        if self.write_token.0.is_some() || !self.write_in_flight.0.is_empty() {
             return;
         }
         {
@@ -318,30 +353,30 @@ impl Wayland {
             if conn.write_buf.is_empty() {
                 return;
             }
-            mem::swap(&mut self.write_in_flight, &mut conn.write_buf);
+            mem::swap(&mut self.write_in_flight.0, &mut conn.write_buf);
         }
         let sqe = opcode::Write::new(
             types::Fd(self.conn.borrow().fd),
-            self.write_in_flight.as_ptr(),
-            self.write_in_flight.len() as u32,
+            self.write_in_flight.0.as_ptr(),
+            self.write_in_flight.0.len() as u32,
         )
         .build();
         let token = self.ring_proxy.push(sqe);
-        self.write_token = Some(token);
+        self.write_token.0 = Some(token);
     }
 
     fn submit_read(&mut self) {
-        if self.read_token.is_some() {
+        if self.read_token.0.is_some() {
             return;
         }
         let sqe = opcode::Read::new(
             types::Fd(self.conn.borrow().fd),
-            self.read_buf.as_mut_ptr(),
-            self.read_buf.len() as u32,
+            self.read_buf.0.as_mut_ptr(),
+            self.read_buf.0.len() as u32,
         )
         .build();
         let token = self.ring_proxy.push(sqe);
-        self.read_token = Some(token);
+        self.read_token.0 = Some(token);
     }
 
     fn flush_sync(&self, fd: RawFd) {
@@ -433,10 +468,18 @@ impl Wayland {
             );
             libc::sendmsg(fd, &mhdr, 0);
         }
+
+        // Close our copy of each fd — sendmsg with SCM_RIGHTS duplicates
+        // the fd into the compositor, but our original stays open.
+        for raw_fd in raw_fds {
+            unsafe {
+                libc::close(raw_fd);
+            }
+        }
     }
 }
 
-pub fn module<AppState>() -> impl app::RegisteredModule<Wayland, AppState> {
+pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
     app::Module::<Wayland, _, _>::new()
         .on(|wl: &mut Wayland, _: &app::Start| {
             wl.init();
@@ -451,35 +494,35 @@ pub fn module<AppState>() -> impl app::RegisteredModule<Wayland, AppState> {
             }
             wl.pending.pop_front()
         })
-        .mount(|wl| &mut wl.display, wl_display::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.registry, wl_registry::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.callback, wl_callback::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.surface, wl_surface::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.layer_surface, zwlr_layer_shell::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.seat, wl_seat::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.pointer, wl_pointer::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.keyboard, wl_keyboard::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.touch, wl_touch::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.dmabuf, zwp_linux_dmabuf::module::<AppState>().into_module())
-        .mount(|wl| &mut wl.wl_buffer, wl_buffer::module::<AppState>().into_module())
-        .on(
-            |wl: &mut Wayland, ev: &SeatEvent| match ev {
-                SeatEvent::Capabilities { capabilities } => {
-                    if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {
-                        let id = wl.seat.get_pointer();
-                        wl.pointer.set_id(id);
-                    }
-                    if (capabilities & CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
-                        let id = wl.seat.get_keyboard();
-                        wl.keyboard.set_id(id);
-                    }
-                    if (capabilities & CAP_TOUCH) != 0 && wl.touch.id() == 0 {
-                        let id = wl.seat.get_touch();
-                        wl.touch.set_id(id);
-                    }
-                    wl.flush();
+        .mount(wl_display::module::<S>().into_module())
+        .mount(wl_registry::module::<S>().into_module())
+        .mount(wl_callback::module::<S>().into_module())
+        .mount(wl_surface::module::<S>().into_module())
+        .mount(zwlr_layer_shell::module::<S>().into_module())
+        .mount(wl_seat::module::<S>().into_module())
+        .mount(wl_pointer::module::<S>().into_module())
+        .mount(wl_keyboard::module::<S>().into_module())
+        .mount(wl_touch::module::<S>().into_module())
+        .mount(zwp_linux_dmabuf::module::<S>().into_module())
+        .mount(wl_buffer::module::<S>().into_module())
+        .mount(ext_session_lock::module::<S>().into_module())
+        .mount(ext_session_lock_surface::module::<S>().into_module())
+        .on(|wl: &mut Wayland, ev: &SeatEvent| match ev {
+            SeatEvent::Capabilities { capabilities } => {
+                if (capabilities & CAP_POINTER) != 0 && wl.pointer.id() == 0 {
+                    let id = wl.seat.get_pointer();
+                    wl.pointer.set_id(id);
                 }
-                _ => {}
-            },
-        )
+                if (capabilities & CAP_KEYBOARD) != 0 && wl.keyboard.id() == 0 {
+                    let id = wl.seat.get_keyboard();
+                    wl.keyboard.set_id(id);
+                }
+                if (capabilities & CAP_TOUCH) != 0 && wl.touch.id() == 0 {
+                    let id = wl.seat.get_touch();
+                    wl.touch.set_id(id);
+                }
+                wl.flush();
+            }
+            _ => {}
+        })
 }

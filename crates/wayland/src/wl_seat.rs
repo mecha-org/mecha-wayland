@@ -1,7 +1,7 @@
 use app::Event;
 
-use crate::proto::wl_seat as proto;
 use crate::proto::Handle;
+use crate::proto::wl_seat as proto;
 use crate::{SharedConnection, WaylandRawEvent, parse, send};
 
 pub const CAP_POINTER: u32 = 1;
@@ -24,7 +24,11 @@ pub struct WlSeat {
 
 impl WlSeat {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { conn, handle: Handle::new(0), capabilities: 0 }
+        Self {
+            conn,
+            handle: Handle::new(0),
+            capabilities: 0,
+        }
     }
 
     pub fn set_id(&mut self, id: u32) {
@@ -39,7 +43,11 @@ impl WlSeat {
 
     pub fn get_keyboard(&self) -> u32 {
         let id = self.conn.borrow_mut().alloc_id();
-        send(&self.conn, &self.handle, &proto::request::GetKeyboard { id });
+        send(
+            &self.conn,
+            &self.handle,
+            &proto::request::GetKeyboard { id },
+        );
         id
     }
 

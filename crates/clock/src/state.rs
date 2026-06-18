@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use app::prelude::State;
 use io_ring::Ring;
 use renderer::{DmaBuf, RenderableSurface, Renderer, TextureId};
 use timer::Timer;
@@ -79,36 +80,55 @@ pub struct HitBoxes {
     pub done_btn: Rect,
 }
 
-// Engine Context
-
-pub struct EngineContext {
-    pub ring: Ring,
-    pub timer: Timer,
-    pub wayland: Wayland,
-    pub renderer: Renderer,
-
+/// All non-module application state that doesn't need a `Lens` impl.
+pub struct UiState {
     pub surface_id: u32,
     pub surface_size: (i32, i32),
     pub dmabuf: [Option<RenderableSurface<DmaBuf>>; 2],
     pub wl_buf_ids: [u32; 2],
     pub buf_in_flight: [bool; 2],
     pub icon_tex: Option<TextureId>,
-}
 
-pub struct AppState {
     pub active_tab: ActiveTab,
     pub stopwatch: StopwatchState,
-
     pub cursor_x: f64,
     pub cursor_y: f64,
     pub hit_boxes: HitBoxes,
-
-    pub engine: EngineContext,
-
     pub show_settings: bool,
     pub format_24h: bool,
     pub show_seconds: bool,
     pub theme: ActiveTheme,
+}
+
+impl UiState {
+    fn new() -> Self {
+        Self {
+            surface_id: 0,
+            surface_size: (0, 0),
+            dmabuf: [None, None],
+            wl_buf_ids: [0, 0],
+            buf_in_flight: [false, false],
+            icon_tex: None,
+            active_tab: ActiveTab::Clock,
+            stopwatch: StopwatchState::default(),
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            hit_boxes: HitBoxes::default(),
+            show_settings: false,
+            format_24h: false,
+            show_seconds: true,
+            theme: ActiveTheme::Dark,
+        }
+    }
+}
+
+#[derive(State)]
+pub struct AppState {
+    pub ring: Ring,
+    pub timer: Timer,
+    pub wayland: Wayland,
+    pub renderer: Renderer,
+    pub ui: UiState,
 }
 
 impl AppState {
@@ -119,27 +139,11 @@ impl AppState {
         let renderer = Renderer::new().expect("Failed to initialize Renderer");
 
         Self {
-            active_tab: ActiveTab::Clock,
-            stopwatch: StopwatchState::default(),
-            cursor_x: 0.0,
-            cursor_y: 0.0,
-            hit_boxes: HitBoxes::default(),
-            engine: EngineContext {
-                ring,
-                timer,
-                wayland,
-                renderer,
-                surface_id: 0,
-                surface_size: (0, 0),
-                dmabuf: [None, None],
-                wl_buf_ids: [0, 0],
-                buf_in_flight: [false, false],
-                icon_tex: None,
-            },
-            show_settings: false,
-            format_24h: false,
-            show_seconds: true,
-            theme: ActiveTheme::Dark,
+            ring,
+            timer,
+            wayland,
+            renderer,
+            ui: UiState::new(),
         }
     }
 }

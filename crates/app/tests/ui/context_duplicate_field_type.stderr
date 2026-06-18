@@ -1,0 +1,7 @@
+error: Context field type `Renderer` appears more than once
+ --> tests/ui/context_duplicate_field_type.rs:5:1
+  |
+5 | #[context]
+  | ^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `context` (in Nightly builds, run with -Z macro-backtrace for more info)

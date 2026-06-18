@@ -5,7 +5,11 @@ pub struct SpriteRegion {
     pub h: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AtlasId(pub u32);
+
 pub struct AtlasData {
+    pub id: AtlasId,
     pub png_bytes: &'static [u8],
     pub width: u32,
     pub height: u32,
@@ -26,6 +30,8 @@ pub struct GlyphInfo {
 pub struct BakedFont {
     pub size: f32,
     pub line_height: f32,
+    /// Distance from the top of the text bounding box to the baseline, in pixels.
+    pub ascent: f32,
     pub glyphs: [GlyphInfo; 95], // index = char as u8 - 32, covers ' '..='~'
 }
 

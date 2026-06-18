@@ -1,0 +1,181 @@
+[[atlas]]
+name = "ui"
+
+[[atlas.font]]
+name = "inter"
+path = "../../../assets/Inter-Regular.ttf"
+sizes = [6, 16]
+
+[[atlas.sprite]]
+name = "battery-0"
+path = "assets/battery/battery-0.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-0-charging"
+path = "assets/battery/battery-0-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-10"
+path = "assets/battery/battery-10.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-10-charging"
+path = "assets/battery/battery-10-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-20"
+path = "assets/battery/battery-20.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-20-charging"
+path = "assets/battery/battery-20-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-30"
+path = "assets/battery/battery-30.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-30-charging"
+path = "assets/battery/battery-30-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-40"
+path = "assets/battery/battery-40.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-40-charging"
+path = "assets/battery/battery-40-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-50"
+path = "assets/battery/battery-50.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-50-charging"
+path = "assets/battery/battery-50-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-60"
+path = "assets/battery/battery-60.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-60-charging"
+path = "assets/battery/battery-60-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-70"
+path = "assets/battery/battery-70.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-70-charging"
+path = "assets/battery/battery-70-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-80"
+path = "assets/battery/battery-80.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-80-charging"
+path = "assets/battery/battery-80-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-90"
+path = "assets/battery/battery-90.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-90-charging"
+path = "assets/battery/battery-90-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-100"
+path = "assets/battery/battery-100.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "battery-100-charging"
+path = "assets/battery/battery-100-charging.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "bluetooth-on"
+path = "assets/bluetooth/bluetooth-on.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "bluetooth-connected"
+path = "assets/bluetooth/bluetooth-connected.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "wifi-high"
+path = "assets/wifi/wifi-high.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "wifi-medium"
+path = "assets/wifi/wifi-medium.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "wifi-low"
+path = "assets/wifi/wifi-low.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "wifi-none"
+path = "assets/wifi/wifi-none.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "wifi-x"
+path = "assets/wifi/wifi-x.svg"
+width = 32
+height = 32

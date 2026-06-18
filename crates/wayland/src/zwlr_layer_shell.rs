@@ -7,7 +7,8 @@ use crate::{SharedConnection, WaylandRawEvent, parse, send};
 
 pub type Layer = crate::proto::zwlr_layer_shell_v1::ZwlrLayerShellV1Layer;
 pub type Anchor = crate::proto::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1Anchor;
-pub type KeyboardInteractivity = crate::proto::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1KeyboardInteractivity;
+pub type KeyboardInteractivity =
+    crate::proto::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1KeyboardInteractivity;
 
 #[derive(Debug)]
 pub enum LayerSurfaceEvent {
@@ -117,9 +118,7 @@ impl ZwlrLayerSurfaceV1 {
         send(
             &self.conn,
             &h,
-            &crate::proto::zwlr_layer_surface_v1::request::SetAnchor {
-                anchor,
-            },
+            &crate::proto::zwlr_layer_surface_v1::request::SetAnchor { anchor },
         );
     }
 

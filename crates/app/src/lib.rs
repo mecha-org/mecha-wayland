@@ -28,7 +28,7 @@
 //!     .on(|count: &mut u32, _: &Increment| *count += 1);
 //!
 //! let mut app = App::new(0u32)
-//!     .mount(|s: &mut u32| s, module);
+//!     .mount(module);
 //!
 //! app.dispatch(&Increment);
 //! assert_eq!(*app.state(), 1);
@@ -49,7 +49,7 @@
 //!     .on(|_: &mut u32, _: &Tick| Render)           // Tick → emit Render
 //!     .on(|count: &mut u32, _: &Render| *count += 1); // Render → mutate state
 //!
-//! let mut app = App::new(0u32).mount(|s: &mut u32| s, module);
+//! let mut app = App::new(0u32).mount(module);
 //! app.dispatch(&Tick);
 //! assert_eq!(*app.state(), 1);
 //! ```
@@ -59,9 +59,11 @@
 //!
 //! # Module composition
 //!
-//! Modules nest via [`Module::mount`]. A *lens* function extracts the child's
-//! state from the parent's. Emitted events from a child always propagate up to
-//! the application root.
+//! Modules nest via [`Module::mount`]. The parent state must implement
+//! [`Lens<ChildState>`](Lens), which tells the dispatch machinery how to
+//! extract the child's state slice. Modules themselves stay concrete — they
+//! only ever receive a plain `&mut T`. Emitted events from a child always
+//! propagate up to the application root.
 //!
 //! ```rust
 //! use app::prelude::*;
@@ -70,28 +72,33 @@
 //!
 //! struct AppState { counter: u32 }
 //!
-//! let child = Module::new().on(|s: &mut u32, _: &Tick| *s += 1);
-//! let parent = Module::<AppState, _, _>::new()
-//!     .mount(|s: &mut AppState| &mut s.counter, child);
+//! unsafe impl Lens<u32> for AppState {
+//!     fn lens(&mut self) -> &mut u32 { &mut self.counter }
+//! }
 //!
-//! let mut app = App::new(AppState { counter: 0 })
-//!     .mount(|s: &mut AppState| s, parent);
+//! let child = Module::new().on(|s: &mut u32, _: &Tick| *s += 1);
+//! let parent = Module::<AppState, _, _>::new().mount(child);
+//!
+//! let mut app = App::new(AppState { counter: 0 }).mount(parent);
 //!
 //! app.dispatch(&Tick);
 //! assert_eq!(app.state().counter, 1);
 //! ```
 
+mod compose;
 mod dispatch;
 mod event;
 mod module;
 mod runtime;
 
+pub use compose::Compose;
 pub use dispatch::{HandleList, Handler, ModuleList, MountedModule, OuterDispatch, Propagate};
 pub use event::{Emit, Event, Many, Poll, PrePoll, Start};
-pub use module::{Module, RegisteredModule};
+pub use module::{Lens, Module, RegisteredModule};
 pub use runtime::App;
 
 pub mod prelude {
-    pub use crate::{App, Event, Many, Module};
+    pub use crate::{App, Compose, Event, Lens, Many, Module};
+    pub use app_macro::{State, context, with_context};
     pub use frunk::hlist;
 }

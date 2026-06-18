@@ -154,6 +154,5 @@ pub fn mmap_shm(fd: RawFd, size: usize) -> *mut u8 {
 }
 
 pub fn module<AppState>() -> impl app::RegisteredModule<WlShm, AppState> {
-    app::Module::<WlShm, _, _>::new()
-        .on(|s: &mut WlShm, ev: &crate::WaylandRawEvent| s.process(ev))
+    app::Module::<WlShm, _, _>::new().on(|s: &mut WlShm, ev: &crate::WaylandRawEvent| s.process(ev))
 }

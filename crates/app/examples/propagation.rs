@@ -64,6 +64,32 @@ struct AppState {
     notifications: NotificationQueue,
 }
 
+// ── Lenses ────────────────────────────────────────────────────────────────────
+
+unsafe impl Lens<NotificationQueue> for AppState {
+    fn lens(&mut self) -> &mut NotificationQueue {
+        &mut self.notifications
+    }
+}
+
+unsafe impl Lens<Network> for AppState {
+    fn lens(&mut self) -> &mut Network {
+        &mut self.network
+    }
+}
+
+unsafe impl Lens<Battery> for AppState {
+    fn lens(&mut self) -> &mut Battery {
+        &mut self.battery
+    }
+}
+
+unsafe impl Lens<BatteryAlerts> for Battery {
+    fn lens(&mut self) -> &mut BatteryAlerts {
+        &mut self.alerts
+    }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -74,15 +100,23 @@ fn main() {
             warned_critical: false,
             alerts: BatteryAlerts { muted: false },
         },
-        network: Network { connected: true, reconnect_attempts: 0, dropped: false },
-        notifications: NotificationQueue { pending: [""; 4], pending_len: 0, displayed: 0 },
+        network: Network {
+            connected: true,
+            reconnect_attempts: 0,
+            dropped: false,
+        },
+        notifications: NotificationQueue {
+            pending: [""; 4],
+            pending_len: 0,
+            displayed: 0,
+        },
     };
 
     // Mount order matters: emitted events propagate to modules that sit deeper
     // in the HList (mounted earlier). Notifications is mounted first so battery
     // and network can reach it when they emit Notify.
     let mut app = App::new(state)
-        .mount(|s: &mut AppState| &mut s.notifications, {
+        .mount({
             Module::new()
                 // Every Notify queues a message and triggers an immediate Render.
                 .on(|s: &mut NotificationQueue, n: &Notify| {
@@ -99,7 +133,7 @@ fn main() {
                     s.pending_len = 0;
                 })
         })
-        .mount(|s: &mut AppState| &mut s.network, {
+        .mount({
             Module::new()
                 // On the first Tick the network drops. Subsequent NetworkLost
                 // events retry until reconnected, then emit NetworkRestored.
@@ -133,7 +167,7 @@ fn main() {
                     Notify("Network restored")
                 })
         })
-        .mount(|s: &mut AppState| &mut s.battery, {
+        .mount({
             Module::new()
                 // Tick drains battery. Uses hlist to emit BatteryLow and
                 // BatteryCritical independently in one handler — either, both,
@@ -158,7 +192,7 @@ fn main() {
                 })
                 // BatteryAlerts submodule: owns the warning responses so the
                 // parent Battery module only needs to track level/flags.
-                .mount(|s: &mut Battery| &mut s.alerts, {
+                .mount({
                     Module::new()
                         .on(|s: &mut BatteryAlerts, _: &BatteryLow| {
                             if s.muted {

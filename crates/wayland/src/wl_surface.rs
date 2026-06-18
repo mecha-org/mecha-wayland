@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use app::Event;
 
-use crate::proto::wl_surface as proto;
 use crate::proto::Handle;
+use crate::proto::wl_surface as proto;
 use crate::{SharedConnection, WaylandRawEvent, parse, send};
 
 #[derive(Debug)]
@@ -21,7 +21,10 @@ pub struct WlSurface {
 
 impl WlSurface {
     pub fn new(conn: SharedConnection) -> Self {
-        Self { conn, surface_ids: HashMap::new() }
+        Self {
+            conn,
+            surface_ids: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, id: u32) {
@@ -30,13 +33,26 @@ impl WlSurface {
 
     pub fn attach(&self, id: u32, buffer_id: u32, x: i32, y: i32) {
         let h = Handle::<proto::WlSurface>::new(id);
-        let buffer = if buffer_id == 0 { None } else { Some(buffer_id) };
+        let buffer = if buffer_id == 0 {
+            None
+        } else {
+            Some(buffer_id)
+        };
         send(&self.conn, &h, &proto::request::Attach { buffer, x, y });
     }
 
     pub fn damage(&self, id: u32, x: i32, y: i32, width: i32, height: i32) {
         let h = Handle::<proto::WlSurface>::new(id);
-        send(&self.conn, &h, &proto::request::Damage { x, y, width, height });
+        send(
+            &self.conn,
+            &h,
+            &proto::request::Damage {
+                x,
+                y,
+                width,
+                height,
+            },
+        );
     }
 
     pub fn frame(&self, surface_id: u32) -> u32 {
@@ -57,9 +73,15 @@ impl WlSurface {
         }
         let id = raw.sender_id;
         let ev = if let Some(e) = parse::<proto::event::Enter>(raw) {
-            SurfaceEvent::Enter { id, output: e.output }
+            SurfaceEvent::Enter {
+                id,
+                output: e.output,
+            }
         } else if let Some(e) = parse::<proto::event::Leave>(raw) {
-            SurfaceEvent::Leave { id, output: e.output }
+            SurfaceEvent::Leave {
+                id,
+                output: e.output,
+            }
         } else {
             return None;
         };

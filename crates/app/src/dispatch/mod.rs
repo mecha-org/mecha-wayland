@@ -35,14 +35,19 @@ thread_local! {
 fn log_dispatch<E: Event>(event: &E) {
     DISPATCH_DEPTH.with(|d| {
         let depth = d.get();
-        eprintln!("{:indent$}[depth={depth}] Dispatched {:?}", "", event, indent = depth * 2);
+        eprintln!(
+            "{:indent$}[depth={depth}] Dispatched {:?}",
+            "",
+            event,
+            indent = depth * 2
+        );
     });
 }
 
 use frunk::{HCons, HNil};
 
 use crate::event::{Emit, Event, Many};
-use crate::module::Module;
+use crate::module::{Lens, Module};
 
 pub trait ModuleList<S> {
     fn dispatch<E: Event>(&self, event: &E, state: &mut S);
@@ -56,12 +61,12 @@ impl<S> ModuleList<S> for HNil {
     fn dispatch_inner<E: Event, Root: ModuleList<S>>(&self, _: &E, _: &mut S, _: &Root) {}
 }
 
-impl<S, SubState, Emitted, Handlers, LensFn, SubModules, Tail> ModuleList<S>
-    for HCons<MountedModule<S, SubState, Emitted, Handlers, LensFn, SubModules>, Tail>
+impl<S, SubState, Emitted, Handlers, SubModules, Tail> ModuleList<S>
+    for HCons<MountedModule<S, SubState, Emitted, Handlers, SubModules>, Tail>
 where
+    S: Lens<SubState>,
     Handlers: HandleList<SubState, Emitted>,
     Emitted: Propagate<S>,
-    LensFn: Fn(&mut S) -> &mut SubState,
     SubModules: OuterDispatch<SubState, S>,
     Tail: ModuleList<S>,
 {
@@ -82,10 +87,17 @@ where
         // SAFETY: lens returns a reference to a subfield of state. Casting to raw pointer
         // releases the borrow on state, letting us pass state separately to propagate and
         // dispatch_outer. sub_ptr and state are guaranteed disjoint by the lens contract.
-        let sub_ptr: *mut SubState = (self.head.lens)(state);
-        let emitted = self.head.module.handlers.handle(event, unsafe { &mut *sub_ptr });
+        let sub_ptr: *mut SubState = state.lens();
+        let emitted = self
+            .head
+            .module
+            .handlers
+            .handle(event, unsafe { &mut *sub_ptr });
         emitted.propagate(root, state);
-        self.head.module.sub_modules.dispatch_outer(event, unsafe { &mut *sub_ptr }, root, state);
+        self.head
+            .module
+            .sub_modules
+            .dispatch_outer(event, unsafe { &mut *sub_ptr }, root, state);
         self.tail.dispatch_inner(event, state, root);
     }
 }
@@ -105,17 +117,22 @@ pub trait OuterDispatch<S, OuterS> {
 impl<S, OuterS> OuterDispatch<S, OuterS> for HNil {
     #[inline(always)]
     fn dispatch_outer<E: Event, Root: ModuleList<OuterS>>(
-        &self, _: &E, _: &mut S, _: &Root, _: &mut OuterS,
-    ) {}
+        &self,
+        _: &E,
+        _: &mut S,
+        _: &Root,
+        _: &mut OuterS,
+    ) {
+    }
 }
 
-impl<S, OuterS, ChildState, ChildEmitted, ChildHandlers, ChildLens, ChildSubModules, Tail>
+impl<S, OuterS, ChildState, ChildEmitted, ChildHandlers, ChildSubModules, Tail>
     OuterDispatch<S, OuterS>
-    for HCons<MountedModule<S, ChildState, ChildEmitted, ChildHandlers, ChildLens, ChildSubModules>, Tail>
+    for HCons<MountedModule<S, ChildState, ChildEmitted, ChildHandlers, ChildSubModules>, Tail>
 where
+    S: Lens<ChildState>,
     ChildHandlers: HandleList<ChildState, ChildEmitted>,
     ChildEmitted: Propagate<OuterS>,
-    ChildLens: Fn(&mut S) -> &mut ChildState,
     ChildSubModules: OuterDispatch<ChildState, OuterS>,
     Tail: OuterDispatch<S, OuterS>,
 {
@@ -128,11 +145,21 @@ where
         outer_state: &mut OuterS,
     ) {
         // SAFETY: same disjoint-subfield contract as dispatch_inner.
-        let child_ptr: *mut ChildState = (self.head.lens)(state);
-        let emitted = self.head.module.handlers.handle(event, unsafe { &mut *child_ptr });
+        let child_ptr: *mut ChildState = state.lens();
+        let emitted = self
+            .head
+            .module
+            .handlers
+            .handle(event, unsafe { &mut *child_ptr });
         emitted.propagate(outer_root, outer_state);
-        self.head.module.sub_modules.dispatch_outer(event, unsafe { &mut *child_ptr }, outer_root, outer_state);
-        self.tail.dispatch_outer(event, state, outer_root, outer_state);
+        self.head.module.sub_modules.dispatch_outer(
+            event,
+            unsafe { &mut *child_ptr },
+            outer_root,
+            outer_state,
+        );
+        self.tail
+            .dispatch_outer(event, state, outer_root, outer_state);
     }
 }
 
@@ -219,8 +246,7 @@ impl<S> HandleList<S, ()> for HNil {
 }
 
 impl<S, RegisteredEvent: Event, Ret: Emit, F, Emitted, Tail>
-    HandleList<S, HCons<Ret::Output, Emitted>>
-    for HCons<Handler<S, RegisteredEvent, Ret, F>, Tail>
+    HandleList<S, HCons<Ret::Output, Emitted>> for HCons<Handler<S, RegisteredEvent, Ret, F>, Tail>
 where
     F: Fn(&mut S, &RegisteredEvent) -> Ret,
     Tail: HandleList<S, Emitted>,
@@ -253,8 +279,7 @@ pub struct Handler<S, E, Ret, F: Fn(&mut S, &E) -> Ret> {
 }
 
 #[doc(hidden)]
-pub struct MountedModule<S, SubState, Emitted, Handlers, LensFn, SubModules = HNil> {
-    pub(crate) lens: LensFn,
+pub struct MountedModule<S, SubState, Emitted, Handlers, SubModules = HNil> {
     pub(crate) module: Module<SubState, Emitted, Handlers, SubModules>,
     pub(crate) _phantom: PhantomData<(S, Emitted)>,
 }

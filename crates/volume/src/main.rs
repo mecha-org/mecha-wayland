@@ -315,10 +315,21 @@ fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
     let hit_id = ui.hit_areas.hit_test(x, y)?;
     let minus_id: u64 = ui.root.children.2.children.0.node_id().into();
     let plus_id: u64 = ui.root.children.2.children.2.node_id().into();
+    let slider = &ui.root.children.1;
+    let slider_id: u64 = slider.node_id().into();
     if hit_id == minus_id {
         Some(-1)
     } else if hit_id == plus_id {
         Some(1)
+    } else if hit_id == slider_id {
+        let layout = ui.tree.layout(ui.root.children.1.node_id()).unwrap();
+        let r = utils::Rect::new(
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        );
+        Some(slider.calculate_delta(x, y, r, ui.count))
     } else {
         None
     }

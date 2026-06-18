@@ -73,10 +73,25 @@ impl Slider {
         );
         tree.mark_dirty(self.div.children.node_id()).unwrap();
     }
+
+    pub fn calculate_delta(&self, x: f64, y: f64, rect: utils::Rect, current: i32) -> i32 {
+        let normalized = 1.0 + ((rect.origin.y() - y as f32) / rect.size.height());
+        let new_count = (normalized * 10.0).round() as i32;
+        new_count - current
+    }
 }
 
 impl Render for Slider {
-    fn render(&self, _layout: &taffy::Layout, _abs_pos: Point) -> Vec<RenderCommand> {
-        vec![]
+    fn render(&self, layout: &taffy::Layout, abs_pos: Point) -> Vec<RenderCommand> {
+        let id: u64 = self.node_id.into();
+        vec![RenderCommand::RegisterHitArea {
+            id,
+            rect: utils::Rect::new(
+                abs_pos.x(),
+                abs_pos.y(),
+                layout.size.width,
+                layout.size.height,
+            ),
+        }]
     }
 }

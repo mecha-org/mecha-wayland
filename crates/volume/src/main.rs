@@ -476,12 +476,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         display: Display::Flex,
         flex_direction: FlexDirection::Row,
         size: Size {
-            width: percent(1.0),
-            height: length(52.0),
+            width: percent(1.0_f32),
+            height: length(52.0_f32),
         },
         padding: Rect {
-            left: length(60.0),
-            right: length(60.0),
+            left: length(60.0_f32),
+            right: length(60.0_f32),
             top: zero(),
             bottom: zero(),
         },
@@ -497,12 +497,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         justify_content: Some(JustifyContent::Center),
         align_items: Some(AlignItems::Center),
         size: Size {
-            width: percent(1.0),
-            height: percent(1.0),
+            width: percent(1.0_f32),
+            height: percent(1.0_f32),
         },
         gap: Size {
             width: zero(),
-            height: length(40.0),
+            height: length(40.0_f32),
         },
         ..Default::default()
     };

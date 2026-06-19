@@ -281,7 +281,7 @@ fn main() {
                 {
                     let new_count = s.ui.count + delta;
                     s.ui.set_count(new_count);
-                    redraw(s);
+                    s.ui.recompute_layout();
                 }
             }),
         )
@@ -291,7 +291,7 @@ fn main() {
                     if let Some(delta) = hit_button(&s.ui, *x, *y) {
                         let new_count = s.ui.count + delta;
                         s.ui.set_count(new_count);
-                        redraw(s);
+                        s.ui.recompute_layout();
                     }
                 }
             }),
@@ -305,7 +305,7 @@ fn main() {
                 {
                     let new_count = s.ui.count + delta;
                     s.ui.set_count(new_count);
-                    redraw(s);
+                    s.ui.recompute_layout();
                 }
             }),
         )
@@ -346,35 +346,6 @@ fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
     } else {
         None
     }
-}
-
-fn redraw(s: &mut AppState) {
-    // recompute layout regardless of surface availability
-    s.ui.recompute_layout();
-    let free_idx = if !s.ui.buf_in_flight[0] {
-        0
-    } else if !s.ui.buf_in_flight[1] {
-        1
-    } else {
-        return;
-    };
-
-    let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
-    s.renderer.active_surface(surface);
-    render_ui(&mut s.renderer, &s.ui);
-
-    let (w, h) = s.ui.surface_size;
-    s.wayland
-        .surface
-        .attach(s.ui.surface_id, s.ui.wl_buf_ids[free_idx], 0, 0);
-    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
-
-    let cb_id = s.wayland.surface.frame(s.ui.surface_id);
-    s.wayland.callback.register_frame(cb_id);
-
-    s.wayland.surface.commit(s.ui.surface_id);
-    s.ui.buf_in_flight[free_idx] = true;
-    s.wayland.flush();
 }
 
 fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {

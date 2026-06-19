@@ -349,6 +349,8 @@ fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
 }
 
 fn redraw(s: &mut AppState) {
+    // recompute layout regardless of surface availability
+    s.ui.recompute_layout();
     let free_idx = if !s.ui.buf_in_flight[0] {
         0
     } else if !s.ui.buf_in_flight[1] {
@@ -359,7 +361,6 @@ fn redraw(s: &mut AppState) {
 
     let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
     s.renderer.active_surface(surface);
-    s.ui.recompute_layout();
     render_ui(&mut s.renderer, &s.ui);
 
     let (w, h) = s.ui.surface_size;

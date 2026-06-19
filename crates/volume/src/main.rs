@@ -296,6 +296,19 @@ fn main() {
                 }
             }),
         )
+        .mount(
+            app::Module::new().on(|s: &mut AppState, ev: &interactivity::TouchEvent| {
+                if let interactivity::TouchEvent::Motion {
+                    x, y, ..
+                } = ev
+                    && let Some(delta) = hit_button(&s.ui, *x, *y)
+                {
+                    let new_count = s.ui.count + delta;
+                    s.ui.set_count(new_count);
+                    redraw(s);
+                }
+            }),
+        )
         .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
             s.timer.start_timer(Relative {
                 duration: Duration::from_secs(2),

@@ -20,7 +20,7 @@ members = [
     "crates/volume",
     "crates/interactivity",
 ]
-default-members = ["crates/ui"]
+default-members = ["crates/launcher"]
 resolver = "2"
 
 [workspace.dependencies]

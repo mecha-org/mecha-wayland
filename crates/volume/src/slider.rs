@@ -13,10 +13,14 @@ pub struct Slider {
     #[widget(child)]
     pub div: Div<Div<()>>,
     pub value: f32,
+    pub normalized_value: f32,
+    pub min: f32,
+    pub max: f32,
 }
 
 impl Slider {
-    pub fn new(value: f32) -> Self {
+    pub fn new(value: f32, min: f32, max: f32) -> Self {
+        let normalized_value = (value - min) / (max - min);
         let style = Style {
             display: Display::Flex,
             size: Size {
@@ -41,7 +45,7 @@ impl Slider {
             Style {
                 size: Size {
                     width: percent(1.0_f32),
-                    height: percent(value),
+                    height: percent(normalized_value),
                 },
                 ..Default::default()
             },
@@ -56,17 +60,19 @@ impl Slider {
             style,
             div,
             value,
+            normalized_value,
+            min,
+            max,
         }
     }
 
-    pub fn set_value(&mut self, tree: &mut WidgetTree, value: f32) {
-        self.value = value;
+    pub fn update_ui(&mut self, tree: &mut WidgetTree) {
         self.div.children.set_style(
             tree,
             Style {
                 size: Size {
                     width: percent(1.0_f32),
-                    height: percent(value),
+                    height: percent(self.normalized_value),
                 },
                 ..Default::default()
             },
@@ -74,10 +80,14 @@ impl Slider {
         tree.mark_dirty(self.div.children.node_id()).unwrap();
     }
 
-    pub fn calculate_delta(&self, x: f64, y: f64, rect: utils::Rect, current: i32) -> i32 {
+    pub fn set_value(&mut self, value: f32) {
+        self.value = value.clamp(self.min, self.max);
+        self.normalized_value = self.value / (self.max - self.min);
+    }
+
+    pub fn calculate_new_value(&self, y: f64, rect: utils::Rect) -> f32 {
         let normalized = 1.0 + ((rect.origin.y() - y as f32) / rect.size.height());
-        let new_count = (normalized * 10.0).round() as i32;
-        new_count - current
+        normalized.clamp(0.0, 1.0) * (self.max - self.min) + self.min
     }
 }
 

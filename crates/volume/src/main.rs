@@ -27,6 +27,8 @@ use timer::{Relative, Timer};
 use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
+const MIN_VOLUME: i32 = 0;
+const MAX_VOLUME: i32 = 10;
 
 type RowDiv = Div<(Button, Text, Button)>;
 type RootDiv = Div<(Text, Slider, RowDiv)>;
@@ -60,17 +62,15 @@ impl UiState {
     }
 
     fn set_count(&mut self, count: i32) {
-        self.count = count;
+        self.count = count.clamp(MIN_VOLUME, MAX_VOLUME);
         self.root
             .children
             .2
             .children
             .1
-            .set_text(&mut self.tree, format!("{count}"));
-        self.root
-            .children
-            .1
-            .set_value(&mut self.tree, (count as f32 / 10.0).clamp(0.0, 1.0));
+            .set_text(&mut self.tree, format!("{}", self.count));
+        self.root.children.1.set_value(self.count as f32);
+        self.root.children.1.update_ui(&mut self.tree);
     }
 
     fn recompute_layout(&mut self) {
@@ -277,7 +277,7 @@ fn main() {
                 if let interactivity::PointerEvent::ButtonPress {
                     button: 272, x, y, ..
                 } = ev
-                    && let Some(delta) = hit_button(&s.ui, *x, *y)
+                    && let Some(delta) = calculate_delta(&s.ui, *x, *y)
                 {
                     let new_count = s.ui.count + delta;
                     s.ui.set_count(new_count);
@@ -288,7 +288,7 @@ fn main() {
         .mount(
             app::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(&s.ui, *x, *y) {
+                    if let Some(delta) = calculate_delta(&s.ui, *x, *y) {
                         let new_count = s.ui.count + delta;
                         s.ui.set_count(new_count);
                         s.ui.recompute_layout();
@@ -298,10 +298,8 @@ fn main() {
         )
         .mount(
             app::Module::new().on(|s: &mut AppState, ev: &interactivity::TouchEvent| {
-                if let interactivity::TouchEvent::Motion {
-                    x, y, ..
-                } = ev
-                    && let Some(delta) = hit_button(&s.ui, *x, *y)
+                if let interactivity::TouchEvent::Motion { x, y, .. } = ev
+                    && let Some(delta) = calculate_delta(&s.ui, *x, *y)
                 {
                     let new_count = s.ui.count + delta;
                     s.ui.set_count(new_count);
@@ -324,7 +322,7 @@ fn main() {
     }
 }
 
-fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
+fn calculate_delta(ui: &UiState, x: f64, y: f64) -> Option<i32> {
     let hit_id = ui.hit_areas.hit_test(x, y)?;
     let minus_id: u64 = ui.root.children.2.children.0.node_id().into();
     let plus_id: u64 = ui.root.children.2.children.2.node_id().into();
@@ -335,14 +333,15 @@ fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
     } else if hit_id == plus_id {
         Some(1)
     } else if hit_id == slider_id {
-        let layout = ui.tree.layout(ui.root.children.1.node_id()).unwrap();
+        let layout = ui.tree.layout(slider.node_id()).unwrap();
         let r = utils::Rect::new(
             layout.location.x,
             layout.location.y,
             layout.size.width,
             layout.size.height,
         );
-        Some(slider.calculate_delta(x, y, r, ui.count))
+        let new_value = slider.calculate_new_value(y, r);
+        Some((new_value.round() as i32) - ui.count)
     } else {
         None
     }
@@ -413,7 +412,7 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
 
-    let slider = Slider::new(0.0);
+    let slider = Slider::new(MIN_VOLUME as f32, MIN_VOLUME as f32, MAX_VOLUME as f32);
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);

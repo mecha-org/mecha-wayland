@@ -14,10 +14,11 @@ members = [
     "crates/ui-macro",
     "crates/animation",
     "crates/counter",
-    "crates/volume",
-    "crates/interactivity",
+    "crates/launcher",
     "crates/launcher/status-bar",
     "crates/launcher/lock-screen",
+    "crates/volume",
+    "crates/interactivity",
 ]
 default-members = ["crates/ui"]
 resolver = "2"

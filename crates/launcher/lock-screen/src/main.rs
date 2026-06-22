@@ -79,7 +79,7 @@ struct AppState {
 impl AppState {
     fn new() -> Self {
         let ring = io_ring::Ring::default();
-        let wayland = Wayland::new(ring.get_proxy()).expect("wayland connection");
+        let wayland = Wayland::new(ring.proxy()).expect("wayland connection");
         let mut renderer = renderer::Renderer::new().expect("renderer");
 
         use renderer::commands::*;
@@ -89,7 +89,7 @@ impl AppState {
         renderer.init_command_queue::<DrawMonochromeSprite>();
         renderer.init_command_queue::<DrawText>();
 
-        let timer = Timer::new(ring.get_proxy());
+        let timer = Timer::new(ring.proxy());
 
         Self {
             ring,

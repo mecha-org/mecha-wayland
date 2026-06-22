@@ -18,12 +18,18 @@ members = [
     "crates/launcher/status-bar",
     "crates/launcher/lock-screen",
     "crates/volume",
-    "crates/interactivity",
+    "crates/interactivity", "crates/window-manager",
 ]
 default-members = ["crates/launcher"]
 resolver = "2"
 
 [workspace.dependencies]
+# project
+app = { path = "crates/app" }
+window-manager = { path = "crates/window-manager" }
+io-ring = { path = "crates/io-ring" }
+wayland = { path = "crates/wayland" }
+
 # async / io
 io-uring = "0.7"
 nix = { version = "0.31", features = ["socket", "uio"] }

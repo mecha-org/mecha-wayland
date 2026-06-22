@@ -1,11 +1,9 @@
-
 [package]
-name = "launcher"
+name = "window-manager"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 app.workspace = true
 io-ring.workspace = true
-window-manager.workspace = true
-
+wayland.workspace = true

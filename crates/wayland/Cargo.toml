@@ -4,11 +4,3 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-app = { path = "../app" }
-io-ring = { path = "../io-ring" }
-io-uring = { workspace = true }
-libc = { workspace = true }
-bitflags = { workspace = true }
-
-[build-dependencies]
-wayland-gen = { path = "../wayland-gen" }

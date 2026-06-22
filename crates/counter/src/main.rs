@@ -107,8 +107,8 @@ struct AppState {
 impl AppState {
     fn new() -> Self {
         let ring = Ring::default();
-        let timer = Timer::new(ring.get_proxy());
-        let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
+        let timer = Timer::new(ring.proxy());
+        let wayland = Wayland::new(ring.proxy()).expect("failed to create wayland connection");
         let renderer = ::renderer::Renderer::new().expect("failed to create renderer");
 
         Self {

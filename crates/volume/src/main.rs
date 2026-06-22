@@ -28,7 +28,8 @@ use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 const MIN_VOLUME: i32 = 0;
-const MAX_VOLUME: i32 = 10;
+const MAX_VOLUME: i32 = 100;
+const STEP_SIZE: i32 = 10;
 
 type RowDiv = Div<(Button, Text, Button)>;
 type RootDiv = Div<(Text, Slider, RowDiv)>;
@@ -329,9 +330,9 @@ fn calculate_delta(ui: &UiState, x: f64, y: f64) -> Option<i32> {
     let slider = &ui.root.children.1;
     let slider_id: u64 = slider.node_id().into();
     if hit_id == minus_id {
-        Some(-1)
+        Some(-1 * STEP_SIZE)
     } else if hit_id == plus_id {
-        Some(1)
+        Some(STEP_SIZE)
     } else if hit_id == slider_id {
         let layout = ui.tree.layout(slider.node_id()).unwrap();
         let r = utils::Rect::new(

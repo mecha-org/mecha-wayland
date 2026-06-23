@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 app.workspace = true
 io-ring.workspace = true
-wayland.workspace = true
+wayland = { workspace = true, features = ["client"] }

@@ -1853,6 +1853,17 @@ dependencies = [
 [[package]]
 name = "wayland"
 version = "0.1.0"
+dependencies = [
+ "app",
+ "bitflags 2.11.1",
+ "io-ring",
+ "io-uring",
+ "libc",
+ "proc-macro2",
+ "quick-xml",
+ "quote",
+ "serde",
+]
 
 [[package]]
 name = "wayland-gen"

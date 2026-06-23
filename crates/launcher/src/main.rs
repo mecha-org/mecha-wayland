@@ -21,7 +21,10 @@ impl Launcher {
 }
 
 fn main() {
-    let mut app = App::new(Launcher::new()).mount(window_manager::module());
+    let mut app = App::new(Launcher::new())
+        .mount(window_manager::module())
+        .mount(io_ring::module());
+
     app.dispatch(&app::Start);
     loop {
         app.dispatch(&app::PrePoll);

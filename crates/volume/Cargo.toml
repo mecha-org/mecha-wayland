@@ -11,6 +11,8 @@ ui = { path = "../ui" }
 io-ring = { path = "../io-ring" }
 timer = { path = "../timer" }
 wayland = { path = "../wayland" }
+interactivity = { path = "../interactivity" }
+utils = { path = "../utils" }
 taffy = { workspace = true }
 frunk = "0.4"
 anyhow = { workspace = true }

@@ -8,6 +8,8 @@ mod renderer;
 mod slider;
 
 use app::prelude::*;
+use interactivity::InteractivityState;
+use interactivity::hit::{HitArea, HitAreaRegistry};
 use std::os::fd::AsRawFd;
 use std::time::Duration;
 
@@ -25,6 +27,9 @@ use timer::{Relative, Timer};
 use wayland::Wayland;
 
 const DRM_FORMAT_ARGB8888: u32 = 0x34325241;
+const MIN_VOLUME: i32 = 0;
+const MAX_VOLUME: i32 = 100;
+const STEP_SIZE: i32 = 10;
 
 type RowDiv = Div<(Button, Text, Button)>;
 type RootDiv = Div<(Text, Slider, RowDiv)>;
@@ -38,8 +43,7 @@ struct UiState {
     dmabuf: [Option<::renderer::RenderableSurface<::renderer::DmaBuf>>; 2],
     wl_buf_ids: [u32; 2],
     buf_in_flight: [bool; 2],
-    cursor_x: f64,
-    cursor_y: f64,
+    hit_areas: HitAreaRegistry,
 }
 
 impl UiState {
@@ -54,23 +58,20 @@ impl UiState {
             dmabuf: [None, None],
             wl_buf_ids: [0, 0],
             buf_in_flight: [false, false],
-            cursor_x: 0.0,
-            cursor_y: 0.0,
+            hit_areas: HitAreaRegistry::new(),
         }
     }
 
     fn set_count(&mut self, count: i32) {
-        self.count = count;
+        self.count = count.clamp(MIN_VOLUME, MAX_VOLUME);
         self.root
             .children
             .2
             .children
             .1
-            .set_text(&mut self.tree, format!("{count}"));
-        self.root
-            .children
-            .1
-            .set_value(&mut self.tree, (count as f32 / 10.0).clamp(0.0, 1.0));
+            .set_text(&mut self.tree, format!("{}", self.count));
+        self.root.children.1.set_value(self.count as f32);
+        self.root.children.1.update_ui(&mut self.tree);
     }
 
     fn recompute_layout(&mut self) {
@@ -83,38 +84,22 @@ impl UiState {
                 height: AvailableSpace::Definite(h as f32),
             },
         );
+        self.rebuild_hit_areas();
+    }
+
+    fn rebuild_hit_areas(&mut self) {
+        self.hit_areas.clear();
+        for cmd in self.render_commands() {
+            if let RenderCommand::RegisterHitArea { id, rect } = cmd {
+                self.hit_areas.push(HitArea { id, rect });
+            }
+        }
     }
 
     fn render_commands(&self) -> Vec<RenderCommand> {
         let layout = self.tree.layout(self.root.node_id()).unwrap();
         self.root
             .render_node(layout, &self.tree, ui::Point::new(0.0, 0.0))
-    }
-
-    fn minus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
-        let btn = self
-            .tree
-            .layout(self.root.children.2.children.0.node_id())
-            .unwrap();
-        let lx = (row.location.x + btn.location.x) as f64;
-        let ly = (row.location.y + btn.location.y) as f64;
-        let lw = btn.size.width as f64;
-        let lh = btn.size.height as f64;
-        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
-    }
-
-    fn plus_contains(&self, x: f64, y: f64) -> bool {
-        let row = self.tree.layout(self.root.children.2.node_id()).unwrap();
-        let btn = self
-            .tree
-            .layout(self.root.children.2.children.2.node_id())
-            .unwrap();
-        let lx = (row.location.x + btn.location.x) as f64;
-        let ly = (row.location.y + btn.location.y) as f64;
-        let lw = btn.size.width as f64;
-        let lh = btn.size.height as f64;
-        x >= lx && x <= lx + lw && y >= ly && y <= ly + lh
     }
 }
 
@@ -123,6 +108,7 @@ struct AppState {
     ring: Ring,
     timer: Timer,
     wayland: Wayland,
+    interactivity: InteractivityState,
     renderer: ::renderer::Renderer,
     ui: UiState,
 }
@@ -139,6 +125,7 @@ impl AppState {
             timer,
             wayland,
             renderer,
+            interactivity: InteractivityState::new(),
             ui: UiState::new(),
         }
     }
@@ -159,6 +146,7 @@ fn main() {
         .mount(timer::module())
         .mount(renderer::module())
         .mount(wayland::module())
+        .mount(interactivity::module())
         .mount(app::Module::new().on(|s: &mut AppState, _: &app::Start| {
             s.renderer
                 .upload_atlas(&atlas::UI)
@@ -278,45 +266,45 @@ fn main() {
             }),
         )
         .mount(
-            app::Module::new().on(|_: &mut AppState, ev: &wayland::KeyboardEvent| {
-                if let wayland::KeyboardEvent::Key { key, state, .. } = ev {
-                    if (*key == 1 || *key == 16) && *state == wayland::KeyState::Pressed {
-                        std::process::exit(0);
-                    }
+            app::Module::new().on(|_: &mut AppState, ev: &interactivity::KeyEvent| {
+                // Key 1 is escape
+                if let interactivity::KeyEvent::Press { key: 1, .. } = ev {
+                    std::process::exit(0);
                 }
             }),
         )
         .mount(
-            app::Module::new().on(|s: &mut AppState, ev: &wayland::PointerEvent| match ev {
-                wayland::PointerEvent::Motion {
-                    surface_x,
-                    surface_y,
-                    ..
-                } => {
-                    s.ui.cursor_x = *surface_x;
-                    s.ui.cursor_y = *surface_y;
+            app::Module::new().on(|s: &mut AppState, ev: &interactivity::PointerEvent| {
+                if let interactivity::PointerEvent::ButtonPress {
+                    button: 272, x, y, ..
+                } = ev
+                    && let Some(delta) = calculate_delta(&s.ui, *x, *y)
+                {
+                    let new_count = s.ui.count + delta;
+                    s.ui.set_count(new_count);
+                    s.ui.recompute_layout();
                 }
-                wayland::PointerEvent::Button {
-                    button: _, state, ..
-                } if *state == wayland::ButtonState::Pressed => {
-                    let delta = hit_button(&s.ui, s.ui.cursor_x, s.ui.cursor_y);
-                    if let Some(delta) = delta {
-                        let new_count = s.ui.count + delta;
-                        s.ui.set_count(new_count);
-                        redraw(s);
-                    }
-                }
-                _ => {}
             }),
         )
         .mount(
             app::Module::new().on(|s: &mut AppState, ev: &wayland::TouchEvent| {
                 if let wayland::TouchEvent::Down { x, y, .. } = ev {
-                    if let Some(delta) = hit_button(&s.ui, *x, *y) {
+                    if let Some(delta) = calculate_delta(&s.ui, *x, *y) {
                         let new_count = s.ui.count + delta;
                         s.ui.set_count(new_count);
-                        redraw(s);
+                        s.ui.recompute_layout();
                     }
+                }
+            }),
+        )
+        .mount(
+            app::Module::new().on(|s: &mut AppState, ev: &interactivity::TouchEvent| {
+                if let interactivity::TouchEvent::Motion { x, y, .. } = ev
+                    && let Some(delta) = calculate_delta(&s.ui, *x, *y)
+                {
+                    let new_count = s.ui.count + delta;
+                    s.ui.set_count(new_count);
+                    s.ui.recompute_layout();
                 }
             }),
         )
@@ -335,42 +323,29 @@ fn main() {
     }
 }
 
-fn hit_button(ui: &UiState, x: f64, y: f64) -> Option<i32> {
-    if ui.minus_contains(x, y) {
-        return Some(-1);
-    }
-    if ui.plus_contains(x, y) {
-        return Some(1);
-    }
-    None
-}
-
-fn redraw(s: &mut AppState) {
-    let free_idx = if !s.ui.buf_in_flight[0] {
-        0
-    } else if !s.ui.buf_in_flight[1] {
-        1
+fn calculate_delta(ui: &UiState, x: f64, y: f64) -> Option<i32> {
+    let hit_id = ui.hit_areas.hit_test(x, y)?;
+    let minus_id: u64 = ui.root.children.2.children.0.node_id().into();
+    let plus_id: u64 = ui.root.children.2.children.2.node_id().into();
+    let slider = &ui.root.children.1;
+    let slider_id: u64 = slider.node_id().into();
+    if hit_id == minus_id {
+        Some(-1 * STEP_SIZE)
+    } else if hit_id == plus_id {
+        Some(STEP_SIZE)
+    } else if hit_id == slider_id {
+        let layout = ui.tree.layout(slider.node_id()).unwrap();
+        let r = utils::Rect::new(
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        );
+        let new_value = slider.calculate_new_value(y, r);
+        Some((new_value.round() as i32) - ui.count)
     } else {
-        return;
-    };
-
-    let surface = s.ui.dmabuf[free_idx].as_ref().unwrap();
-    s.renderer.active_surface(surface);
-    s.ui.recompute_layout();
-    render_ui(&mut s.renderer, &s.ui);
-
-    let (w, h) = s.ui.surface_size;
-    s.wayland
-        .surface
-        .attach(s.ui.surface_id, s.ui.wl_buf_ids[free_idx], 0, 0);
-    s.wayland.surface.damage(s.ui.surface_id, 0, 0, w, h);
-
-    let cb_id = s.wayland.surface.frame(s.ui.surface_id);
-    s.wayland.callback.register_frame(cb_id);
-
-    s.wayland.surface.commit(s.ui.surface_id);
-    s.ui.buf_in_flight[free_idx] = true;
-    s.wayland.flush();
+        None
+    }
 }
 
 fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
@@ -438,7 +413,19 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
 
-    let slider = Slider::new(0.0);
+    let mut slider = Slider::new(MIN_VOLUME as f32, MIN_VOLUME as f32, MAX_VOLUME as f32);
+    let background_color = Color::rgb(0.0, 0.47, 0.71);
+    let foreground_color = Color::rgb(0.37, 0.8, 0.95);
+    slider.div.color = background_color;
+    slider.div.z = 0.95;
+    slider.div.border_radius = 8.0;
+    slider.div.border_thickness = 2.0;
+    slider.div.border_color = foreground_color;
+    slider.div.children.color = foreground_color;
+    slider.div.children.z = 1.0;
+    slider.div.children.border_radius = 8.0;
+    slider.div.children.border_thickness = 2.0;
+    slider.div.children.border_color = foreground_color;
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);
@@ -473,12 +460,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         display: Display::Flex,
         flex_direction: FlexDirection::Row,
         size: Size {
-            width: percent(1.0),
-            height: length(52.0),
+            width: percent(1.0_f32),
+            height: length(52.0_f32),
         },
         padding: Rect {
-            left: length(60.0),
-            right: length(60.0),
+            left: length(60.0_f32),
+            right: length(60.0_f32),
             top: zero(),
             bottom: zero(),
         },
@@ -494,12 +481,12 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
         justify_content: Some(JustifyContent::Center),
         align_items: Some(AlignItems::Center),
         size: Size {
-            width: percent(1.0),
-            height: percent(1.0),
+            width: percent(1.0_f32),
+            height: percent(1.0_f32),
         },
         gap: Size {
             width: zero(),
-            height: length(40.0),
+            height: length(40.0_f32),
         },
         ..Default::default()
     };

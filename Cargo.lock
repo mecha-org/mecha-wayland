@@ -1769,6 +1769,7 @@ dependencies = [
  "assets",
  "frunk",
  "glow",
+ "interactivity",
  "io-ring",
  "io-uring",
  "libc",
@@ -1779,6 +1780,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ui",
+ "utils",
  "wayland",
 ]
 

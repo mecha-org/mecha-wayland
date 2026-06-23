@@ -413,7 +413,19 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     title.z = 0.95;
     title.atlas_id = Some(atlas_id);
 
-    let slider = Slider::new(MIN_VOLUME as f32, MIN_VOLUME as f32, MAX_VOLUME as f32);
+    let mut slider = Slider::new(MIN_VOLUME as f32, MIN_VOLUME as f32, MAX_VOLUME as f32);
+    let background_color = Color::rgb(0.0, 0.47, 0.71);
+    let foreground_color = Color::rgb(0.37, 0.8, 0.95);
+    slider.div.color = background_color;
+    slider.div.z = 0.95;
+    slider.div.border_radius = 8.0;
+    slider.div.border_thickness = 2.0;
+    slider.div.border_color = foreground_color;
+    slider.div.children.color = foreground_color;
+    slider.div.children.z = 1.0;
+    slider.div.children.border_radius = 8.0;
+    slider.div.children.border_thickness = 2.0;
+    slider.div.children.border_color = foreground_color;
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);

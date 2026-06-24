@@ -1,30 +1,24 @@
+mod globals;
+mod render;
+mod window;
+pub mod prelude;
+
 use app::{RegisteredModule, prelude::State};
 use io_ring::RingProxy;
-use std::{
-    marker::PhantomData,
-    os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
-    ptr,
-};
-use wayland::{Handle, Interface, *};
+use std::{collections::HashMap, marker::PhantomData};
+use wayland::{Interface, *};
 
-const BAR_HEIGHT: u32 = 30;
-const BAR_COLOR: u32 = 0x00_1E_1E_2E;
+use globals::WaylandGlobals;
+use window::{Window, WindowKindHandles};
 
-#[derive(Default)]
-pub struct WaylandGlobals {
-    compositor: Option<Handle<WlCompositor>>,
-    shm: Option<Handle<WlShm>>,
-    output: Option<Handle<WlOutput>>,
-    layer_shell: Option<Handle<ZwlrLayerShellV1>>,
-    surface: Option<Handle<WlSurface>>,
-    buffer: Option<Handle<WlBuffer>>,
-}
+pub use window::{WindowId, WindowKind, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor};
 
 #[derive(State)]
 pub struct WindowManager {
     wayland: Wayland,
     globals: WaylandGlobals,
-    windows_initialised: bool,
+    pending: Vec<WindowSettings>,
+    windows: HashMap<WindowId, Window<()>>,
 }
 
 impl WindowManager {
@@ -33,146 +27,154 @@ impl WindowManager {
         Self {
             wayland,
             globals: WaylandGlobals::default(),
-            windows_initialised: false,
+            pending: Vec::new(),
+            windows: HashMap::new(),
         }
     }
+
     pub fn start(&mut self) {
         let display = self.wayland.display();
         display.get_registry();
         display.sync();
     }
+
     pub fn pre_poll(&mut self) {
         self.wayland.proxy().flush();
     }
+
     pub fn poll(&mut self) {}
-}
 
-fn alloc_shm_buffer(shm: &Handle<WlShm>, width: u32, height: u32) -> Handle<WlBuffer> {
-    let stride = width * 4;
-    let size = (stride * height) as usize;
-
-    let fd: OwnedFd = unsafe {
-        let raw = libc::memfd_create(c"wm_status_bar".as_ptr(), libc::MFD_CLOEXEC);
-        assert!(raw >= 0, "memfd_create failed");
-        assert_eq!(libc::ftruncate(raw, size as i64), 0, "ftruncate failed");
-        OwnedFd::from_raw_fd(raw)
-    };
-
-    unsafe {
-        let p = libc::mmap(
-            ptr::null_mut(),
-            size,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd.as_raw_fd(),
-            0,
-        );
-        assert!(p != libc::MAP_FAILED, "mmap failed");
-        let pixels = std::slice::from_raw_parts_mut(p as *mut u32, size / 4);
-        pixels.fill(BAR_COLOR);
-        libc::munmap(p, size);
+    pub fn create_window(&mut self, settings: WindowSettings) {
+        self.pending.push(settings);
     }
 
-    let pool = shm.create_pool(fd.as_fd(), size as i32);
-    let buffer = pool.create_buffer(0, width as i32, height as i32, stride as i32, WlShmFormat::Xrgb8888);
-    pool.destroy();
-    buffer
-}
+    fn flush_pending(&mut self) {
+        let pending = std::mem::take(&mut self.pending);
+        for settings in pending {
+            let WindowSettings { width, height, color, kind } = settings;
+            match kind {
+                WindowKind::LayerShell { layer, anchor, exclusive_zone, namespace } => {
+                    let compositor = self
+                        .globals
+                        .compositor
+                        .clone()
+                        .unwrap_or_else(|| panic!("compositor global missing"));
+                    let layer_shell = self
+                        .globals
+                        .layer_shell
+                        .clone()
+                        .unwrap_or_else(|| panic!("layer_shell global missing"));
 
-pub struct Window<T> {
-    _phantom: PhantomData<T>,
+                    let surface = compositor.create_surface();
+                    let layer_surface =
+                        layer_shell.get_layer_surface(&surface, None, layer, &namespace);
+                    layer_surface.set_size(width, height);
+                    layer_surface.set_anchor(anchor);
+                    layer_surface.set_exclusive_zone(exclusive_zone);
+                    surface.commit();
+
+                    let id = WindowId(layer_surface.object_id().expect("just allocated"));
+                    self.windows.insert(
+                        id,
+                        Window {
+                            surface,
+                            buffer: None,
+                            color,
+                            width,
+                            height,
+                            kind: WindowKindHandles::LayerShell { layer_surface },
+                            _phantom: PhantomData,
+                        },
+                    );
+                }
+                WindowKind::Xdg { title } => {
+                    let compositor = self
+                        .globals
+                        .compositor
+                        .clone()
+                        .unwrap_or_else(|| panic!("compositor global missing"));
+                    let xdg_wm_base = self
+                        .globals
+                        .xdg_wm_base
+                        .clone()
+                        .unwrap_or_else(|| panic!("xdg_wm_base global missing"));
+
+                    let surface = compositor.create_surface();
+                    let xdg_surface = xdg_wm_base.get_xdg_surface(&surface);
+                    let toplevel = xdg_surface.get_toplevel();
+                    toplevel.set_title(&title);
+                    surface.commit();
+
+                    let id = WindowId(xdg_surface.object_id().expect("just allocated"));
+                    self.windows.insert(
+                        id,
+                        Window {
+                            surface,
+                            buffer: None,
+                            color,
+                            width,
+                            height,
+                            kind: WindowKindHandles::Xdg { xdg_surface, toplevel },
+                            _phantom: PhantomData,
+                        },
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
     app::Module::new()
         .mount(wayland::module::<S>().into_module())
-        .on(|window_manager: &mut WindowManager, _: &app::Start| window_manager.start())
-        .on(|window_manager: &mut WindowManager, _: &app::PrePoll| window_manager.pre_poll())
-        .on(|window_manager: &mut WindowManager, _: &app::Poll| window_manager.poll())
-        .on(
-            |_window_manager: &mut WindowManager, event: &wayland::WlDisplayEvent| {
-                println!("{:?}", event);
-            },
-        )
-        .on(
-            |window_manager: &mut WindowManager, event: &wayland::WlRegistryEvent| {
-                if let wayland::WlRegistryEvent::Global { sender, name, interface, version } = event {
-                    match interface.as_str() {
-                        WlCompositor::NAME => {
-                            window_manager.globals.compositor = Some(sender.bind(*name, *version))
-                        }
-                        WlShm::NAME => {
-                            window_manager.globals.shm = Some(sender.bind(*name, *version))
-                        }
-                        ZwlrLayerShellV1::NAME => {
-                            window_manager.globals.layer_shell = Some(sender.bind(*name, *version))
-                        }
-                        WlOutput::NAME => {
-                            window_manager.globals.output = Some(sender.bind(*name, *version))
-                        }
-                        _ => {}
-                    }
+        .on(|wm: &mut WindowManager, _: &app::Start| wm.start())
+        .on(|wm: &mut WindowManager, _: &app::PrePoll| wm.pre_poll())
+        .on(|wm: &mut WindowManager, _: &app::Poll| wm.poll())
+        .on(|_: &mut WindowManager, event: &wayland::WlDisplayEvent| {
+            println!("{:?}", event);
+        })
+        .on(|wm: &mut WindowManager, event: &wayland::WlRegistryEvent| {
+            if let wayland::WlRegistryEvent::Global { sender, name, interface, version } = event {
+                match interface.as_str() {
+                    WlCompositor::NAME => wm.globals.compositor = Some(sender.bind(*name, *version)),
+                    WlShm::NAME => wm.globals.shm = Some(sender.bind(*name, *version)),
+                    ZwlrLayerShellV1::NAME => wm.globals.layer_shell = Some(sender.bind(*name, *version)),
+                    WlOutput::NAME => wm.globals.output = Some(sender.bind(*name, *version)),
+                    XdgWmBase::NAME => wm.globals.xdg_wm_base = Some(sender.bind(*name, *version)),
+                    _ => {}
                 }
-            },
-        )
-        .on(
-            |window_manager: &mut WindowManager, _: &wayland::WlCallbackEvent| {
-                if window_manager.windows_initialised {
-                    return;
-                }
-
-                let (compositor, layer_shell) = {
-                    let g = &window_manager.globals;
-                    match (g.compositor.clone(), g.layer_shell.clone()) {
-                        (Some(c), Some(ls)) => (c, ls),
-                        _ => return,
-                    }
+            }
+        })
+        .on(|wm: &mut WindowManager, _: &wayland::WlCallbackEvent| {
+            wm.flush_pending();
+        })
+        .on(|wm: &mut WindowManager, event: &wayland::ZwlrLayerSurfaceV1Event| {
+            if let wayland::ZwlrLayerSurfaceV1Event::Configure { sender, serial, width, height } = event {
+                let id = WindowId(sender.object_id().expect("live handle"));
+                let (w, h) = {
+                    let window = wm.windows.get(&id).expect("window exists for configure");
+                    let w = if *width == 0 { window.width } else { *width };
+                    let h = if *height == 0 { window.height } else { *height };
+                    (w, h)
                 };
-
-                let surface = compositor.create_surface();
-                let layer_surface = layer_shell.get_layer_surface(
-                    &surface,
-                    None,
-                    ZwlrLayerShellV1Layer::Top,
-                    "mechanix-status-bar",
-                );
-
-                layer_surface.set_size(0, BAR_HEIGHT);
-                layer_surface.set_anchor(
-                    ZwlrLayerSurfaceV1Anchor::Top
-                        | ZwlrLayerSurfaceV1Anchor::Left
-                        | ZwlrLayerSurfaceV1Anchor::Right,
-                );
-                layer_surface.set_exclusive_zone(BAR_HEIGHT as i32);
-                surface.commit();
-
-                window_manager.globals.surface = Some(surface);
-            },
-        )
-        .on(
-            |window_manager: &mut WindowManager, event: &wayland::ZwlrLayerSurfaceV1Event| {
-                if let wayland::ZwlrLayerSurfaceV1Event::Configure { sender, serial, width, height } = event {
-                    let (surface, shm) = {
-                        let g = &window_manager.globals;
-                        match (g.surface.clone(), g.shm.clone()) {
-                            (Some(s), Some(shm)) => (s, shm),
-                            _ => return,
-                        }
-                    };
-
-                    let w = if *width == 0 { 1920 } else { *width };
-                    let h = if *height == 0 { BAR_HEIGHT } else { *height };
-
-                    sender.ack_configure(*serial);
-
-                    let buffer = alloc_shm_buffer(&shm, w, h);
-                    surface.attach(Some(&buffer), 0, 0);
-                    surface.damage(0, 0, w as i32, h as i32);
-                    surface.commit();
-
-                    window_manager.globals.buffer = Some(buffer);
-                    window_manager.windows_initialised = true;
-                }
-            },
-        )
+                let shm = wm.globals.shm.clone().expect("shm global");
+                sender.ack_configure(*serial);
+                render::render_window(wm.windows.get_mut(&id).unwrap(), &shm, w, h);
+            }
+        })
+        .on(|wm: &mut WindowManager, event: &wayland::XdgSurfaceEvent| {
+            let wayland::XdgSurfaceEvent::Configure { sender, serial } = event;
+            let id = WindowId(sender.object_id().expect("live handle"));
+            let (w, h) = {
+                let window = wm.windows.get(&id).expect("window exists for configure");
+                (window.width, window.height)
+            };
+            let shm = wm.globals.shm.clone().expect("shm global");
+            sender.ack_configure(*serial);
+            render::render_window(wm.windows.get_mut(&id).unwrap(), &shm, w, h);
+        })
+        .on(|_: &mut WindowManager, event: &wayland::XdgWmBaseEvent| {
+            let wayland::XdgWmBaseEvent::Ping { sender, serial } = event;
+            sender.pong(*serial);
+        })
 }

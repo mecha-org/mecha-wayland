@@ -1,6 +1,8 @@
 use app::prelude::*;
 use io_ring::{Ring, RingSettings};
-use window_manager::WindowManager;
+use window_manager::{
+    WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor,
+};
 
 #[derive(State)]
 pub struct Launcher {
@@ -21,7 +23,32 @@ impl Launcher {
 }
 
 fn main() {
-    let mut app = App::new(Launcher::new())
+    let mut launcher = Launcher::new();
+
+    launcher.window_manager.create_window(WindowSettings {
+        width: 0,
+        height: 36,
+        color: 0x00_1E_1E_2E,
+        kind: WindowKind::LayerShell {
+            layer: ZwlrLayerShellV1Layer::Top,
+            anchor: ZwlrLayerSurfaceV1Anchor::Top
+                | ZwlrLayerSurfaceV1Anchor::Left
+                | ZwlrLayerSurfaceV1Anchor::Right,
+            exclusive_zone: 36,
+            namespace: "status-bar".to_string(),
+        },
+    });
+
+    launcher.window_manager.create_window(WindowSettings {
+        width: 100,
+        height: 100,
+        color: 0x00_1E_1E_2E,
+        kind: WindowKind::Xdg {
+            title: "Launcher Window".to_string(),
+        },
+    });
+
+    let mut app = App::new(launcher)
         .mount(window_manager::module())
         .mount(io_ring::module());
 

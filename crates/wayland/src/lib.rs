@@ -1,8 +1,8 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::mem;
-use std::os::fd::{IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -32,13 +32,30 @@ pub struct RawWaylandEvent {
 }
 impl Event for RawWaylandEvent {}
 
+const CMSG_BUF_SIZE: usize = 256; // enough for 28 fds on any platform
+
 struct WaylandInner {
     fd: RawFd,
     ring_proxy: RingProxy,
+
+    // Read side
     read_buf: Vec<u8>,
+    cmsg_recv_buf: Vec<u8>,
+    recv_iov: libc::iovec,
+    recv_msghdr: libc::msghdr,
+
+    // Write side
     write_buf: Vec<u8>,
-    fds_buf: Vec<RawFd>,
+    write_fds_buf: Vec<OwnedFd>,
     write_in_flight: Vec<u8>,
+    write_fds_in_flight: Vec<OwnedFd>,
+    write_cmsg_buf: Vec<u8>,
+    send_iov: libc::iovec,
+    send_msghdr: libc::msghdr,
+
+    // Fd queue populated from recvmsg ancillary data; consumed by generated parse functions
+    fd_queue: VecDeque<OwnedFd>,
+
     read_token: Option<IoToken>,
     write_token: Option<IoToken>,
     next_id: u32,
@@ -49,14 +66,48 @@ struct WaylandInner {
 
 impl WaylandInner {
     fn submit_read(&mut self) {
-        let sqe = opcode::Read::new(
-            types::Fd(self.fd),
-            self.read_buf.as_mut_ptr(),
-            self.read_buf.len() as u32,
-        )
-        .build();
-        let token = self.ring_proxy.push(sqe);
-        self.read_token = Some(token);
+        // SAFETY: WaylandInner lives at a stable heap address (behind Rc<RefCell>).
+        // read_buf and cmsg_recv_buf data pointers are stable (never reallocated).
+        // recv_iov and recv_msghdr fields are at stable offsets within that allocation.
+        // All pointed-to memory remains valid until the matching CQE clears read_token.
+        unsafe {
+            let iov_ptr = &mut self.recv_iov as *mut libc::iovec;
+            (*iov_ptr).iov_base = self.read_buf.as_mut_ptr() as *mut libc::c_void;
+            (*iov_ptr).iov_len = self.read_buf.len();
+
+            let msghdr_ptr = &mut self.recv_msghdr as *mut libc::msghdr;
+            std::ptr::write(msghdr_ptr, mem::zeroed());
+            (*msghdr_ptr).msg_iov = iov_ptr;
+            (*msghdr_ptr).msg_iovlen = 1;
+            (*msghdr_ptr).msg_control = self.cmsg_recv_buf.as_mut_ptr() as *mut libc::c_void;
+            (*msghdr_ptr).msg_controllen = self.cmsg_recv_buf.len() as libc::size_t;
+
+            let sqe = opcode::RecvMsg::new(types::Fd(self.fd), msghdr_ptr).build();
+            let token = self.ring_proxy.push(sqe);
+            self.read_token = Some(token);
+        }
+    }
+
+    fn extract_recv_fds(&mut self) {
+        // SAFETY: recv_msghdr was filled by the kernel during RecvMsg.
+        // msg_controllen reflects actual received control data length.
+        unsafe {
+            let msghdr_ptr = &self.recv_msghdr as *const libc::msghdr;
+            let mut cmsg = libc::CMSG_FIRSTHDR(msghdr_ptr);
+            while !cmsg.is_null() {
+                if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                    let data_len =
+                        ((*cmsg).cmsg_len as usize).saturating_sub(libc::CMSG_LEN(0) as usize);
+                    let n_fds = data_len / mem::size_of::<RawFd>();
+                    let fd_ptr = libc::CMSG_DATA(cmsg) as *const RawFd;
+                    for i in 0..n_fds {
+                        self.fd_queue
+                            .push_back(OwnedFd::from_raw_fd(*fd_ptr.add(i)));
+                    }
+                }
+                cmsg = libc::CMSG_NXTHDR(msghdr_ptr, cmsg);
+            }
+        }
     }
 
     fn submit_write(&mut self) {
@@ -67,14 +118,61 @@ impl WaylandInner {
             return;
         }
         mem::swap(&mut self.write_in_flight, &mut self.write_buf);
-        let sqe = opcode::Write::new(
-            types::Fd(self.fd),
-            self.write_in_flight.as_ptr(),
-            self.write_in_flight.len() as u32,
-        )
-        .build();
-        let token = self.ring_proxy.push(sqe);
-        self.write_token = Some(token);
+        mem::swap(&mut self.write_fds_in_flight, &mut self.write_fds_buf);
+
+        if self.write_fds_in_flight.is_empty() {
+            let sqe = opcode::Write::new(
+                types::Fd(self.fd),
+                self.write_in_flight.as_ptr(),
+                self.write_in_flight.len() as u32,
+            )
+            .build();
+            let token = self.ring_proxy.push(sqe);
+            self.write_token = Some(token);
+        } else {
+            // SAFETY: Same stability argument as submit_read.
+            // write_in_flight, write_cmsg_buf, and write_fds_in_flight are kept alive
+            // as fields of WaylandInner until the CQE clears write_token.
+            unsafe {
+                let fd_count = self.write_fds_in_flight.len();
+                let fd_bytes = (fd_count * mem::size_of::<RawFd>()) as u32;
+                let cmsg_space = libc::CMSG_SPACE(fd_bytes) as usize;
+                self.write_cmsg_buf.resize(cmsg_space, 0);
+
+                let iov_ptr = &mut self.send_iov as *mut libc::iovec;
+                (*iov_ptr).iov_base = self.write_in_flight.as_ptr() as *mut libc::c_void;
+                (*iov_ptr).iov_len = self.write_in_flight.len();
+
+                let msghdr_ptr = &mut self.send_msghdr as *mut libc::msghdr;
+                std::ptr::write(msghdr_ptr, mem::zeroed());
+                (*msghdr_ptr).msg_iov = iov_ptr;
+                (*msghdr_ptr).msg_iovlen = 1;
+                (*msghdr_ptr).msg_control = self.write_cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+                (*msghdr_ptr).msg_controllen = cmsg_space as libc::size_t;
+
+                let cmsg = libc::CMSG_FIRSTHDR(msghdr_ptr);
+                (*cmsg).cmsg_level = libc::SOL_SOCKET;
+                (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+                (*cmsg).cmsg_len = libc::CMSG_LEN(fd_bytes) as _;
+
+                let raw_fds: Vec<RawFd> = self
+                    .write_fds_in_flight
+                    .iter()
+                    .map(|f| f.as_raw_fd())
+                    .collect();
+                std::ptr::copy_nonoverlapping(
+                    raw_fds.as_ptr(),
+                    libc::CMSG_DATA(cmsg) as *mut RawFd,
+                    fd_count,
+                );
+
+                let sqe =
+                    opcode::SendMsg::new(types::Fd(self.fd), msghdr_ptr as *const libc::msghdr)
+                        .build();
+                let token = self.ring_proxy.push(sqe);
+                self.write_token = Some(token);
+            }
+        }
     }
 
     fn get_interface(&self, id: ObjectId) -> Option<&'static str> {
@@ -133,7 +231,13 @@ impl WaylandProxy {
         self.0.borrow_mut().submit_write();
     }
 
-    pub(crate) fn write_raw(&self, sender_id: u32, opcode: u16, body: &[u8]) {
+    pub(crate) fn write_raw(
+        &self,
+        sender_id: u32,
+        opcode: u16,
+        body: &[u8],
+        fds: &[BorrowedFd<'_>],
+    ) {
         let mut inner = self.0.borrow_mut();
         let total = (8 + body.len()) as u32;
         inner.write_buf.extend_from_slice(&sender_id.to_ne_bytes());
@@ -141,6 +245,11 @@ impl WaylandProxy {
             .write_buf
             .extend_from_slice(&((total << 16) | opcode as u32).to_ne_bytes());
         inner.write_buf.extend_from_slice(body);
+        for fd in fds {
+            inner
+                .write_fds_buf
+                .push(fd.try_clone_to_owned().expect("failed to dup fd"));
+        }
     }
 }
 
@@ -167,13 +276,21 @@ impl Wayland {
         object_slots.insert(display_id, display_rc);
         object_interfaces.insert(display_id, "wl_display");
 
-        let mut inner = WaylandInner {
+        let inner = WaylandInner {
             fd,
             ring_proxy,
             read_buf: vec![0u8; 65536],
+            cmsg_recv_buf: vec![0u8; CMSG_BUF_SIZE],
+            recv_iov: unsafe { mem::zeroed() },
+            recv_msghdr: unsafe { mem::zeroed() },
             write_buf: Vec::with_capacity(4096),
-            fds_buf: Vec::new(),
+            write_fds_buf: Vec::new(),
             write_in_flight: Vec::new(),
+            write_fds_in_flight: Vec::new(),
+            write_cmsg_buf: Vec::new(),
+            send_iov: unsafe { mem::zeroed() },
+            send_msghdr: unsafe { mem::zeroed() },
+            fd_queue: VecDeque::new(),
             read_token: None,
             write_token: None,
             next_id: 2,
@@ -181,11 +298,10 @@ impl Wayland {
             object_interfaces,
             deleted_object_ids: HashSet::new(),
         };
-        inner.submit_read();
+        let data = Rc::new(RefCell::new(inner));
+        data.borrow_mut().submit_read();
 
-        Self {
-            data: Rc::new(RefCell::new(inner)),
-        }
+        Self { data }
     }
 
     pub fn proxy(&self) -> WaylandProxy {
@@ -216,6 +332,10 @@ impl Wayland {
 
     pub fn invalidate_object(&self, id: ObjectId) {
         self.data.borrow_mut().invalidate_object(id);
+    }
+
+    pub fn take_fd(&self) -> Option<OwnedFd> {
+        self.data.borrow_mut().fd_queue.pop_front()
     }
 }
 
@@ -275,12 +395,14 @@ pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
                         panic!("wayland socket error: {n}");
                     }
                     let bytes = inner.read_buf[..n as usize].to_vec();
+                    inner.extract_recv_fds();
                     drop(inner);
                     wayland.data.borrow_mut().submit_read();
                     helper::parse_messages(bytes)
                 } else if Some(*token) == inner.write_token {
                     inner.write_token = None;
                     inner.write_in_flight.clear();
+                    inner.write_fds_in_flight.clear();
                     inner.submit_write();
                     Vec::new()
                 } else {
@@ -293,7 +415,7 @@ pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
         .mount(proto::generated::module::<S>().into_module());
     #[cfg(feature = "client")]
     let m = m.on(|wayland: &mut Wayland, event: &WlDisplayEvent| {
-        if let WlDisplayEvent::DeleteId { id } = event {
+        if let WlDisplayEvent::DeleteId { id, .. } = event {
             wayland.invalidate_object(ObjectId(*id));
         }
     });

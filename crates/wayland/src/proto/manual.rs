@@ -30,8 +30,8 @@ impl Interface for WlDisplay {
 #[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum WlDisplayRequest {
-    Sync { callback: Handle<WlCallback> },
-    GetRegistry { registry: Handle<WlRegistry> },
+    Sync { sender: Handle<WlDisplay>, callback: Handle<WlCallback> },
+    GetRegistry { sender: Handle<WlDisplay>, registry: Handle<WlRegistry> },
 }
 #[cfg(feature = "server")]
 impl Event for WlDisplayRequest {}
@@ -39,13 +39,16 @@ impl Event for WlDisplayRequest {}
 #[cfg(feature = "server")]
 impl WlDisplayRequest {
     pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+        let sender = wayland.get_handle::<WlDisplay>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
         match event.opcode {
             0 => Some(WlDisplayRequest::Sync {
+                sender: sender.clone(),
                 callback: wayland.new_handle(ObjectId(read_u32(data, &mut o)?)),
             }),
             1 => Some(WlDisplayRequest::GetRegistry {
+                sender,
                 registry: wayland.new_handle(ObjectId(read_u32(data, &mut o)?)),
             }),
             _ => None,
@@ -57,11 +60,13 @@ impl WlDisplayRequest {
 #[derive(Debug)]
 pub enum WlDisplayEvent {
     Error {
+        sender: Handle<WlDisplay>,
         object_id: ObjectId,
         code: u32,
         message: String,
     },
     DeleteId {
+        sender: Handle<WlDisplay>,
         id: u32,
     },
 }
@@ -70,16 +75,19 @@ impl Event for WlDisplayEvent {}
 
 #[cfg(feature = "client")]
 impl WlDisplayEvent {
-    pub fn parse(event: &RawWaylandEvent) -> Option<Self> {
+    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+        let sender = wayland.get_handle::<WlDisplay>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
         match event.opcode {
             0 => Some(WlDisplayEvent::Error {
+                sender: sender.clone(),
                 object_id: ObjectId(read_u32(data, &mut o)?),
                 code: read_u32(data, &mut o)?,
                 message: read_string(data, &mut o)?,
             }),
             1 => Some(WlDisplayEvent::DeleteId {
+                sender,
                 id: read_u32(data, &mut o)?,
             }),
             _ => None,
@@ -93,7 +101,7 @@ impl Handle<WlDisplay> {
         let cb: Handle<WlCallback> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let cb_id = cb.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 0, &cb_id.to_ne_bytes());
+        self.proxy.write_raw(sender_id, 0, &cb_id.to_ne_bytes(), &[]);
         cb
     }
 
@@ -101,7 +109,7 @@ impl Handle<WlDisplay> {
         let reg: Handle<WlRegistry> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let reg_id = reg.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 1, &reg_id.to_ne_bytes());
+        self.proxy.write_raw(sender_id, 1, &reg_id.to_ne_bytes(), &[]);
         reg
     }
 }
@@ -126,18 +134,20 @@ impl Interface for WlCallback {
 #[cfg(feature = "client")]
 #[derive(Debug)]
 pub enum WlCallbackEvent {
-    Done { callback_data: u32 },
+    Done { sender: Handle<WlCallback>, callback_data: u32 },
 }
 #[cfg(feature = "client")]
 impl Event for WlCallbackEvent {}
 
 #[cfg(feature = "client")]
 impl WlCallbackEvent {
-    pub fn parse(event: &RawWaylandEvent) -> Option<Self> {
+    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+        let sender = wayland.get_handle::<WlCallback>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
         match event.opcode {
             0 => Some(WlCallbackEvent::Done {
+                sender,
                 callback_data: read_u32(data, &mut o)?,
             }),
             _ => None,
@@ -157,14 +167,15 @@ impl Interface for WlRegistry {
 #[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum WlRegistryRequest {
-    Bind { name: u32, id: ObjectId },
+    Bind { sender: Handle<WlRegistry>, name: u32, id: ObjectId },
 }
 #[cfg(feature = "server")]
 impl Event for WlRegistryRequest {}
 
 #[cfg(feature = "server")]
 impl WlRegistryRequest {
-    pub fn parse(event: &RawWaylandEvent) -> Option<Self> {
+    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+        let sender = wayland.get_handle::<WlRegistry>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
         match event.opcode {
@@ -173,7 +184,7 @@ impl WlRegistryRequest {
                 let _interface = read_string(data, &mut o)?;
                 let _version = read_u32(data, &mut o)?;
                 let id = ObjectId(read_u32(data, &mut o)?);
-                Some(WlRegistryRequest::Bind { name, id })
+                Some(WlRegistryRequest::Bind { sender, name, id })
             }
             _ => None,
         }
@@ -184,11 +195,13 @@ impl WlRegistryRequest {
 #[derive(Debug)]
 pub enum WlRegistryEvent {
     Global {
+        sender: Handle<WlRegistry>,
         name: u32,
         interface: String,
         version: u32,
     },
     GlobalDelete {
+        sender: Handle<WlRegistry>,
         name: u32,
     },
 }
@@ -197,16 +210,19 @@ impl Event for WlRegistryEvent {}
 
 #[cfg(feature = "client")]
 impl WlRegistryEvent {
-    pub fn parse(event: &RawWaylandEvent) -> Option<Self> {
+    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+        let sender = wayland.get_handle::<WlRegistry>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
         match event.opcode {
             0 => Some(WlRegistryEvent::Global {
+                sender: sender.clone(),
                 name: read_u32(data, &mut o)?,
                 interface: read_string(data, &mut o)?,
                 version: read_u32(data, &mut o)?,
             }),
             1 => Some(WlRegistryEvent::GlobalDelete {
+                sender,
                 name: read_u32(data, &mut o)?,
             }),
             _ => None,
@@ -227,7 +243,7 @@ impl Handle<WlRegistry> {
         body.extend_from_slice(&version.to_ne_bytes());
         body.extend_from_slice(&new_id.to_ne_bytes());
 
-        self.proxy.write_raw(sender_id, 0, &body);
+        self.proxy.write_raw(sender_id, 0, &body, &[]);
         new_obj
     }
 }
@@ -241,21 +257,21 @@ pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
     let m = m
         .on(|wayland: &mut Wayland, raw: &RawWaylandEvent| {
             if wayland.get_interface(raw.object_id) == Some(WlDisplay::NAME) {
-                WlDisplayEvent::parse(raw)
+                WlDisplayEvent::parse(raw, wayland)
             } else {
                 None
             }
         })
         .on(|wayland: &mut Wayland, raw: &RawWaylandEvent| {
             if wayland.get_interface(raw.object_id) == Some(WlCallback::NAME) {
-                WlCallbackEvent::parse(raw)
+                WlCallbackEvent::parse(raw, wayland)
             } else {
                 None
             }
         })
         .on(|wayland: &mut Wayland, raw: &RawWaylandEvent| {
             if wayland.get_interface(raw.object_id) == Some(WlRegistry::NAME) {
-                WlRegistryEvent::parse(raw)
+                WlRegistryEvent::parse(raw, wayland)
             } else {
                 None
             }
@@ -272,7 +288,7 @@ pub fn module<S>() -> impl app::RegisteredModule<Wayland, S> {
         })
         .on(|wayland: &mut Wayland, raw: &RawWaylandEvent| {
             if wayland.get_interface(raw.object_id) == Some(WlRegistry::NAME) {
-                WlRegistryRequest::parse(raw)
+                WlRegistryRequest::parse(raw, wayland)
             } else {
                 None
             }

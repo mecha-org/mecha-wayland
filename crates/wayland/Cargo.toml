@@ -15,6 +15,10 @@ bitflags = { workspace = true }
 client = []
 server = []
 
+[[example]]
+name = "shm_window"
+required-features = ["client"]
+
 [build-dependencies]
 serde = { workspace = true }
 quick-xml = { workspace = true }

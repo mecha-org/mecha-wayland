@@ -11,13 +11,14 @@ pub enum GenerationType {
     Server,
 }
 
-pub fn generate<P: AsRef<Path>>(path: P, _: GenerationType) {
-    let protocol = parser::parse_xml(&path);
+pub fn generate<P: AsRef<Path>>(paths: &[P], _: GenerationType) {
+    let protocols: Vec<_> = paths.iter().map(|p| parser::parse_xml(p)).collect();
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = std::path::Path::new(&out_dir).join("generated.rs");
 
-    let interfaces: Vec<&Interface> = protocol
-        .interfaces()
+    let interfaces: Vec<&Interface> = protocols
+        .iter()
+        .flat_map(|p| p.interfaces())
         .filter(|i| !EXCLUDED.contains(&i.name.as_str()))
         .collect();
 
@@ -30,7 +31,7 @@ pub fn generate<P: AsRef<Path>>(path: P, _: GenerationType) {
     let excluded_idents: Vec<Ident> = EXCLUDED.iter().map(|n| type_ident(n)).collect();
 
     let code = quote! {
-        #[allow(unused_imports, dead_code, unused_variables, non_camel_case_types)]
+        #[allow(unused_imports, dead_code, unused_variables, unused_mut, non_camel_case_types)]
         use crate::{Handle, Interface, ObjectId, RawWaylandEvent, Wayland};
         use super::manual::{#(#excluded_idents),*};
         use app::prelude::*;
@@ -288,18 +289,13 @@ fn gen_request_enum(iface_name: &str, tname: &Ident, requests: &[&Message]) -> T
             let fields: Vec<TokenStream> = req
                 .args
                 .iter()
-                .filter(|a| a.arg_type != ArgType::Fd)
                 .map(|a| {
                     let fname = id(&a.name);
                     let ftype = parsed_field_type(iface_name, a);
                     quote! { #fname: #ftype }
                 })
                 .collect();
-            if fields.is_empty() {
-                quote! { #vname, }
-            } else {
-                quote! { #vname { #(#fields),* }, }
-            }
+            quote! { #vname { sender: Handle<#tname>, #(#fields),* }, }
         })
         .collect();
 
@@ -310,17 +306,8 @@ fn gen_request_enum(iface_name: &str, tname: &Ident, requests: &[&Message]) -> T
             let opcode = opcode as u32;
             let vname = id(&variant_name(&req.name));
             let stmts = gen_parse_stmts(iface_name, &req.args);
-            let field_names: Vec<Ident> = req
-                .args
-                .iter()
-                .filter(|a| a.arg_type != ArgType::Fd)
-                .map(|a| id(&a.name))
-                .collect();
-            let ret = if field_names.is_empty() {
-                quote! { Some(#ename::#vname) }
-            } else {
-                quote! { Some(#ename::#vname { #(#field_names),* }) }
-            };
+            let field_names: Vec<Ident> = req.args.iter().map(|a| id(&a.name)).collect();
+            let ret = quote! { Some(#ename::#vname { sender: sender.clone(), #(#field_names),* }) };
             quote! {
                 #opcode => {
                     #stmts
@@ -343,6 +330,7 @@ fn gen_request_enum(iface_name: &str, tname: &Ident, requests: &[&Message]) -> T
         #[cfg(feature = "server")]
         impl #ename {
             pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+                let sender = wayland.get_handle::<#tname>(event.object_id)?;
                 let data = &event.data;
                 let mut o = 0usize;
                 match event.opcode {
@@ -366,18 +354,13 @@ fn gen_event_enum(iface_name: &str, tname: &Ident, events: &[&Message]) -> Token
             let fields: Vec<TokenStream> = ev
                 .args
                 .iter()
-                .filter(|a| a.arg_type != ArgType::Fd)
                 .map(|a| {
                     let fname = id(&a.name);
                     let ftype = parsed_field_type(iface_name, a);
                     quote! { #fname: #ftype }
                 })
                 .collect();
-            if fields.is_empty() {
-                quote! { #vname, }
-            } else {
-                quote! { #vname { #(#fields),* }, }
-            }
+            quote! { #vname { sender: Handle<#tname>, #(#fields),* }, }
         })
         .collect();
 
@@ -388,17 +371,8 @@ fn gen_event_enum(iface_name: &str, tname: &Ident, events: &[&Message]) -> Token
             let opcode = opcode as u32;
             let vname = id(&variant_name(&ev.name));
             let stmts = gen_parse_stmts(iface_name, &ev.args);
-            let field_names: Vec<Ident> = ev
-                .args
-                .iter()
-                .filter(|a| a.arg_type != ArgType::Fd)
-                .map(|a| id(&a.name))
-                .collect();
-            let ret = if field_names.is_empty() {
-                quote! { Some(#ename::#vname) }
-            } else {
-                quote! { Some(#ename::#vname { #(#field_names),* }) }
-            };
+            let field_names: Vec<Ident> = ev.args.iter().map(|a| id(&a.name)).collect();
+            let ret = quote! { Some(#ename::#vname { sender: sender.clone(), #(#field_names),* }) };
             quote! {
                 #opcode => {
                     #stmts
@@ -421,6 +395,7 @@ fn gen_event_enum(iface_name: &str, tname: &Ident, events: &[&Message]) -> Token
         #[cfg(feature = "client")]
         impl #ename {
             pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland) -> Option<Self> {
+                let sender = wayland.get_handle::<#tname>(event.object_id)?;
                 let data = &event.data;
                 let mut o = 0usize;
                 match event.opcode {
@@ -460,7 +435,7 @@ fn gen_request_method(iface_name: &str, opcode: u16, req: &Message) -> TokenStre
     let params: Vec<TokenStream> = req
         .args
         .iter()
-        .filter(|a| a.arg_type != ArgType::NewId && a.arg_type != ArgType::Fd)
+        .filter(|a| a.arg_type != ArgType::NewId)
         .map(|a| {
             let pname = id(&a.name);
             let ptype = client_param_type(iface_name, a);
@@ -479,16 +454,24 @@ fn gen_request_method(iface_name: &str, opcode: u16, req: &Message) -> TokenStre
     });
 
     let has_body = req.args.iter().any(|a| a.arg_type != ArgType::Fd);
+    let has_fds = req.args.iter().any(|a| a.arg_type == ArgType::Fd);
     let encode: Vec<TokenStream> = req.args.iter().map(gen_encode_arg).collect();
 
-    let write = if has_body {
+    let write = if has_body || has_fds {
+        let body_init = has_body.then(|| quote! { let mut body: Vec<u8> = Vec::new(); });
+        let fds_init = has_fds.then(|| {
+            quote! { let mut fds: Vec<::std::os::fd::BorrowedFd<'_>> = Vec::new(); }
+        });
+        let body_ref = has_body.then(|| quote! { &body }).unwrap_or_else(|| quote! { &[] });
+        let fds_ref = has_fds.then(|| quote! { &fds }).unwrap_or_else(|| quote! { &[] });
         quote! {
-            let mut body: Vec<u8> = Vec::new();
+            #body_init
+            #fds_init
             #(#encode)*
-            self.proxy.write_raw(sender_id, #opcode, &body);
+            self.proxy.write_raw(sender_id, #opcode, #body_ref, #fds_ref);
         }
     } else {
-        quote! { self.proxy.write_raw(sender_id, #opcode, &[]); }
+        quote! { self.proxy.write_raw(sender_id, #opcode, &[], &[]); }
     };
 
     let ret_type = new_id_arg.map(|a| {
@@ -514,11 +497,7 @@ fn gen_request_method(iface_name: &str, opcode: u16, req: &Message) -> TokenStre
 // ── parse statements ──────────────────────────────────────────────────────────
 
 fn gen_parse_stmts(iface_name: &str, args: &[Arg]) -> TokenStream {
-    let stmts: Vec<TokenStream> = args
-        .iter()
-        .filter(|a| a.arg_type != ArgType::Fd)
-        .map(|a| gen_parse_stmt(iface_name, a))
-        .collect();
+    let stmts: Vec<TokenStream> = args.iter().map(|a| gen_parse_stmt(iface_name, a)).collect();
     quote! { #(#stmts)* }
 }
 
@@ -526,7 +505,9 @@ fn gen_parse_stmt(iface_name: &str, arg: &Arg) -> TokenStream {
     let fname = id(&arg.name);
 
     match arg.arg_type {
-        ArgType::Fd => quote! {},
+        ArgType::Fd => quote! {
+            let #fname = wayland.take_fd()?;
+        },
         ArgType::Int | ArgType::Fixed => quote! {
             let #fname = read_i32(data, &mut o)?;
         },
@@ -610,7 +591,10 @@ fn gen_encode_arg(arg: &Arg) -> TokenStream {
     let fname = id(&arg.name);
 
     match arg.arg_type {
-        ArgType::Fd => quote! {},
+        ArgType::Fd => {
+            let fname = id(&arg.name);
+            quote! { fds.push(#fname); }
+        }
         ArgType::NewId => {
             let fname_id = id(&format!("{}_id", arg.name));
             quote! { body.extend_from_slice(&#fname_id.to_ne_bytes()); }
@@ -686,7 +670,7 @@ fn parsed_field_type(iface_name: &str, arg: &Arg) -> TokenStream {
             }
         }
         ArgType::Array => quote! { Vec<u8> },
-        ArgType::Fd => quote! { () },
+        ArgType::Fd => quote! { ::std::os::fd::OwnedFd },
         ArgType::NewId => {
             if let Some(ref iface) = arg.interface {
                 let t = type_ident(iface);
@@ -731,7 +715,8 @@ fn client_param_type(iface_name: &str, arg: &Arg) -> TokenStream {
             }
         }
         ArgType::Array => quote! { &[u8] },
-        ArgType::Fd | ArgType::NewId => quote! { () }, // never used as params
+        ArgType::Fd => quote! { ::std::os::fd::BorrowedFd<'_> },
+        ArgType::NewId => quote! { () }, // never used as params
         ArgType::Object => {
             if let Some(ref iface) = arg.interface {
                 let t = type_ident(iface);

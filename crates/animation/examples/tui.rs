@@ -32,7 +32,7 @@ macro_rules! L { ($($arg:tt)*) => { format!($($arg)*) + "\r\n" }; }
 
 fn maybe_bar(opt: &Option<Animated<f32>>, label: &str, wb: usize) -> String {
     match opt {
-        Some(a) => bar(label, a.get(), wb),
+        Some(a) => bar(label, a.get(animation::monotonic_now()), wb),
         None => bar("[cancelled] ", 0.0, wb),
     }
 }
@@ -40,7 +40,7 @@ fn maybe_bar(opt: &Option<Animated<f32>>, label: &str, wb: usize) -> String {
 fn bump_bar(opt: &Option<Animated<f32>>, wb: usize) -> String {
     match opt {
         Some(a) => {
-            let raw = a.get();
+            let raw = a.get(animation::monotonic_now());
             bar(&format!("7 raw:{raw:.2}"), (raw / 3.0).clamp(0.0, 1.0), wb)
         }
         None => bar("[cancelled] ", 0.0, wb),
@@ -49,21 +49,25 @@ fn bump_bar(opt: &Option<Animated<f32>>, wb: usize) -> String {
 
 fn maybe_color(opt: &Option<Animated<f32>>, wb: usize) -> String {
     match opt {
-        Some(a) => format!("9           {}", color_bar(a.get(), wb)),
+        Some(a) => format!(
+            "9           {}",
+            color_bar(a.get(animation::monotonic_now()), wb)
+        ),
         None => bar("[cancelled] ", 0.0, wb),
     }
 }
 
 fn any_active(ids: &TrackIds) -> bool {
-    ids.lin.as_ref().map_or(false, |a| a.is_animating())
-        || ids.ein.as_ref().map_or(false, |a| a.is_animating())
-        || ids.eout.as_ref().map_or(false, |a| a.is_animating())
-        || ids.eio.as_ref().map_or(false, |a| a.is_animating())
-        || ids.one.as_ref().map_or(false, |a| a.is_animating())
-        || ids.pp.as_ref().map_or(false, |a| a.is_animating())
-        || ids.by.as_ref().map_or(false, |a| a.is_animating())
-        || ids.del.as_ref().map_or(false, |a| a.is_animating())
-        || ids.clr.as_ref().map_or(false, |a| a.is_animating())
+    let now = animation::monotonic_now();
+    ids.lin.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.ein.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.eout.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.eio.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.one.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.pp.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.by.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.del.as_ref().map_or(false, |a| a.is_animating(now))
+        || ids.clr.as_ref().map_or(false, |a| a.is_animating(now))
 }
 
 fn draw(
@@ -248,9 +252,11 @@ fn main() -> io::Result<()> {
                     (Mode::Normal, KeyCode::Char('r')) => mode = Mode::Restart,
                     (Mode::Normal, KeyCode::Char('+')) => {
                         if let Some(ref mut a) = ids.by {
-                            let v = a.get();
+                            let now = animation::monotonic_now();
+                            let v = a.get(now);
                             if v < 3.0 {
                                 a.animate_to(
+                                    now,
                                     v + 0.3,
                                     AnimationConfig::new(
                                         Duration::from_millis(300),
@@ -262,9 +268,11 @@ fn main() -> io::Result<()> {
                     }
                     (Mode::Normal, KeyCode::Char('-')) => {
                         if let Some(ref mut a) = ids.by {
-                            let v = a.get();
+                            let now = animation::monotonic_now();
+                            let v = a.get(now);
                             if v > 0.0 {
                                 a.animate_to(
+                                    now,
                                     v - 0.3,
                                     AnimationConfig::new(
                                         Duration::from_millis(300),

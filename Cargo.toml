@@ -17,6 +17,7 @@ members = [
     "crates/launcher",
     "crates/launcher/status-bar",
     "crates/launcher/lock-screen",
+    "crates/launcher/demo-pagination",
     "crates/volume",
     "crates/interactivity",
 ]

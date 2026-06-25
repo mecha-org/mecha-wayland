@@ -405,7 +405,6 @@ impl StatusBarState {
 
         renderer.process_command_queue::<ClearColor>();
         renderer.process_command_queue::<DrawRect>();
-        renderer.process_command_queue::<DrawQuad>();
         renderer.process_command_queue::<DrawMonochromeSprite>();
         renderer.process_command_queue::<DrawText>();
     }

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub use easing::Easing;
 
+// FIXME: We need to move this out later.
 pub fn monotonic_now() -> Duration {
     let mut ts = libc::timespec {
         tv_sec: 0,
@@ -63,6 +64,7 @@ impl Animatable for utils::Color {
 }
 
 // ── AnimationConfig ───────────────────────────────────────────────────────────
+// FIXME: probably will remove this later.
 
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationConfig {
@@ -124,7 +126,7 @@ pub struct Animated<T: Animatable> {
 
 impl<T: Animatable> Animated<T> {
     /// One-shot animation from `from` to `to` using the given timing config.
-    pub fn new(from: T, to: T, config: AnimationConfig) -> Self {
+    pub fn new(from: T, to: T, config: AnimationConfig, now: Duration) -> Self {
         Self {
             from,
             to,
@@ -132,7 +134,7 @@ impl<T: Animatable> Animated<T> {
             repeat: RepeatMode::None,
             delay: config.delay,
             duration: config.duration,
-            started_at: monotonic_now(),
+            started_at: now,
         }
     }
 
@@ -144,6 +146,7 @@ impl<T: Animatable> Animated<T> {
         duration: Duration,
         easing: Easing,
         interval: Duration,
+        now: Duration,
     ) -> Self {
         Self {
             from,
@@ -152,7 +155,7 @@ impl<T: Animatable> Animated<T> {
             repeat: RepeatMode::PingPong { interval },
             delay: Duration::ZERO,
             duration,
-            started_at: monotonic_now(),
+            started_at: now,
         }
     }
 
@@ -382,56 +385,58 @@ mod tests {
 
     #[test]
     fn get_at_start_of_animation() {
-        let a = Animated::new(5.0, 10.0, config());
         let now = monotonic_now();
+        let a = Animated::new(5.0, 10.0, config(), now);
         assert!((a.get(now) - 5.0).abs() < 0.01);
     }
 
     #[test]
     fn get_returns_from_during_delay() {
-        let a = Animated::new(0.0, 1.0, config_with_delay());
         let now = monotonic_now();
+        let a = Animated::new(0.0, 1.0, config_with_delay(), now);
         assert!((a.get(now) - 0.0).abs() < 0.01);
     }
 
     #[test]
     fn is_animating_with_no_delay() {
-        let a = Animated::new(0.0, 1.0, config());
         let now = monotonic_now();
+        let a = Animated::new(0.0, 1.0, config(), now);
         assert!(a.is_animating(now));
     }
 
     #[test]
     fn is_animating_false_during_delay() {
-        let a = Animated::new(0.0, 1.0, config_with_delay());
         let now = monotonic_now();
+        let a = Animated::new(0.0, 1.0, config_with_delay(), now);
         assert!(!a.is_animating(now));
     }
 
     #[test]
     fn is_animating_pingpong_no_delay() {
+        let now = monotonic_now();
         let a = Animated::new_pingpong(
             0.0,
             1.0,
             Duration::from_secs(10),
             Easing::Linear,
             Duration::from_secs(5),
+            now,
         );
-        let now = monotonic_now();
         assert!(a.is_animating(now));
     }
 
     #[test]
     fn resume_deadline_none_while_active() {
-        let a = Animated::new(0.0, 1.0, config());
         let now = monotonic_now();
+        let a = Animated::new(0.0, 1.0, config(), now);
         assert!(a.resume_deadline(now).is_none());
     }
 
     #[test]
     fn resume_deadline_some_during_delay() {
-        let a = Animated::new(0.0, 1.0, config_with_delay());
-        let d = a.resume_deadline(monotonic_now()).unwrap();
+        let now = monotonic_now();
+        let a = Animated::new(0.0, 1.0, config_with_delay(), now);
+        let d = a.resume_deadline(now).unwrap();
         assert!(d > monotonic_now());
     }
 
@@ -445,8 +450,8 @@ mod tests {
 
     #[test]
     fn set_target_renews() {
-        let mut a = Animated::new(5.0, 10.0, config());
         let now = monotonic_now();
+        let mut a = Animated::new(5.0, 10.0, config(), now);
         a.set_target(now, 20.0);
         assert!((a.get(now) - 5.0).abs() < 0.01);
         assert!(a.is_animating(now));
@@ -454,8 +459,8 @@ mod tests {
 
     #[test]
     fn reset_restarts() {
-        let mut a = Animated::new(5.0, 10.0, config());
         let now = monotonic_now();
+        let mut a = Animated::new(5.0, 10.0, config(), now);
         a.reset(now);
         assert!((a.get(now) - 5.0).abs() < 0.01);
         assert!(a.is_animating(now));
@@ -463,9 +468,9 @@ mod tests {
 
     #[test]
     fn clone_is_independent() {
-        let a = Animated::new(5.0, 10.0, config());
-        let b = a.clone();
         let now = monotonic_now();
+        let a = Animated::new(5.0, 10.0, config(), now);
+        let b = a.clone();
         assert!((b.get(now) - 5.0).abs() < 0.01);
         assert!(b.is_animating(now));
     }
@@ -480,6 +485,7 @@ mod tests {
                 easing: Easing::Linear,
                 delay: Duration::ZERO,
             },
+            monotonic_now(),
         );
         std::thread::sleep(Duration::from_millis(1));
         assert!(a.is_finished(monotonic_now()));

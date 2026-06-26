@@ -162,6 +162,7 @@ impl Default for StatusBarState {
             Duration::from_millis(1500),
             animation::Easing::EaseInOut,
             Duration::from_secs(3),
+            animation::monotonic_now(),
         );
         // END REMOVE: demo — wifi glow
 

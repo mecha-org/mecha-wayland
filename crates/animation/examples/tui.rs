@@ -1,7 +1,7 @@
 use std::io::{self, Write, stdout};
 use std::time::{Duration, Instant};
 
-use animation::{Animated, AnimationConfig, Easing};
+use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal;
 use crossterm::{cursor, execute};
@@ -154,31 +154,37 @@ impl TrackIds {
 }
 
 fn create_one(d: char) -> Animated<f32> {
+    let now = monotonic_now();
     match d {
         '1' => Animated::new(
             0.0,
             1.0,
             AnimationConfig::new(Duration::from_secs(4), Easing::Linear),
+            now,
         ),
         '2' => Animated::new(
             0.0,
             1.0,
             AnimationConfig::new(Duration::from_secs(4), Easing::EaseIn),
+            now,
         ),
         '3' => Animated::new(
             0.0,
             1.0,
             AnimationConfig::new(Duration::from_secs(4), Easing::EaseOut),
+            now,
         ),
         '4' => Animated::new(
             0.0,
             1.0,
             AnimationConfig::new(Duration::from_secs(4), Easing::EaseInOut),
+            now,
         ),
         '5' => Animated::new(
             0.0,
             1.0,
             AnimationConfig::new(Duration::from_secs(3), Easing::EaseInOut),
+            now,
         ),
         '6' => Animated::new_pingpong(
             0.0,
@@ -186,11 +192,13 @@ fn create_one(d: char) -> Animated<f32> {
             Duration::from_millis(1500),
             Easing::EaseInOut,
             Duration::from_secs(2),
+            now,
         ),
         '7' => Animated::new(
             0.0,
             0.0,
             AnimationConfig::new(Duration::from_secs(1000), Easing::Linear),
+            now,
         ),
         '8' => Animated::new(
             0.0,
@@ -200,6 +208,7 @@ fn create_one(d: char) -> Animated<f32> {
                 easing: Easing::EaseInOut,
                 delay: Duration::from_secs(2),
             },
+            now,
         ),
         '9' => Animated::new_pingpong(
             0.0,
@@ -207,6 +216,7 @@ fn create_one(d: char) -> Animated<f32> {
             Duration::from_secs(4),
             Easing::EaseInOut,
             Duration::from_secs(1),
+            now,
         ),
         _ => unreachable!(),
     }

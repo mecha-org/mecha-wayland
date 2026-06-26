@@ -1,0 +1,32 @@
+[[atlas]]
+name = "ui"
+
+[[atlas.sprite]]
+name = "nav-search"
+path = "assets/nav-search.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "nav-heart"
+path = "assets/nav-heart.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "nav-settings"
+path = "assets/nav-settings.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "nav-recent"
+path = "assets/nav-recent.svg"
+width = 32
+height = 32
+
+[[atlas.sprite]]
+name = "nav-notifications"
+path = "assets/nav-notifications.svg"
+width = 32
+height = 32

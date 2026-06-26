@@ -21,6 +21,7 @@ members = [
     "crates/volume",
     "crates/interactivity",
     "crates/launcher/notification",
+    "crates/launcher/nav-bar",
 ]
 default-members = ["crates/launcher"]
 resolver = "2"

@@ -863,6 +863,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "nav-bar"
+version = "0.1.0"
+dependencies = [
+ "animation",
+ "anyhow",
+ "app",
+ "assets",
+ "drm-fourcc",
+ "frunk",
+ "glow",
+ "interactivity",
+ "io-ring",
+ "io-uring",
+ "libc",
+ "png 0.18.1",
+ "renderer",
+ "timer",
+ "tracing",
+ "tracing-subscriber",
+ "utils",
+ "wayland",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

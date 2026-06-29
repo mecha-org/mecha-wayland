@@ -1,43 +1,11 @@
-use crate::wire::{MessageBuilder, MessageReader};
-use std::marker::PhantomData;
+#[allow(unused_variables, unused_mut, dead_code, unused_imports)]
+pub mod generated;
+pub mod manual;
 
-pub trait WaylandInterface {
-    const NAME: &'static str;
-    const VERSION: u32;
-}
-
-pub trait WaylandSend {
-    type Interface: WaylandInterface;
-    const OPCODE: u16;
-    fn serialize(&self, builder: MessageBuilder);
-}
-
-pub trait WaylandParse: Sized {
-    const OPCODE: u16;
-    fn deserialize(body: &[u8]) -> Option<Self>;
-}
-
-pub struct Handle<T: WaylandInterface> {
-    pub id: u32,
-    _marker: PhantomData<T>,
-}
-
-impl<T: WaylandInterface> Handle<T> {
-    pub fn new(id: u32) -> Self {
-        Self {
-            id,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<T: WaylandInterface> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        Self::new(self.id)
-    }
-}
-
-impl<T: WaylandInterface> Copy for Handle<T> {}
-
-// Include the generated protocol submodules
-include!(concat!(env!("OUT_DIR"), "/protocols.rs"));
+pub use generated::*;
+// Re-export manual types explicitly to avoid conflicting with generated::module().
+pub use manual::{WlCallback, WlDisplay, WlRegistry};
+#[cfg(feature = "client")]
+pub use manual::{WlCallbackEvent, WlDisplayError, WlDisplayEvent, WlRegistryEvent};
+#[cfg(feature = "server")]
+pub use manual::{WlDisplayRequest, WlRegistryRequest};

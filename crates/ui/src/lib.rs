@@ -1,6 +1,7 @@
 extern crate self as ui;
 
 use assets::BakedFont;
+use interactivity::InteractivityState;
 use taffy::{AvailableSpace, Layout, NodeId, Size, Style, TaffyTree};
 use utils::{Color, Rect, Size as USize};
 
@@ -41,6 +42,14 @@ pub enum RenderCommand {
         color: Color,
         atlas_id: Option<assets::AtlasId>,
     },
+    DrawMonochromeSprite {
+        atlas_id: assets::AtlasId,
+        region: assets::SpriteRegion,
+        origin: Point,
+        z: f32,
+        size: USize,
+        color: Color,
+    },
     RegisterHitArea {
         id: u64,
         rect: Rect,
@@ -63,19 +72,22 @@ pub trait Widget: Render {
     fn node_id(&self) -> NodeId;
     fn style(&self) -> &Style;
     fn build_tree(&mut self, tree: &mut WidgetTree) -> NodeId;
-    fn render_node(&self, layout: &Layout, tree: &WidgetTree, offset: Point) -> Vec<RenderCommand>;
+    fn render_node(&mut self, layout: &Layout, tree: &WidgetTree, offset: Point) -> Vec<RenderCommand>;
 }
 
 pub trait WidgetList {
     fn build_children(&mut self, tree: &mut WidgetTree) -> Vec<NodeId>;
-    fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand>;
+    fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand>;
+    fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
+        false
+    }
 }
 
 impl WidgetList for () {
     fn build_children(&mut self, _: &mut WidgetTree) -> Vec<NodeId> {
         vec![]
     }
-    fn render_children(&self, _: &WidgetTree, _: Point) -> Vec<RenderCommand> {
+    fn render_children(&mut self, _: &WidgetTree, _: Point) -> Vec<RenderCommand> {
         vec![]
     }
 }
@@ -85,7 +97,7 @@ impl<W: Widget> WidgetList for W {
         vec![self.build_tree(tree)]
     }
 
-    fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
+    fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
         let layout = tree.layout(self.node_id()).unwrap();
         self.render_node(layout, tree, parent_abs)
     }
@@ -96,8 +108,12 @@ impl<A: WidgetList> WidgetList for (A,) {
         self.0.build_children(tree)
     }
 
-    fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
+    fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
         self.0.render_children(tree, parent_abs)
+    }
+
+    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+        self.0.on_event(interactivity, tree)
     }
 }
 
@@ -108,10 +124,16 @@ impl<A: WidgetList, B: WidgetList> WidgetList for (A, B) {
         ids
     }
 
-    fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
+    fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
         let mut commands = self.0.render_children(tree, parent_abs);
         commands.extend(self.1.render_children(tree, parent_abs));
         commands
+    }
+
+    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+        let a = self.0.on_event(interactivity, tree);
+        let b = self.1.on_event(interactivity, tree);
+        a || b
     }
 }
 
@@ -123,10 +145,17 @@ impl<A: WidgetList, B: WidgetList, C: WidgetList> WidgetList for (A, B, C) {
         ids
     }
 
-    fn render_children(&self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
+    fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
         let mut commands = self.0.render_children(tree, parent_abs);
         commands.extend(self.1.render_children(tree, parent_abs));
         commands.extend(self.2.render_children(tree, parent_abs));
         commands
+    }
+
+    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+        let a = self.0.on_event(interactivity, tree);
+        let b = self.1.on_event(interactivity, tree);
+        let c = self.2.on_event(interactivity, tree);
+        a || b || c
     }
 }

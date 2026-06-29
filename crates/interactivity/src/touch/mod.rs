@@ -3,7 +3,7 @@ mod event;
 pub use event::{DragState, SwipeDirection, TouchEvent};
 
 use std::collections::HashMap;
-use wayland::TouchEvent as WlTouchEvent;
+use wayland::WlTouchEvent;
 
 const TAP_MAX_DISTANCE: f64 = 15.0;
 const TAP_MAX_DURATION_MS: u32 = 300;
@@ -30,34 +30,30 @@ impl TouchState {
         Self::default()
     }
 
-    /// Process a raw Wayland touch event and return semantic TouchEvents.
     pub fn process(&mut self, ev: &WlTouchEvent) -> Vec<TouchEvent> {
         let mut events = Vec::new();
 
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
+                let x = *x as f64 / 256.0;
+                let y = *y as f64 / 256.0;
                 let active = ActiveTouch {
-                    start_x: *x,
-                    start_y: *y,
-                    last_x: *x,
-                    last_y: *y,
+                    start_x: x,
+                    start_y: y,
+                    last_x: x,
+                    last_y: y,
                     start_time: *time,
                     last_time: *time,
                 };
                 self.active_touches.insert(*id, active);
-                events.push(TouchEvent::Down {
-                    id: *id,
-                    x: *x,
-                    y: *y,
-                    time: *time,
-                });
+                events.push(TouchEvent::Down { id: *id, x, y, time: *time });
                 events.push(TouchEvent::Drag {
                     id: *id,
                     state: DragState::Start,
-                    start_x: *x,
-                    start_y: *y,
-                    x: *x,
-                    y: *y,
+                    start_x: x,
+                    start_y: y,
+                    x,
+                    y,
                     delta_x: 0.0,
                     delta_y: 0.0,
                     total_dx: 0.0,
@@ -65,7 +61,9 @@ impl TouchState {
                 });
             }
 
-            WlTouchEvent::Motion { id, x, y, time } => {
+            WlTouchEvent::Motion { id, x, y, time, .. } => {
+                let x = *x as f64 / 256.0;
+                let y = *y as f64 / 256.0;
                 if let Some(active) = self.active_touches.get_mut(id) {
                     let dx = x - active.last_x;
                     let dy = y - active.last_y;
@@ -74,25 +72,18 @@ impl TouchState {
                     let start_x = active.start_x;
                     let start_y = active.start_y;
 
-                    active.last_x = *x;
-                    active.last_y = *y;
+                    active.last_x = x;
+                    active.last_y = y;
                     active.last_time = *time;
 
-                    events.push(TouchEvent::Motion {
-                        id: *id,
-                        x: *x,
-                        y: *y,
-                        dx,
-                        dy,
-                        time: *time,
-                    });
+                    events.push(TouchEvent::Motion { id: *id, x, y, dx, dy, time: *time });
                     events.push(TouchEvent::Drag {
                         id: *id,
                         state: DragState::Move,
                         start_x,
                         start_y,
-                        x: *x,
-                        y: *y,
+                        x,
+                        y,
                         delta_x: dx,
                         delta_y: dy,
                         total_dx,
@@ -105,12 +96,7 @@ impl TouchState {
                 if let Some(active) = self.active_touches.remove(id) {
                     let x = active.last_x;
                     let y = active.last_y;
-                    events.push(TouchEvent::Up {
-                        id: *id,
-                        x,
-                        y,
-                        time: *time,
-                    });
+                    events.push(TouchEvent::Up { id: *id, x, y, time: *time });
 
                     let total_dx = x - active.start_x;
                     let total_dy = y - active.start_y;
@@ -133,32 +119,16 @@ impl TouchState {
                     let distance = (dx * dx + dy * dy).sqrt();
                     let duration_ms = time.saturating_sub(active.start_time);
 
-                    // Check for Tap: small movement and short duration
                     if distance < TAP_MAX_DISTANCE && duration_ms < TAP_MAX_DURATION_MS {
                         events.push(TouchEvent::Tap { id: *id, x, y });
-                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS
-                    {
-                        // Check for Swipe: larger movement (>=40px) and fast motion (<=500ms)
+                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS {
                         let direction = if dx.abs() > dy.abs() {
-                            if dx > 0.0 {
-                                SwipeDirection::Right
-                            } else {
-                                SwipeDirection::Left
-                            }
+                            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
                         } else {
-                            if dy > 0.0 {
-                                SwipeDirection::Down
-                            } else {
-                                SwipeDirection::Up
-                            }
+                            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
                         };
-
-                        let velocity = if duration_ms > 0 {
-                            distance / duration_ms as f64
-                        } else {
-                            distance
-                        };
-
+                        let velocity =
+                            if duration_ms > 0 { distance / duration_ms as f64 } else { distance };
                         events.push(TouchEvent::Swipe {
                             direction,
                             start_x: active.start_x,
@@ -174,7 +144,7 @@ impl TouchState {
                 }
             }
 
-            WlTouchEvent::Cancel => {
+            WlTouchEvent::Cancel { .. } => {
                 for (id, active) in &self.active_touches {
                     events.push(TouchEvent::Drag {
                         id: *id,
@@ -193,7 +163,7 @@ impl TouchState {
                 events.push(TouchEvent::Cancel);
             }
 
-            WlTouchEvent::Frame => {
+            WlTouchEvent::Frame { .. } => {
                 events.push(TouchEvent::Frame);
             }
 

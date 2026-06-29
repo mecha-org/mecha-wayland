@@ -252,7 +252,7 @@ impl Widget for LoggingWidget {
         id
     }
     fn render_node(
-        &self,
+        &mut self,
         layout: &Layout,
         _tree: &WidgetTree,
         offset: ui::Point,
@@ -296,7 +296,7 @@ impl Widget for LoggingDiv {
         id
     }
     fn render_node(
-        &self,
+        &mut self,
         layout: &Layout,
         tree: &WidgetTree,
         offset: ui::Point,

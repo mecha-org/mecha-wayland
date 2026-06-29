@@ -2,13 +2,25 @@
 name = "wayland"
 version = "0.1.0"
 edition = "2024"
+build = "build/build.rs"
 
 [dependencies]
-app = { path = "../app" }
-io-ring = { path = "../io-ring" }
+io-ring.workspace = true
+app.workspace = true
 io-uring = { workspace = true }
 libc = { workspace = true }
 bitflags = { workspace = true }
 
+[features]
+client = []
+server = []
+
+[[example]]
+name = "shm_window"
+required-features = ["client"]
+
 [build-dependencies]
-wayland-gen = { path = "../wayland-gen" }
+serde = { workspace = true }
+quick-xml = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

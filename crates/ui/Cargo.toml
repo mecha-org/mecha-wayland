@@ -8,3 +8,4 @@ taffy = { workspace = true }
 assets = { path = "../assets" }
 utils = { path = "../utils" }
 ui-macro = { path = "../ui-macro" }
+interactivity = { path = "../interactivity" }

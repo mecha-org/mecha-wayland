@@ -1,3 +1,4 @@
+#[derive(Clone, Copy, Debug)]
 pub struct SpriteRegion {
     pub x: f32,
     pub y: f32,

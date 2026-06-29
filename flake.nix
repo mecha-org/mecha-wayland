@@ -70,10 +70,10 @@
 
           PKG_CONFIG_ALLOW_CROSS = "1";
           PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"
-            (with pkgsCross; [ mesa libdrm ]);
+            (with pkgsCross; [ mesa libdrm libgbm ]);
 
           nativeBuildInputs = with pkgs; [ pkg-config clang pkgsCross.stdenv.cc ];
-          buildInputs       = with pkgsCross; [ mesa libdrm ];
+          buildInputs       = with pkgsCross; [ mesa libdrm libgbm libGL ];
         };
 
         launcherAarch64 = craneLib.buildPackage (crossArgs // {
@@ -107,7 +107,9 @@
             pkgs.cargo-watch
           ];
 
-          buildInputs = with pkgs; [ mesa libdrm wayland wayland-protocols libxkbcommon ];
+          buildInputs = with pkgs; [ mesa libdrm libgbm libGL wayland wayland-protocols libxkbcommon ];
+
+          LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [ mesa libdrm libgbm libGL ]);
 
           RUST_SRC_PATH  = "${devToolchain}/lib/rustlib/src/rust/library";
           RUST_BACKTRACE = "1";

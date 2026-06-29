@@ -8,24 +8,31 @@ members = [
     "crates/io-ring",
     "crates/timer",
     "crates/wayland",
-    "crates/wayland-gen",
     "crates/utils",
     "crates/ui",
     "crates/ui-macro",
     "crates/animation",
-    "crates/counter",
     "crates/launcher",
+    "crates/launcher/counter",
     "crates/launcher/status-bar",
     "crates/launcher/lock-screen",
     "crates/launcher/demo-pagination",
     "crates/volume",
     "crates/interactivity",
+    "crates/window-manager",
     "crates/launcher/notification",
+    "crates/launcher/navbar",
 ]
 default-members = ["crates/launcher"]
 resolver = "2"
 
 [workspace.dependencies]
+# project
+app = { path = "crates/app" }
+window-manager = { path = "crates/window-manager" }
+io-ring = { path = "crates/io-ring" }
+wayland = { path = "crates/wayland" }
+
 # async / io
 io-uring = "0.7"
 nix = { version = "0.31", features = ["socket", "uio"] }
@@ -64,6 +71,10 @@ fontdue = "0.9"
 
 # layouting
 taffy = "0.10.1"
+
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3

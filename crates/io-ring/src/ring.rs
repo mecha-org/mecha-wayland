@@ -90,7 +90,7 @@ impl Ring {
         }
     }
 
-    pub fn get_proxy(&self) -> RingProxy {
+    pub fn proxy(&self) -> RingProxy {
         RingProxy(Rc::clone(&self.data))
     }
 

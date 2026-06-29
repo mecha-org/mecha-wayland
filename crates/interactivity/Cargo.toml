@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 app = { path = "../app" }
-wayland = { path = "../wayland" }
+wayland = { path = "../wayland", features = ["client"] }
 utils = { path = "../utils" }

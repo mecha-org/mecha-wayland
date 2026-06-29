@@ -4,3 +4,10 @@ name = "launcher"
 version = "0.1.0"
 edition = "2024"
 
+[dependencies]
+app.workspace = true
+io-ring.workspace = true
+window-manager.workspace = true
+launcher-navbar = { path = "navbar" }
+launcher-status-bar = { path = "status-bar" }
+launcher-counter = { path = "counter" }

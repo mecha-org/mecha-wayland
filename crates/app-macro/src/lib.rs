@@ -20,7 +20,7 @@ use syn::{
 /// type is a field of `Foo`, without writing `Lens` impls by hand.
 ///
 /// Only structs with named fields are supported.
-#[proc_macro_derive(State)]
+#[proc_macro_derive(State, attributes(lens))]
 pub fn derive_state(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -36,6 +36,12 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
 
     let impls: TokenStream2 = fields
         .iter()
+        .filter(|f| {
+            !f.attrs.iter().any(|a| {
+                a.path().is_ident("lens")
+                    && a.parse_args::<Ident>().map_or(false, |i| i == "skip")
+            })
+        })
         .map(|f| {
             let field_name = f.ident.as_ref().unwrap();
             let field_ty = &f.ty;

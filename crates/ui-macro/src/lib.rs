@@ -88,7 +88,7 @@ pub fn widget(attr: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             fn render_node(
-                &self,
+                &mut self,
                 layout: &::taffy::Layout,
                 tree: &::ui::WidgetTree,
                 offset: ::ui::Point,
@@ -156,7 +156,7 @@ fn render_node_body(child_fields: &[Ident]) -> TokenStream2 {
             let __abs = ::ui::Point::new(offset.x() + layout.location.x, offset.y() + layout.location.y);
             let mut __cmds = self.render(layout, __abs);
             #(
-                __cmds.extend(::ui::WidgetList::render_children(&self.#child_fields, tree, __abs));
+                __cmds.extend(::ui::WidgetList::render_children(&mut self.#child_fields, tree, __abs));
             )*
             __cmds
         }

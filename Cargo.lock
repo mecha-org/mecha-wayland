@@ -230,30 +230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "counter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "app",
- "assets",
- "frunk",
- "glow",
- "interactivity",
- "io-ring",
- "io-uring",
- "libc",
- "png 0.18.1",
- "renderer",
- "taffy",
- "timer",
- "tracing",
- "tracing-subscriber",
- "ui",
- "utils",
- "wayland",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -763,7 +739,44 @@ version = "0.1.0"
 dependencies = [
  "app",
  "io-ring",
+ "launcher-counter",
+ "launcher-navbar",
+ "launcher-status-bar",
  "window-manager",
+]
+
+[[package]]
+name = "launcher-counter"
+version = "0.1.0"
+dependencies = [
+ "assets",
+ "interactivity",
+ "taffy",
+ "ui",
+ "utils",
+]
+
+[[package]]
+name = "launcher-navbar"
+version = "0.1.0"
+dependencies = [
+ "assets",
+ "taffy",
+ "ui",
+ "utils",
+]
+
+[[package]]
+name = "launcher-status-bar"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "assets",
+ "libc",
+ "taffy",
+ "timer",
+ "ui",
+ "utils",
 ]
 
 [[package]]
@@ -1365,29 +1378,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "status-bar"
-version = "0.1.0"
-dependencies = [
- "animation",
- "anyhow",
- "app",
- "assets",
- "drm-fourcc",
- "frunk",
- "glow",
- "io-ring",
- "io-uring",
- "libc",
- "png 0.18.1",
- "renderer",
- "timer",
- "tracing",
- "tracing-subscriber",
- "utils",
- "wayland",
-]
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1690,6 +1680,7 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "assets",
+ "interactivity",
  "taffy",
  "ui-macro",
  "utils",
@@ -1944,9 +1935,15 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 name = "window-manager"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "app",
+ "assets",
+ "interactivity",
  "io-ring",
  "libc",
+ "renderer",
+ "taffy",
+ "ui",
  "wayland",
 ]
 

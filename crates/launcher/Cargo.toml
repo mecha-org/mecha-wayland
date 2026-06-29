@@ -8,4 +8,6 @@ edition = "2024"
 app.workspace = true
 io-ring.workspace = true
 window-manager.workspace = true
-
+launcher-navbar = { path = "navbar" }
+launcher-status-bar = { path = "status-bar" }
+launcher-counter = { path = "counter" }

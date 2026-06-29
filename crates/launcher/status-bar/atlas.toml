@@ -4,7 +4,7 @@ name = "ui"
 [[atlas.font]]
 name = "inter"
 path = "../../../assets/Inter-Regular.ttf"
-sizes = [6, 16]
+sizes = [6, 16, 24, 100]
 
 [[atlas.sprite]]
 name = "battery-0"

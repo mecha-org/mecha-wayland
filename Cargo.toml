@@ -12,8 +12,8 @@ members = [
     "crates/ui",
     "crates/ui-macro",
     "crates/animation",
-    "crates/counter",
     "crates/launcher",
+    "crates/launcher/counter",
     "crates/launcher/status-bar",
     "crates/launcher/lock-screen",
     "crates/launcher/demo-pagination",
@@ -21,6 +21,7 @@ members = [
     "crates/interactivity",
     "crates/window-manager",
     "crates/launcher/notification",
+    "crates/launcher/navbar",
 ]
 default-members = ["crates/launcher"]
 resolver = "2"

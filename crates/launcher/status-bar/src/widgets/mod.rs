@@ -2,6 +2,7 @@ pub mod battery;
 pub mod bluetooth;
 pub mod clock;
 pub mod wifi;
+
 pub use crate::atlas::UI_BATTERY_0;
 pub use crate::atlas::UI_BATTERY_0_CHARGING;
 pub use crate::atlas::UI_BATTERY_10;

@@ -18,11 +18,8 @@ impl InteractivityState {
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-pub fn module<AppState>() -> impl app::RegisteredModule<InteractivityState, AppState>
-where
-    AppState: app::Lens<InteractivityState>,
-{
-    app::Module::<InteractivityState, _, _>::new()
+    pub fn is_clicked(&self, bounds: utils::Rect) -> bool {
+        self.pointer.is_clicked(bounds)
+    }
 }

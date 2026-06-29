@@ -20,6 +20,7 @@ members = [
     "crates/launcher/demo-pagination",
     "crates/volume",
     "crates/interactivity",
+    "crates/launcher/notification",
 ]
 default-members = ["crates/launcher"]
 resolver = "2"

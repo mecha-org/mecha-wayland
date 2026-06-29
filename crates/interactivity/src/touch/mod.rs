@@ -31,7 +31,7 @@ impl TouchState {
     }
 
     /// Process a raw Wayland touch event and return semantic TouchEvents.
-    pub(crate) fn process(&mut self, ev: &WlTouchEvent) -> Vec<TouchEvent> {
+    pub fn process(&mut self, ev: &WlTouchEvent) -> Vec<TouchEvent> {
         let mut events = Vec::new();
 
         match ev {

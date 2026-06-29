@@ -18,7 +18,7 @@ impl PointerState {
     }
 
     /// Translate one raw Wayland [`WlPointerEvent`] into a semantic [`PointerEvent`].
-    pub(crate) fn process(&mut self, ev: &WlPointerEvent) -> Option<PointerEvent> {
+    pub fn process(&mut self, ev: &WlPointerEvent) -> Option<PointerEvent> {
         match ev {
             WlPointerEvent::Enter {
                 surface,

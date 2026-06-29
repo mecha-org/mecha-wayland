@@ -68,6 +68,24 @@ fn main() {
     launcher.window_manager.spawn_window(
         WindowSettings {
             width: 0,
+            height: 0,
+            clear_color: Color::rgba(0.16, 0.16, 0.18, 1.0),
+            kind: WindowKind::LayerShell {
+                layer: ZwlrLayerShellV1Layer::Bottom,
+                anchor: ZwlrLayerSurfaceV1Anchor::Top
+                    | ZwlrLayerSurfaceV1Anchor::Bottom
+                    | ZwlrLayerSurfaceV1Anchor::Left
+                    | ZwlrLayerSurfaceV1Anchor::Right,
+                exclusive_zone: 0,
+                namespace: "volume".to_string(),
+            },
+        },
+        CounterUi::new(ATLAS.id, &UI_FONT_INTER_24, &UI_FONT_INTER_100),
+    );
+
+    launcher.window_manager.spawn_window(
+        WindowSettings {
+            width: 0,
             height: 60,
             clear_color: Color::rgba(0.08, 0.10, 0.14, 0.95),
             kind: WindowKind::LayerShell {

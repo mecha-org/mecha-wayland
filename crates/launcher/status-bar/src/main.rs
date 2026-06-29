@@ -114,6 +114,8 @@ struct StatusBarTextures {
 
 #[derive(State)]
 struct StatusBarState {
+    now: Duration,
+
     ring: Ring,
     timer: Timer,
     wayland: Wayland,
@@ -150,7 +152,6 @@ impl Default for StatusBarState {
         use renderer::commands::*;
         renderer.init_command_queue::<ClearColor>();
         renderer.init_command_queue::<DrawRect>();
-        renderer.init_command_queue::<DrawQuad>();
         renderer.init_command_queue::<DrawMonochromeSprite>();
         renderer.init_command_queue::<DrawText>();
 
@@ -161,10 +162,12 @@ impl Default for StatusBarState {
             Duration::from_millis(1500),
             animation::Easing::EaseInOut,
             Duration::from_secs(3),
+            animation::monotonic_now(),
         );
         // END REMOVE: demo — wifi glow
 
         Self {
+            now: Duration::ZERO,
             ring,
             timer,
             wayland,
@@ -194,6 +197,10 @@ impl Default for StatusBarState {
 impl StatusBarState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn refresh_now(&mut self) {
+        self.now = animation::monotonic_now();
     }
 
     fn try_redraw(&mut self, chain: bool) -> bool {
@@ -240,7 +247,8 @@ impl StatusBarState {
         self.needs_redraw = true;
         if self.pending_callback_id == CallbackId(0) {
             self.needs_redraw = false;
-            if !self.try_redraw(self.wifi_pulse.is_animating()) {
+            self.refresh_now();
+            if !self.try_redraw(self.wifi_pulse.is_animating(self.now)) {
                 self.needs_redraw = true;
             }
         }
@@ -313,7 +321,7 @@ impl StatusBarState {
             let x = cursor;
             let region = self.wifi.sprite_region();
             // REMOVE: demo — wifi glow
-            let pulse = self.wifi_pulse.get();
+            let pulse = self.wifi_pulse.get(self.now);
             let glow = (pulse - 1.0) / 0.15;
             let (cr, cg, cb) = animation::lerp_color((1.0, 1.0, 1.0), (0.1, 0.85, 0.2), glow);
             let icon_size = ICON_SIZE * pulse;
@@ -405,7 +413,6 @@ impl StatusBarState {
 
         renderer.process_command_queue::<ClearColor>();
         renderer.process_command_queue::<DrawRect>();
-        renderer.process_command_queue::<DrawQuad>();
         renderer.process_command_queue::<DrawMonochromeSprite>();
         renderer.process_command_queue::<DrawText>();
     }
@@ -531,7 +538,8 @@ fn main() {
                 s.buf_in_flight = [false, false];
 
                 s.wayland.layer_surface.ack_configure(*id, *serial);
-                s.try_redraw(s.wifi_pulse.is_animating());
+                s.refresh_now();
+                s.try_redraw(s.wifi_pulse.is_animating(s.now));
             },
         ))
         .mount(
@@ -545,7 +553,8 @@ fn main() {
                 }
                 s.pending_callback_id = CallbackId(0);
 
-                let chain = s.wifi_pulse.is_animating();
+                s.refresh_now();
+                let chain = s.wifi_pulse.is_animating(s.now);
                 if s.needs_redraw || chain {
                     s.needs_redraw = false;
                     if !s.try_redraw(chain) {
@@ -577,8 +586,9 @@ fn main() {
         .mount(
             app::Module::new().on(|s: &mut StatusBarState, _: &app::PrePoll| {
                 // REMOVE: demo — wifi glow
-                if !s.wifi_pulse.is_animating() && s.pingpong_timer_id == TimerId(0) {
-                    if let Some(deadline) = s.wifi_pulse.resume_deadline() {
+                s.refresh_now();
+                if !s.wifi_pulse.is_animating(s.now) && s.pingpong_timer_id == TimerId(0) {
+                    if let Some(deadline) = s.wifi_pulse.resume_deadline(s.now) {
                         s.pingpong_timer_id = s.timer.start_deadline(Absolute {
                             at: deadline,
                             clock: Clock::Monotonic,

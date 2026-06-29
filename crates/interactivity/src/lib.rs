@@ -25,8 +25,4 @@ where
     AppState: app::Lens<InteractivityState>,
 {
     app::Module::<InteractivityState, _, _>::new()
-        .on(|s: &mut InteractivityState, ev: &wayland::PointerEvent| s.pointer.process(ev))
-        .on(|s: &mut InteractivityState, ev: &wayland::KeyboardEvent| s.keyboard.process(ev))
-        .on(|s: &mut InteractivityState, ev: &wayland::TouchEvent| app::Many(s.touch.process(ev)))
-        .on(|s: &mut InteractivityState, _: &app::Poll| app::Many(s.keyboard.tick()))
 }

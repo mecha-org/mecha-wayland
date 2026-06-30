@@ -1,28 +1,16 @@
+
 [package]
-name = "volume"
+name = "launcher-volume"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-app = { path = "../app" }
-renderer = { path = "../renderer" }
-assets = { path = "../assets" }
-ui = { path = "../ui" }
-io-ring = { path = "../io-ring" }
-timer = { path = "../timer" }
-wayland = { path = "../wayland" }
-interactivity = { path = "../interactivity" }
-utils = { path = "../utils" }
-taffy = { workspace = true }
-frunk = "0.4"
-anyhow = { workspace = true }
-glow = { workspace = true }
-png = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-io-uring = { workspace = true }
-libc = { workspace = true }
+[lib]
+name = "launcher_volume"
 
-[build-dependencies]
-anyhow = { workspace = true }
-assets = { path = "../assets", features = ["builder"] }
+[dependencies]
+assets = { path = "../../assets" }
+interactivity = { path = "../../interactivity" }
+ui = { path = "../../ui" }
+utils = { path = "../../utils" }
+taffy = { workspace = true }
+

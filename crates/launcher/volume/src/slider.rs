@@ -1,7 +1,7 @@
-use renderer::commands::Color;
 use taffy::Style;
 use taffy::prelude::*;
 use ui::Point;
+use utils::Color;
 
 use ui::Widget;
 use ui::WidgetTree;

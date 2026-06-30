@@ -11,3 +11,4 @@ window-manager.workspace = true
 launcher-navbar = { path = "navbar" }
 launcher-status-bar = { path = "status-bar" }
 launcher-counter = { path = "counter" }
+launcher-volume = { path = "volume" }

@@ -6,6 +6,7 @@ mod slider;
 use assets::{AtlasId, BakedFont};
 use button::Button;
 use interactivity::InteractivityState;
+use slider::Slider;
 use taffy::Style;
 use taffy::prelude::*;
 use ui::widgets::{Div, Text};
@@ -19,7 +20,7 @@ const STEP_SIZE: i32 = 10;
 type RowDiv = Div<(Button, Text, Button)>;
 type RootDiv = Div<(Text, Slider, RowDiv)>;
 
-struct VolumeUi {
+pub struct VolumeUi {
     root: RootDiv,
     count: i32,
     minus_rect: utils::Rect,
@@ -28,12 +29,17 @@ struct VolumeUi {
 }
 
 impl VolumeUi {
-    pub fn new(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> Self {
+    pub fn new(
+        atlas_id: AtlasId,
+        font_24: &'static BakedFont,
+        font_100: &'static BakedFont,
+    ) -> Self {
         Self {
             root: make_root(atlas_id, font_24, font_100),
             count: 0,
             minus_rect: utils::Rect::ZERO,
             plus_rect: utils::Rect::ZERO,
+            slider_rect: utils::Rect::ZERO,
         }
     }
 }
@@ -64,7 +70,7 @@ impl WidgetList for VolumeUi {
     }
 
     fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        let text_widget = self.root.children.2.children.1;
+        let text_widget = &mut self.root.children.2.children.1;
         if interactivity.is_clicked(self.minus_rect) {
             self.count -= 1;
             text_widget.set_text(tree, self.count.to_string());
@@ -76,10 +82,10 @@ impl WidgetList for VolumeUi {
             return true;
         }
         if interactivity.is_clicked(self.slider_rect) {
-            let slider = self.root.children.1;
+            let slider = &mut self.root.children.1;
             let y = interactivity.pointer.y;
             let new_value = slider.calculate_new_value(y, self.slider_rect);
-            new_value.clamp(MIN_VOLUME, MAX_VOLUME);
+            new_value.clamp(MIN_VOLUME as f32, MAX_VOLUME as f32);
             slider.set_value(new_value);
             self.count = new_value as i32;
             text_widget.set_text(tree, self.count.to_string());
@@ -89,9 +95,13 @@ impl WidgetList for VolumeUi {
     }
 }
 
-fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {
+fn make_root(
+    atlas_id: AtlasId,
+    font_24: &'static BakedFont,
+    font_100: &'static BakedFont,
+) -> RootDiv {
     let mut title = Text::new(Style::default());
-    title.font = Some(&atlas::UI_FONT_INTER_24);
+    title.font = Some(font_24);
     title.text = "Volume".to_string();
     title.color = Color::WHITE;
     title.z = 0.95;
@@ -117,13 +127,13 @@ fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static 
     minus.div.border_radius = 12.0;
     minus.div.border_thickness = 2.0;
     minus.div.z = 1.0;
-    minus.div.children.font = Some(&atlas::UI_FONT_INTER_24);
+    minus.div.children.font = Some(font_24);
     minus.div.children.color = Color::WHITE;
     minus.div.children.z = 0.4;
     minus.div.children.atlas_id = Some(atlas_id);
 
     let mut count_text = Text::new(Style::default());
-    count_text.font = Some(&atlas::UI_FONT_INTER_24);
+    count_text.font = Some(font_24);
     count_text.text = "0".to_string();
     count_text.color = Color::WHITE;
     count_text.z = 0.95;
@@ -135,7 +145,7 @@ fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static 
     plus.div.border_radius = 12.0;
     plus.div.border_thickness = 2.0;
     plus.div.z = 1.0;
-    plus.div.children.font = Some(&atlas::UI_FONT_INTER_24);
+    plus.div.children.font = Some(font_24);
     plus.div.children.color = Color::WHITE;
     plus.div.children.z = 0.5;
     plus.div.children.atlas_id = Some(atlas_id);

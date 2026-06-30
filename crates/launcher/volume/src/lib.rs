@@ -42,6 +42,20 @@ impl VolumeUi {
             slider_rect: utils::Rect::ZERO,
         }
     }
+
+    fn update_value(&mut self, mut new_value: i32) {
+        new_value = new_value.clamp(MIN_VOLUME, MAX_VOLUME);
+        self.count = new_value;
+        let slider = &mut self.root.children.1;
+        slider.set_value(self.count as f32);
+    }
+
+    fn update_ui(&mut self, tree: &mut WidgetTree) {
+        let text_widget = &mut self.root.children.2.children.1;
+        let slider = &mut self.root.children.1;
+        text_widget.set_text(tree, self.count.to_string());
+        slider.update_ui(tree);
+    }
 }
 
 impl WidgetList for VolumeUi {
@@ -70,25 +84,22 @@ impl WidgetList for VolumeUi {
     }
 
     fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        let text_widget = &mut self.root.children.2.children.1;
         if interactivity.is_clicked(self.minus_rect) {
-            self.count -= 1;
-            text_widget.set_text(tree, self.count.to_string());
+            self.update_value(self.count - STEP_SIZE);
+            self.update_ui(tree);
             return true;
         }
         if interactivity.is_clicked(self.plus_rect) {
-            self.count += 1;
-            text_widget.set_text(tree, self.count.to_string());
+            self.update_value(self.count + STEP_SIZE);
+            self.update_ui(tree);
             return true;
         }
         if interactivity.is_clicked(self.slider_rect) {
             let slider = &mut self.root.children.1;
             let y = interactivity.pointer.y;
             let new_value = slider.calculate_new_value(y, self.slider_rect);
-            new_value.clamp(MIN_VOLUME as f32, MAX_VOLUME as f32);
-            slider.set_value(new_value);
-            self.count = new_value as i32;
-            text_widget.set_text(tree, self.count.to_string());
+            self.update_value(new_value as i32);
+            self.update_ui(tree);
             return true;
         }
         false

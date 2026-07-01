@@ -30,8 +30,14 @@ impl Interface for WlDisplay {
 #[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum WlDisplayRequest {
-    Sync { sender: Handle<WlDisplay>, callback: Handle<WlCallback> },
-    GetRegistry { sender: Handle<WlDisplay>, registry: Handle<WlRegistry> },
+    Sync {
+        sender: Handle<WlDisplay>,
+        callback: Handle<WlCallback>,
+    },
+    GetRegistry {
+        sender: Handle<WlDisplay>,
+        registry: Handle<WlRegistry>,
+    },
 }
 #[cfg(feature = "server")]
 impl Event for WlDisplayRequest {}
@@ -101,7 +107,8 @@ impl Handle<WlDisplay> {
         let cb: Handle<WlCallback> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let cb_id = cb.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 0, &cb_id.to_ne_bytes(), &[]);
+        self.proxy
+            .write_raw(sender_id, 0, &cb_id.to_ne_bytes(), &[]);
         cb
     }
 
@@ -109,7 +116,8 @@ impl Handle<WlDisplay> {
         let reg: Handle<WlRegistry> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let reg_id = reg.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 1, &reg_id.to_ne_bytes(), &[]);
+        self.proxy
+            .write_raw(sender_id, 1, &reg_id.to_ne_bytes(), &[]);
         reg
     }
 }
@@ -134,7 +142,10 @@ impl Interface for WlCallback {
 #[cfg(feature = "client")]
 #[derive(Debug)]
 pub enum WlCallbackEvent {
-    Done { sender: Handle<WlCallback>, callback_data: u32 },
+    Done {
+        sender: Handle<WlCallback>,
+        callback_data: u32,
+    },
 }
 #[cfg(feature = "client")]
 impl Event for WlCallbackEvent {}
@@ -167,7 +178,11 @@ impl Interface for WlRegistry {
 #[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum WlRegistryRequest {
-    Bind { sender: Handle<WlRegistry>, name: u32, id: ObjectId },
+    Bind {
+        sender: Handle<WlRegistry>,
+        name: u32,
+        id: ObjectId,
+    },
 }
 #[cfg(feature = "server")]
 impl Event for WlRegistryRequest {}

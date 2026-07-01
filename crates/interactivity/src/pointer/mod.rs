@@ -3,18 +3,17 @@ use std::collections::HashMap;
 use utils::Rect;
 use wayland::{WlPointerButtonState, WlPointerEvent};
 
+// https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
     Right,
     Middle,
-    Side,    // BTN_SIDE
-    Extra,   // BTN_EXTRA
-    Forward, // BTN_FORWARD
-    Back,    // BTN_BACK
-    Task,    // BTN_TASK
-
-    // TODO              Verify extras
+    Side,            // BTN_SIDE
+    Extra,           // BTN_EXTRA
+    Forward,         // BTN_FORWARD
+    Back,            // BTN_BACK
+    Task,            // BTN_TASK
     Numbered(u8),    // BTN_0..BTN_9   -> 0..=9
     ExtraButton(u8), // BTN_TRIGGER_HAPPY1..40 -> 0..=39
     Unknown(u32),    // anything else — don't drop the event, just pass the raw code through

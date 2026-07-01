@@ -44,18 +44,22 @@ impl From<u32> for MouseButton {
 
 #[derive(Debug, Default)]
 pub struct PointerState {
-    pub x: f64,
-    pub y: f64,
-    pub press: Option<(f64, f64)>,
-    pub pressed_buttons: HashMap<MouseButton, (f64, f64)>,
-    pub just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
-    pub just_released_buttons: HashMap<MouseButton, (f64, f64)>,
-    pub just_scrolled: Option<ScrollData>,
+    x: f64,
+    y: f64,
+    press: Option<(f64, f64)>,
+    pressed_buttons: HashMap<MouseButton, (f64, f64)>,
+    just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
+    just_released_buttons: HashMap<MouseButton, (f64, f64)>,
+    just_scrolled: Option<ScrollData>,
 }
 
 impl PointerState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn pos(&self) -> (f64, f64) {
+        (self.x, self.y)
     }
 
     pub fn is_clicked(&self, bounds: Rect) -> bool {
@@ -73,6 +77,15 @@ impl PointerState {
         self.just_pressed_buttons.contains_key(&button)
     }
 
+    pub fn any_just_pressed(&self, buttons: &[MouseButton]) -> bool {
+        for button in buttons {
+            if self.just_pressed_buttons.contains_key(button) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn just_released(&self, button: MouseButton) -> bool {
         self.just_released_buttons.contains_key(&button)
     }
@@ -83,6 +96,22 @@ impl PointerState {
 
     pub fn scrolled(&self) -> bool {
         self.just_scrolled.is_some()
+    }
+
+    pub fn get_pressed(&self, button: MouseButton) -> Option<&(f64, f64)> {
+        self.pressed_buttons.get(&button)
+    }
+
+    pub fn get_just_pressed(&self, button: MouseButton) -> Option<&(f64, f64)> {
+        self.just_pressed_buttons.get(&button)
+    }
+
+    pub fn get_just_released(&self, button: MouseButton) -> Option<&(f64, f64)> {
+        self.just_released_buttons.get(&button)
+    }
+
+    pub fn get_scrolled(&self) -> Option<&ScrollData> {
+        self.just_scrolled.as_ref()
     }
 
     pub fn process(&mut self, ev: &WlPointerEvent) {

@@ -19,6 +19,11 @@ pub enum MouseButton {
     Unknown(u32),    // anything else — don't drop the event, just pass the raw code through
 }
 
+#[derive(Debug, Default)]
+pub struct ScrollData {
+    pub delta: f64,
+}
+
 impl From<u32> for MouseButton {
     fn from(code: u32) -> Self {
         match code {
@@ -45,6 +50,7 @@ pub struct PointerState {
     pub pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     pub just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     pub just_released_buttons: HashMap<MouseButton, (f64, f64)>,
+    pub just_scrolled: Option<ScrollData>,
 }
 
 impl PointerState {
@@ -60,6 +66,7 @@ impl PointerState {
         self.press = None;
         self.just_pressed_buttons.clear();
         self.just_released_buttons.clear();
+        self.just_scrolled = None;
     }
 
     pub fn just_pressed(&self, button: MouseButton) -> bool {
@@ -72,6 +79,10 @@ impl PointerState {
 
     pub fn pressed(&self, button: MouseButton) -> bool {
         self.pressed_buttons.contains_key(&button)
+    }
+
+    pub fn scrolled(&self) -> bool {
+        self.just_scrolled.is_some()
     }
 
     pub fn process(&mut self, ev: &WlPointerEvent) {
@@ -116,7 +127,11 @@ impl PointerState {
                 }
             }
 
-            WlPointerEvent::Axis { .. } => (),
+            WlPointerEvent::Axis { value, .. } => {
+                self.just_scrolled = Some(ScrollData {
+                    delta: *value as f64 / 256.0,
+                });
+            }
 
             WlPointerEvent::Frame { .. } => (),
 

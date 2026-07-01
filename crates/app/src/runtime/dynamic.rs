@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use frunk::{HCons, HNil};
@@ -6,12 +7,12 @@ use frunk::{HCons, HNil};
 use crate::event::Event;
 use crate::module::{Lens, RegisteredModule};
 
-type DynHandler<S> = Box<dyn Fn(&mut S, &dyn Any, &mut Vec<Box<dyn Any>>)>;
+type DynHandler<S> = Box<dyn Fn(&mut S, &dyn Any, &mut VecDeque<Box<dyn Any>>)>;
 
 pub struct App<S, Modules> {
     pub(crate) state: S,
     handlers: Vec<DynHandler<S>>,
-    stack: Vec<Box<dyn Any>>,
+    queue: VecDeque<Box<dyn Any>>,
     _phantom: PhantomData<fn() -> Modules>,
 }
 
@@ -20,7 +21,7 @@ impl<S> App<S, HNil> {
         Self {
             state,
             handlers: Vec::new(),
-            stack: Vec::new(),
+            queue: VecDeque::new(),
             _phantom: PhantomData,
         }
     }
@@ -40,10 +41,10 @@ impl<S, Modules> App<S, Modules> {
         M: RegisteredModule<SubState, S>,
     {
         let sub_handlers = module.into_handlers();
-        let mounted: DynHandler<S> = Box::new(move |state, event, stack| {
+        let mounted: DynHandler<S> = Box::new(move |state, event, queue| {
             let sub_ptr: *mut SubState = state.lens();
             for h in &sub_handlers {
-                h(unsafe { &mut *sub_ptr }, event, stack);
+                h(unsafe { &mut *sub_ptr }, event, queue);
             }
         });
         let mut handlers = self.handlers;
@@ -51,19 +52,19 @@ impl<S, Modules> App<S, Modules> {
         App {
             state: self.state,
             handlers,
-            stack: self.stack,
+            queue: self.queue,
             _phantom: PhantomData,
         }
     }
 
     pub fn dispatch<E: Event>(&mut self, event: &E) {
-        let App { state, handlers, stack, .. } = self;
+        let App { state, handlers, queue, .. } = self;
         for h in handlers.iter() {
-            h(state, event as &dyn Any, stack);
+            h(state, event as &dyn Any, queue);
         }
-        while let Some(boxed) = stack.pop() {
+        while let Some(boxed) = queue.pop_front() {
             for h in handlers.iter() {
-                h(state, &*boxed, stack);
+                h(state, &*boxed, queue);
             }
         }
     }

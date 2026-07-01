@@ -85,6 +85,9 @@
 //! assert_eq!(app.state().counter, 1);
 //! ```
 
+#[cfg(not(any(feature = "static", feature = "dynamic")))]
+compile_error!("enable either the `static` or the `dynamic` feature");
+
 mod compose;
 mod dispatch;
 mod event;
@@ -92,6 +95,7 @@ mod module;
 mod runtime;
 
 pub use compose::Compose;
+#[cfg(all(feature = "static"))]
 pub use dispatch::{HandleList, Handler, ModuleList, MountedModule, OuterDispatch, Propagate};
 pub use event::{Emit, Event, Many, Poll, PrePoll, Start};
 pub use module::{Lens, Module, RegisteredModule};

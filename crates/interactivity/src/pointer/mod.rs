@@ -1,7 +1,3 @@
-mod event;
-
-pub use event::PointerEvent;
-
 use utils::Rect;
 use wayland::{WlPointerButtonState, WlPointerEvent};
 
@@ -25,62 +21,45 @@ impl PointerState {
         self.press = None;
     }
 
-    pub fn process(&mut self, ev: &WlPointerEvent) -> Option<PointerEvent> {
+    pub fn process(&mut self, ev: &WlPointerEvent) {
         match ev {
-            WlPointerEvent::Enter { surface, surface_x, surface_y, .. } => {
+            WlPointerEvent::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 self.x = *surface_x as f64 / 256.0;
                 self.y = *surface_y as f64 / 256.0;
-                Some(PointerEvent::Enter {
-                    surface: surface.object_id()?,
-                    x: self.x,
-                    y: self.y,
-                })
             }
 
-            WlPointerEvent::Leave { surface, .. } => Some(PointerEvent::Leave {
-                surface: surface.object_id()?,
-                x: self.x,
-                y: self.y,
-            }),
+            WlPointerEvent::Leave { .. } => (),
 
-            WlPointerEvent::Motion { time, surface_x, surface_y, .. } => {
+            WlPointerEvent::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 let x = *surface_x as f64 / 256.0;
                 let y = *surface_y as f64 / 256.0;
                 let dx = x - self.x;
                 let dy = y - self.y;
                 self.x = x;
                 self.y = y;
-                Some(PointerEvent::Move { x: self.x, y: self.y, dx, dy, time: *time })
             }
 
-            WlPointerEvent::Button { button, state, time, .. } => match state {
+            WlPointerEvent::Button { state, .. } => match state {
                 WlPointerButtonState::Pressed => {
                     self.press = Some((self.x, self.y));
-                    Some(PointerEvent::ButtonPress {
-                        button: *button,
-                        x: self.x,
-                        y: self.y,
-                        time: *time,
-                    })
                 }
-                WlPointerButtonState::Released => Some(PointerEvent::ButtonRelease {
-                    button: *button,
-                    x: self.x,
-                    y: self.y,
-                    time: *time,
-                }),
-                _ => None,
+                WlPointerButtonState::Released => (),
+                _ => (),
             },
 
-            WlPointerEvent::Axis { time, axis, value, .. } => Some(PointerEvent::Scroll {
-                axis: *axis,
-                delta: *value as f64 / 256.0,
-                time: *time,
-            }),
+            WlPointerEvent::Axis { .. } => (),
 
-            WlPointerEvent::Frame { .. } => Some(PointerEvent::Frame),
+            WlPointerEvent::Frame { .. } => (),
 
-            _ => None,
+            _ => (),
         }
     }
 }

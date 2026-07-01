@@ -3,9 +3,9 @@ pub mod keyboard;
 pub mod pointer;
 pub mod touch;
 
-pub use keyboard::{KeyEvent, KeyboardState, Modifiers};
-pub use pointer::{PointerEvent, PointerState};
-pub use touch::{DragState, SwipeDirection, TouchEvent, TouchState};
+pub use keyboard::{KeyboardState, Modifiers};
+pub use pointer::PointerState;
+pub use touch::{DragState, SwipeDirection, TouchState};
 
 #[derive(Debug, Default)]
 pub struct InteractivityState {

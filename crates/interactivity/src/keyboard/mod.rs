@@ -1,11 +1,35 @@
-mod event;
-
-pub use event::{KeyEvent, Modifiers};
-
 use std::collections::HashSet;
-use std::os::fd::AsRawFd;
 
 use wayland::{WlKeyboardEvent, WlKeyboardKeyState};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub logo: bool,
+    pub caps_lock: bool,
+    pub num_lock: bool,
+    pub scroll_lock: bool,
+}
+
+impl Modifiers {
+    pub(super) fn from_xkb(combined: u32) -> Self {
+        Self {
+            shift: combined & 0x01 != 0,
+            caps_lock: combined & 0x02 != 0,
+            ctrl: combined & 0x04 != 0,
+            alt: combined & 0x08 != 0,
+            num_lock: combined & 0x10 != 0,
+            scroll_lock: combined & 0x20 != 0,
+            logo: combined & 0x40 != 0,
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        !self.shift && !self.ctrl && !self.alt && !self.logo && !self.caps_lock && !self.num_lock
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct KeyboardState {
@@ -28,27 +52,29 @@ impl KeyboardState {
         self.held_keys.contains(&key)
     }
 
-    pub fn process(&mut self, ev: &WlKeyboardEvent) -> Option<KeyEvent> {
+    pub fn process(&mut self, ev: &WlKeyboardEvent) {
         match ev {
-            WlKeyboardEvent::Key { key, state, time, .. } => match state {
+            WlKeyboardEvent::Key { key, state, .. } => match state {
                 WlKeyboardKeyState::Pressed => {
                     self.held_keys.insert(*key);
-                    Some(KeyEvent::Press { key: *key, modifiers: self.modifiers, time: *time })
                 }
                 WlKeyboardKeyState::Released => {
                     self.held_keys.remove(key);
-                    Some(KeyEvent::Release { key: *key, modifiers: self.modifiers, time: *time })
                 }
-                _ => None,
+                _ => (),
             },
 
-            WlKeyboardEvent::Modifiers { mods_depressed, mods_latched, mods_locked, .. } => {
+            WlKeyboardEvent::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                ..
+            } => {
                 let combined = mods_depressed | mods_latched | mods_locked;
                 self.modifiers = Modifiers::from_xkb(combined);
-                Some(KeyEvent::ModifiersChanged { modifiers: self.modifiers })
             }
 
-            WlKeyboardEvent::Enter { surface, keys, .. } => {
+            WlKeyboardEvent::Enter { keys, .. } => {
                 let held: Vec<u32> = keys
                     .chunks_exact(4)
                     .map(|c| u32::from_ne_bytes(c.try_into().unwrap()))
@@ -56,25 +82,18 @@ impl KeyboardState {
                 for &k in &held {
                     self.held_keys.insert(k);
                 }
-                Some(KeyEvent::FocusEnter { surface: surface.object_id()?, held_keys: held })
             }
 
-            WlKeyboardEvent::Leave { surface, .. } => {
+            WlKeyboardEvent::Leave { .. } => {
                 self.held_keys.clear();
-                Some(KeyEvent::FocusLeave { surface: surface.object_id()? })
             }
 
             WlKeyboardEvent::RepeatInfo { rate, delay, .. } => {
                 self.repeat_rate = *rate;
                 self.repeat_delay = *delay;
-                Some(KeyEvent::RepeatInfo { rate: *rate, delay: *delay })
             }
 
-            WlKeyboardEvent::Keymap { format, fd, size, .. } => Some(KeyEvent::Keymap {
-                format: *format,
-                fd: fd.as_raw_fd(),
-                size: *size,
-            }),
+            WlKeyboardEvent::Keymap { .. } => (),
         }
     }
 }

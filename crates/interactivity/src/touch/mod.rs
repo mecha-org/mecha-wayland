@@ -1,7 +1,3 @@
-mod event;
-
-pub use event::{DragState, SwipeDirection, TouchEvent};
-
 use std::collections::HashMap;
 use wayland::WlTouchEvent;
 
@@ -9,6 +5,24 @@ const TAP_MAX_DISTANCE: f64 = 15.0;
 const TAP_MAX_DURATION_MS: u32 = 300;
 const SWIPE_MIN_DISTANCE: f64 = 40.0;
 const SWIPE_MAX_DURATION_MS: u32 = 500;
+
+/// Swipe direction for swipe gestures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwipeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Phase of a drag gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragState {
+    Start,
+    Move,
+    End,
+    Cancel,
+}
 
 #[derive(Debug, Clone)]
 struct ActiveTouch {
@@ -30,9 +44,7 @@ impl TouchState {
         Self::default()
     }
 
-    pub fn process(&mut self, ev: &WlTouchEvent) -> Vec<TouchEvent> {
-        let mut events = Vec::new();
-
+    pub fn process(&mut self, ev: &WlTouchEvent) {
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
                 let x = *x as f64 / 256.0;
@@ -46,19 +58,6 @@ impl TouchState {
                     last_time: *time,
                 };
                 self.active_touches.insert(*id, active);
-                events.push(TouchEvent::Down { id: *id, x, y, time: *time });
-                events.push(TouchEvent::Drag {
-                    id: *id,
-                    state: DragState::Start,
-                    start_x: x,
-                    start_y: y,
-                    x,
-                    y,
-                    delta_x: 0.0,
-                    delta_y: 0.0,
-                    total_dx: 0.0,
-                    total_dy: 0.0,
-                });
             }
 
             WlTouchEvent::Motion { id, x, y, time, .. } => {
@@ -75,20 +74,6 @@ impl TouchState {
                     active.last_x = x;
                     active.last_y = y;
                     active.last_time = *time;
-
-                    events.push(TouchEvent::Motion { id: *id, x, y, dx, dy, time: *time });
-                    events.push(TouchEvent::Drag {
-                        id: *id,
-                        state: DragState::Move,
-                        start_x,
-                        start_y,
-                        x,
-                        y,
-                        delta_x: dx,
-                        delta_y: dy,
-                        total_dx,
-                        total_dy,
-                    });
                 }
             }
 
@@ -96,23 +81,9 @@ impl TouchState {
                 if let Some(active) = self.active_touches.remove(id) {
                     let x = active.last_x;
                     let y = active.last_y;
-                    events.push(TouchEvent::Up { id: *id, x, y, time: *time });
 
                     let total_dx = x - active.start_x;
                     let total_dy = y - active.start_y;
-
-                    events.push(TouchEvent::Drag {
-                        id: *id,
-                        state: DragState::End,
-                        start_x: active.start_x,
-                        start_y: active.start_y,
-                        x,
-                        y,
-                        delta_x: 0.0,
-                        delta_y: 0.0,
-                        total_dx,
-                        total_dy,
-                    });
 
                     let dx = x - active.start_x;
                     let dy = y - active.start_y;
@@ -120,56 +91,41 @@ impl TouchState {
                     let duration_ms = time.saturating_sub(active.start_time);
 
                     if distance < TAP_MAX_DISTANCE && duration_ms < TAP_MAX_DURATION_MS {
-                        events.push(TouchEvent::Tap { id: *id, x, y });
-                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS {
+                        // tap
+                    } else if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS
+                    {
                         let direction = if dx.abs() > dy.abs() {
-                            if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+                            if dx > 0.0 {
+                                SwipeDirection::Right
+                            } else {
+                                SwipeDirection::Left
+                            }
                         } else {
-                            if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+                            if dy > 0.0 {
+                                SwipeDirection::Down
+                            } else {
+                                SwipeDirection::Up
+                            }
                         };
-                        let velocity =
-                            if duration_ms > 0 { distance / duration_ms as f64 } else { distance };
-                        events.push(TouchEvent::Swipe {
-                            direction,
-                            start_x: active.start_x,
-                            start_y: active.start_y,
-                            end_x: x,
-                            end_y: y,
-                            start_time: active.start_time,
-                            end_time: *time,
-                            duration_ms,
-                            velocity,
-                        });
+                        let velocity = if duration_ms > 0 {
+                            distance / duration_ms as f64
+                        } else {
+                            distance
+                        };
                     }
                 }
             }
 
             WlTouchEvent::Cancel { .. } => {
                 for (id, active) in &self.active_touches {
-                    events.push(TouchEvent::Drag {
-                        id: *id,
-                        state: DragState::Cancel,
-                        start_x: active.start_x,
-                        start_y: active.start_y,
-                        x: active.last_x,
-                        y: active.last_y,
-                        delta_x: 0.0,
-                        delta_y: 0.0,
-                        total_dx: active.last_x - active.start_x,
-                        total_dy: active.last_y - active.start_y,
-                    });
+                    // drag cancel
                 }
                 self.active_touches.clear();
-                events.push(TouchEvent::Cancel);
             }
 
-            WlTouchEvent::Frame { .. } => {
-                events.push(TouchEvent::Frame);
-            }
+            WlTouchEvent::Frame { .. } => (),
 
-            _ => {}
+            _ => (),
         }
-
-        events
     }
 }

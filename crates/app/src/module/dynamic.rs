@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use frunk::{HCons, HNil};
@@ -15,24 +16,24 @@ unsafe impl<T> Lens<T> for T {
     }
 }
 
-pub(crate) type DynHandler<S> = Box<dyn Fn(&mut S, &dyn Any, &mut Vec<Box<dyn Any>>)>;
+pub(crate) type DynHandler<S> = Box<dyn Fn(&mut S, &dyn Any, &mut VecDeque<Box<dyn Any>>)>;
 
-/// Converts a handler's return value into stack pushes.
+/// Converts a handler's return value into queue pushes.
 #[allow(private_bounds)]
 pub(crate) trait PushToStack {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>);
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>);
 }
 
 impl<E: Event> PushToStack for E {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
-        stack.push(Box::new(self));
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
+        queue.push_back(Box::new(self));
     }
 }
 
 impl<E: Event> PushToStack for Option<E> {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
         if let Some(e) = self {
-            stack.push(Box::new(e));
+            queue.push_back(Box::new(e));
         }
     }
 }
@@ -42,9 +43,9 @@ where
     Iter: IntoIterator,
     Iter::Item: Event,
 {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
         for e in self.0 {
-            stack.push(Box::new(e));
+            queue.push_back(Box::new(e));
         }
     }
 }
@@ -54,34 +55,34 @@ where
     Iter: IntoIterator,
     Iter::Item: Event,
 {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
         if let Some(many) = self {
             for e in many.0 {
-                stack.push(Box::new(e));
+                queue.push_back(Box::new(e));
             }
         }
     }
 }
 
 impl PushToStack for HNil {
-    fn push_to_stack(self, _: &mut Vec<Box<dyn Any>>) {}
+    fn push_to_stack(self, _: &mut VecDeque<Box<dyn Any>>) {}
 }
 
 impl PushToStack for Option<HNil> {
-    fn push_to_stack(self, _: &mut Vec<Box<dyn Any>>) {}
+    fn push_to_stack(self, _: &mut VecDeque<Box<dyn Any>>) {}
 }
 
 impl<H: PushToStack, T: PushToStack> PushToStack for HCons<H, T> {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
-        self.head.push_to_stack(stack);
-        self.tail.push_to_stack(stack);
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
+        self.head.push_to_stack(queue);
+        self.tail.push_to_stack(queue);
     }
 }
 
 impl<H: PushToStack, T: PushToStack> PushToStack for Option<HCons<H, T>> {
-    fn push_to_stack(self, stack: &mut Vec<Box<dyn Any>>) {
+    fn push_to_stack(self, queue: &mut VecDeque<Box<dyn Any>>) {
         if let Some(hlist) = self {
-            hlist.push_to_stack(stack);
+            hlist.push_to_stack(queue);
         }
     }
 }
@@ -119,9 +120,9 @@ impl<S, Emitted, Handlers, SubModules> Module<S, Emitted, Handlers, SubModules> 
     where
         S: 'static,
     {
-        let handler: DynHandler<S> = Box::new(move |state, event, stack| {
+        let handler: DynHandler<S> = Box::new(move |state, event, queue| {
             if let Some(typed) = (event as &dyn Any).downcast_ref::<E>() {
-                f(state, typed).push_to_stack(stack);
+                f(state, typed).push_to_stack(queue);
             }
         });
         let mut handlers = self.handlers;
@@ -140,10 +141,10 @@ impl<S, Emitted, Handlers, SubModules> Module<S, Emitted, Handlers, SubModules> 
         S: Lens<ChildState> + 'static,
     {
         let child_handlers = child.handlers;
-        let dispatcher: DynHandler<S> = Box::new(move |state, event, stack| {
+        let dispatcher: DynHandler<S> = Box::new(move |state, event, queue| {
             let child_ptr: *mut ChildState = state.lens();
             for h in &child_handlers {
-                h(unsafe { &mut *child_ptr }, event, stack);
+                h(unsafe { &mut *child_ptr }, event, queue);
             }
         });
         let mut handlers = self.handlers;

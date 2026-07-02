@@ -1,4 +1,4 @@
-use assets::{BakedFont, GlyphInfo};
+use assets::{AtlasId, BakedFont, GlyphInfo};
 use taffy::prelude::*;
 use taffy::{AvailableSpace, Size, Style};
 use ui::widgets::Text;
@@ -6,8 +6,10 @@ use ui::{self, Measure, Render, RenderCommand, Widget, WidgetTree, compute_layou
 use utils::Color;
 
 static TEST_FONT: BakedFont = BakedFont {
+    atlas_id: AtlasId(0),
     size: 16.0,
     line_height: 20.0,
+    ascent: 0.0,
     glyphs: [GlyphInfo {
         x: 0.0,
         y: 0.0,

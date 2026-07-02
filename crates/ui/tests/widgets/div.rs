@@ -120,8 +120,10 @@ fn div_render_node_collects_commands_preorder() {
     use utils::Color;
 
     static FONT: BakedFont = BakedFont {
+        atlas_id: assets::AtlasId(0),
         size: 16.0,
         line_height: 20.0,
+        ascent: 0.0,
         glyphs: [GlyphInfo {
             x: 0.0,
             y: 0.0,

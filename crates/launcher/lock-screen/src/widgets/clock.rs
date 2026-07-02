@@ -1,4 +1,3 @@
-use assets::AtlasId;
 use taffy::Style;
 use ui::widgets::Text;
 use ui::{Point, Render, RenderCommand, WidgetTree};
@@ -19,12 +18,11 @@ pub struct ClockText {
 }
 
 impl ClockText {
-    pub fn new(style: Style, atlas_id: AtlasId) -> Self {
+    pub fn new(style: Style) -> Self {
         let text_style = Style {
             ..Default::default()
         };
         let mut inner = Text::new(text_style);
-        inner.atlas_id = Some(atlas_id);
         inner.z = 0.7;
 
         let (h, m, ..) = crate::time::local_time();

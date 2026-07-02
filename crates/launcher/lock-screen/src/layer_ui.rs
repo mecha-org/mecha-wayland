@@ -20,7 +20,6 @@ impl LayerUi {
         hint.font = Some(&atlas::UI_FONT_MONO_16);
         hint.color = Color::rgb(0.85, 0.85, 0.85);
         hint.z = 0.5;
-        hint.atlas_id = Some(atlas::UI.id);
 
         let container_style = taffy::Style {
             display: taffy::Display::Flex,

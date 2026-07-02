@@ -231,9 +231,8 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
                     origin,
                     z,
                     color,
-                    atlas_id: Some(aid),
                 } => {
-                    let texture_id = renderer.get_texture_id(aid);
+                    let texture_id = renderer.get_texture_id(font.atlas_id);
                     renderer.send_command(DrawText {
                         font,
                         texture_id,

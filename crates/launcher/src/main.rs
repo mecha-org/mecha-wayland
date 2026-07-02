@@ -66,7 +66,7 @@ fn main() {
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
         },
-        CounterUi::new(ATLAS.id, &UI_FONT_INTER_24, &UI_FONT_INTER_100),
+        CounterUi::new(&UI_FONT_INTER_24, &UI_FONT_INTER_100),
     );
 
     launcher.window_manager.spawn_window(
@@ -84,7 +84,7 @@ fn main() {
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
         },
-        NavbarUi::new(ATLAS.id, &UI_FONT_INTER_16),
+        NavbarUi::new(&UI_FONT_INTER_16),
     );
 
     let mut app = App::new(launcher)

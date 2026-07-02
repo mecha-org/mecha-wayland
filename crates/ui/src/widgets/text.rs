@@ -1,4 +1,4 @@
-use assets::{AtlasId, BakedFont};
+use assets::BakedFont;
 use taffy::{AvailableSpace, Layout, Size, Style};
 use utils::{Color, Point};
 
@@ -11,7 +11,6 @@ pub struct Text {
     pub text: String,
     pub color: Color,
     pub z: f32,
-    pub atlas_id: Option<AtlasId>,
 }
 
 impl Text {
@@ -23,7 +22,6 @@ impl Text {
             text: String::new(),
             color: Color::WHITE,
             z: 0.0,
-            atlas_id: None,
         }
     }
 
@@ -73,7 +71,6 @@ impl Render for Text {
             origin,
             z: self.z,
             color: self.color,
-            atlas_id: self.atlas_id,
         }]
     }
 }

@@ -40,7 +40,6 @@ pub enum RenderCommand {
         origin: Point,
         z: f32,
         color: Color,
-        atlas_id: Option<assets::AtlasId>,
     },
     DrawMonochromeSprite {
         atlas_id: assets::AtlasId,

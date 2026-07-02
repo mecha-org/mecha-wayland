@@ -190,8 +190,8 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
                         border_thickness,
                     });
                 }
-                RenderCommand::DrawText { font, text, origin, z, color, atlas_id: Some(aid) } => {
-                    let texture_id = renderer.get_texture_id(aid);
+                RenderCommand::DrawText { font, text, origin, z, color } => {
+                    let texture_id = renderer.get_texture_id(font.atlas_id);
                     renderer.send_command(DrawText { font, texture_id, text, origin, z, color });
                 }
                 RenderCommand::DrawMonochromeSprite { atlas_id, region, origin, z, size, color } => {

@@ -90,7 +90,6 @@ impl WidgetList for StatusBarUi {
             origin: Point::new(PADDING, font.get_baseline_offset(BAR_HEIGHT)),
             z: 0.5,
             color: Color::WHITE,
-            atlas_id: Some(atlas_id),
         });
 
         // Icons — right-aligned

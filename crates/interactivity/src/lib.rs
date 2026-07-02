@@ -4,12 +4,12 @@ pub mod keyboard;
 pub mod pointer;
 pub mod touch;
 
-pub use gesture::{DragState, SwipeDirection, GestureSingle};
+pub use gesture::{DragState, GestureSingle, SwipeDirection};
 pub use keyboard::{KeyboardState, Modifiers};
 pub use pointer::PointerState;
 pub use touch::TouchState;
 
-use wayland::{WlPointerEvent, WlTouchEvent, WlKeyboardEvent};
+use wayland::{WlKeyboardEvent, WlPointerEvent, WlTouchEvent};
 
 #[derive(Debug, Default)]
 pub struct InteractivityState {
@@ -53,5 +53,6 @@ impl InteractivityState {
             .just_pressed_buttons()
             .values()
             .any(|&(x, y)| bounds.contains(x, y))
+            || self.touch.tapped(bounds)
     }
 }

@@ -43,7 +43,6 @@ impl TouchState {
     }
 
     pub fn process(&mut self, ev: &WlTouchEvent) {
-        self.clear();
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
                 let x = *x as f64 / 256.0;
@@ -138,7 +137,7 @@ impl TouchState {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.just_tapped = false;
         self.just_hold_released = false;
     }

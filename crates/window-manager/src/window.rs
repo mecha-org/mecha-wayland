@@ -313,5 +313,6 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
     fn on_touch_event(&mut self, ev: &WlTouchEvent) {
         self.interactivity.touch.process(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
+        self.interactivity.touch.clear();
     }
 }

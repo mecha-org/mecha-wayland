@@ -3,15 +3,15 @@ const SWIPE_MAX_DURATION_MS: u32 = 500;
 
 #[derive(Clone, Debug)]
 pub struct GestureSwipeData {
-    direction: SwipeDirection,
-    start_x: f64,
-    start_y: f64,
-    end_x: f64,
-    end_y: f64,
-    start_time: u32,
-    end_time: u32,
-    duration_ms: u32,
-    velocity: f64, // pixels per millisecond
+    pub direction: SwipeDirection,
+    pub start_x: f64,
+    pub start_y: f64,
+    pub end_x: f64,
+    pub end_y: f64,
+    pub start_time: u32,
+    pub end_time: u32,
+    pub duration_ms: u32,
+    pub velocity: f64, // pixels per millisecond
 }
 
 /// Phase of a drag gesture.
@@ -25,16 +25,15 @@ pub enum DragState {
 
 #[derive(Clone, Debug)]
 pub struct GestureDragData {
-    // id: i32,
-    state: DragState,
-    start_x: f64,
-    start_y: f64,
-    x: f64,
-    y: f64,
-    delta_x: f64,
-    delta_y: f64,
-    total_dx: f64,
-    total_dy: f64,
+    pub state: DragState,
+    pub start_x: f64,
+    pub start_y: f64,
+    pub x: f64,
+    pub y: f64,
+    pub delta_x: f64,
+    pub delta_y: f64,
+    pub total_dx: f64,
+    pub total_dy: f64,
 }
 
 /// Swipe direction for swipe gestures.
@@ -122,7 +121,6 @@ impl GestureSingle {
         let total_dy = y - self.start_y;
 
         self.drag_data = Some(GestureDragData {
-            // id: self.id,
             state: DragState::End,
             start_x: self.start_x,
             start_y: self.start_y,

@@ -42,47 +42,6 @@ impl TouchState {
         Self::default()
     }
 
-    pub fn pos(&self) -> (f64, f64) {
-        (self.x, self.y)
-    }
-
-    pub fn tapped(&self, bounds: Rect) -> bool {
-        self.just_tapped && bounds.contains(self.x, self.y)
-    }
-
-    pub fn held(&self, bounds: Rect) -> bool {
-        self.held && bounds.contains(self.x, self.y)
-    }
-
-    pub fn hold_released(&self, bounds: Rect) -> bool {
-        self.just_hold_released && bounds.contains(self.x, self.y)
-    }
-
-    /// Get the touch with the earliest start time.
-    /// We can consider changing HashMap to BTreeMap sorted by time if called frequently.
-    fn get_earliest_touch(&self) -> Option<i32> {
-        if self.active_touches.is_empty() {
-            return None;
-        }
-
-        let mut earliest_id = 0;
-        let mut earliest_time = u32::MAX;
-        for (id, active) in &self.active_touches {
-            if active.start_time < earliest_time {
-                earliest_time = active.start_time;
-                earliest_id = *id;
-            }
-        }
-
-        Some(earliest_id)
-    }
-
-    fn clear(&mut self) {
-        self.just_tapped = false;
-        // self.held = false; // TODO Check
-        self.just_hold_released = false;
-    }
-
     pub fn process(&mut self, ev: &WlTouchEvent) {
         self.clear();
         match ev {
@@ -177,5 +136,49 @@ impl TouchState {
 
             _ => (),
         }
+    }
+
+    fn clear(&mut self) {
+        self.just_tapped = false;
+        self.just_hold_released = false;
+    }
+
+    /// Returns the current primary touch position.
+    pub fn position(&self) -> (f64, f64) {
+        (self.x, self.y)
+    }
+
+    /// Returns true if the primary touch was tapped within the given bounds in this frame.
+    pub fn tapped(&self, bounds: Rect) -> bool {
+        self.just_tapped && bounds.contains(self.x, self.y)
+    }
+
+    /// Returns true if the primary touch was held down within the given bounds.
+    pub fn held(&self, bounds: Rect) -> bool {
+        self.held && bounds.contains(self.x, self.y)
+    }
+
+    /// Returns true if the primary touch was released after being held down within the given bounds in this frame.
+    pub fn hold_released(&self, bounds: Rect) -> bool {
+        self.just_hold_released && bounds.contains(self.x, self.y)
+    }
+
+    /// Get the touch with the earliest start time.
+    /// We can consider changing HashMap to BTreeMap sorted by time if called frequently.
+    fn get_earliest_touch(&self) -> Option<i32> {
+        if self.active_touches.is_empty() {
+            return None;
+        }
+
+        let mut earliest_id = 0;
+        let mut earliest_time = u32::MAX;
+        for (id, active) in &self.active_touches {
+            if active.start_time < earliest_time {
+                earliest_time = active.start_time;
+                earliest_id = *id;
+            }
+        }
+
+        Some(earliest_id)
     }
 }

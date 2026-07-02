@@ -62,12 +62,13 @@ impl GestureSingle {
         Self::default()
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.swipe_data = None;
+        self.drag_data = None;
     }
 
     pub(crate) fn on_source_down(&mut self, x: f64, y: f64, time: u32) {
-        self.clear();
+        self.swipe_data = None;
         self.start_x = x;
         self.start_y = y;
         self.last_x = x;
@@ -88,7 +89,7 @@ impl GestureSingle {
     }
 
     pub(crate) fn on_source_update(&mut self, x: f64, y: f64, time: u32) {
-        self.clear();
+        self.swipe_data = None;
         let dx = x - self.last_x;
         let dy = y - self.last_y;
         let total_dx = x - self.start_x;
@@ -113,7 +114,7 @@ impl GestureSingle {
     }
 
     pub(crate) fn on_source_up(&mut self, time: u32) {
-        self.clear();
+        self.swipe_data = None;
         let x = self.last_x;
         let y = self.last_y;
 
@@ -182,5 +183,6 @@ impl GestureSingle {
             total_dx: self.last_x - self.start_x,
             total_dy: self.last_y - self.start_y,
         });
+        self.clear();
     }
 }

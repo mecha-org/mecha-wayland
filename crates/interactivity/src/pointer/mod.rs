@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use wayland::{WlPointerAxis, WlPointerButtonState, WlPointerEvent};
 
+use crate::gesture::GestureSingle;
+
 /// Linux mouse button codes (`BTN_*`).
 ///
 /// See:
@@ -58,6 +60,7 @@ pub struct PointerState {
     just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     just_released_buttons: HashMap<MouseButton, (f64, f64)>,
     just_scrolled: Option<ScrollData>,
+    pub gesture_single: GestureSingle,
 }
 
 impl PointerState {
@@ -76,28 +79,47 @@ impl PointerState {
                 self.y = *surface_y as f64 / 256.0;
             }
 
-            WlPointerEvent::Leave { .. } => (),
+            WlPointerEvent::Leave { .. } => {
+                self.gesture_single.on_source_cancel();
+            }
 
             WlPointerEvent::Motion {
                 surface_x,
                 surface_y,
+                time,
                 ..
             } => {
                 self.x = *surface_x as f64 / 256.0;
                 self.y = *surface_y as f64 / 256.0;
+                if self.pressed(MouseButton::Left) {
+                    self.gesture_single.on_source_update(self.x, self.y, *time);
+                } else {
+                    self.gesture_single.clear();
+                }
             }
 
-            WlPointerEvent::Button { state, button, .. } => {
+            WlPointerEvent::Button {
+                state,
+                button,
+                time,
+                ..
+            } => {
                 let button = MouseButton::from(*button);
                 match state {
                     WlPointerButtonState::Pressed => {
                         self.last_press_position = Some((self.x, self.y));
                         self.pressed_buttons.insert(button, (self.x, self.y));
                         self.just_pressed_buttons.insert(button, (self.x, self.y));
+                        if button == MouseButton::Left {
+                            self.gesture_single.on_source_down(self.x, self.y, *time);
+                        }
                     }
                     WlPointerButtonState::Released => {
                         self.pressed_buttons.remove(&button);
                         self.just_released_buttons.insert(button, (self.x, self.y));
+                        if button == MouseButton::Left {
+                            self.gesture_single.on_source_up(*time);
+                        }
                     }
                 }
             }

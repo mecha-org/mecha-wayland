@@ -5,7 +5,7 @@ pub mod pointer;
 pub mod touch;
 
 pub use gesture::{DragState, GestureSingle, SwipeDirection};
-pub use keyboard::{KeyboardState, Modifiers};
+pub use keyboard::{KeyCode, KeyboardState, Modifiers};
 pub use pointer::PointerState;
 pub use touch::TouchState;
 
@@ -52,7 +52,7 @@ impl InteractivityState {
         self.pointer
             .just_pressed_buttons()
             .values()
-            .any(|&(x, y)| bounds.contains(x, y))
+            .any(|point| bounds.contains_point(*point))
             || self.touch.tapped(bounds)
     }
 }

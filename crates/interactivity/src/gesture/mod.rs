@@ -1,17 +1,18 @@
-const SWIPE_MIN_DISTANCE: f64 = 40.0;
-const SWIPE_MAX_DURATION_MS: u32 = 500;
+use std::time::Duration;
+use utils::Point;
+
+const SWIPE_MIN_DISTANCE: f32 = 40.0;
+const SWIPE_MAX_DURATION: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug)]
-pub struct GestureSwipeData {
+pub struct SwipeData {
     pub direction: SwipeDirection,
-    pub start_x: f64,
-    pub start_y: f64,
-    pub end_x: f64,
-    pub end_y: f64,
-    pub start_time: u32,
-    pub end_time: u32,
-    pub duration_ms: u32,
-    pub velocity: f64, // pixels per millisecond
+    pub start_position: Point,
+    pub end_position: Point,
+    pub start_time: Duration,
+    pub end_time: Duration,
+    pub duration: Duration,
+    pub velocity: f32, // pixels per millisecond
 }
 
 /// Phase of a drag gesture.
@@ -24,16 +25,12 @@ pub enum DragState {
 }
 
 #[derive(Clone, Debug)]
-pub struct GestureDragData {
+pub struct DragData {
     pub state: DragState,
-    pub start_x: f64,
-    pub start_y: f64,
-    pub x: f64,
-    pub y: f64,
-    pub delta_x: f64,
-    pub delta_y: f64,
-    pub total_dx: f64,
-    pub total_dy: f64,
+    pub start_position: Point,
+    pub current_position: Point,
+    pub delta: Point,
+    pub total: Point,
 }
 
 /// Swipe direction for swipe gestures.
@@ -47,14 +44,12 @@ pub enum SwipeDirection {
 
 #[derive(Debug, Default)]
 pub struct GestureSingle {
-    start_x: f64,
-    start_y: f64,
-    last_x: f64,
-    last_y: f64,
-    start_time: u32,
-    last_time: u32,
-    drag_data: Option<GestureDragData>,
-    swipe_data: Option<GestureSwipeData>,
+    start_position: Point,
+    last_position: Point,
+    start_time: Duration,
+    last_time: Duration,
+    drag_data: Option<DragData>,
+    swipe_data: Option<SwipeData>,
 }
 
 impl GestureSingle {
@@ -71,126 +66,98 @@ impl GestureSingle {
         }
     }
 
-    pub fn drag_data(&self) -> Option<&GestureDragData> {
+    pub fn drag_data(&self) -> Option<&DragData> {
         self.drag_data.as_ref()
     }
 
-    pub fn swipe_data(&self) -> Option<&GestureSwipeData> {
+    pub fn swipe_data(&self) -> Option<&SwipeData> {
         self.swipe_data.as_ref()
     }
 
-    pub(crate) fn on_source_down(&mut self, x: f64, y: f64, time: u32) {
-        self.start_x = x;
-        self.start_y = y;
-        self.last_x = x;
-        self.last_y = y;
+    pub(crate) fn on_source_down(&mut self, position: Point, time: Duration) {
+        self.start_position = position;
+        self.last_position = position;
         self.start_time = time;
         self.last_time = time;
-        self.drag_data = Some(GestureDragData {
+        self.drag_data = Some(DragData {
             state: DragState::Start,
-            start_x: x,
-            start_y: y,
-            x,
-            y,
-            delta_x: 0.0,
-            delta_y: 0.0,
-            total_dx: 0.0,
-            total_dy: 0.0,
+            start_position: position,
+            current_position: position,
+            delta: Point::ZERO,
+            total: Point::ZERO,
         });
     }
 
-    pub(crate) fn on_source_update(&mut self, x: f64, y: f64, time: u32) {
-        let dx = x - self.last_x;
-        let dy = y - self.last_y;
-        let total_dx = x - self.start_x;
-        let total_dy = y - self.start_y;
-        let start_x = self.start_x;
-        let start_y = self.start_y;
+    pub(crate) fn on_source_update(&mut self, position: Point, time: Duration) {
+        let delta = position - self.last_position;
+        let total = position - self.start_position;
 
-        self.last_x = x;
-        self.last_y = y;
+        self.last_position = position;
         self.last_time = time;
-        self.drag_data = Some(GestureDragData {
+        self.drag_data = Some(DragData {
             state: DragState::Move,
-            start_x,
-            start_y,
-            x,
-            y,
-            delta_x: dx,
-            delta_y: dy,
-            total_dx,
-            total_dy,
+            start_position: self.start_position,
+            current_position: position,
+            delta,
+            total,
         });
     }
 
-    pub(crate) fn on_source_up(&mut self, time: u32) {
-        let x = self.last_x;
-        let y = self.last_y;
+    pub(crate) fn on_source_up(&mut self, time: Duration) {
+        let position = self.last_position;
+        let total = position - self.start_position;
 
-        let total_dx = x - self.start_x;
-        let total_dy = y - self.start_y;
-
-        self.drag_data = Some(GestureDragData {
+        self.drag_data = Some(DragData {
             state: DragState::End,
-            start_x: self.start_x,
-            start_y: self.start_y,
-            x: x,
-            y: y,
-            delta_x: 0.0,
-            delta_y: 0.0,
-            total_dx: total_dx,
-            total_dy: total_dy,
+            start_position: self.start_position,
+            current_position: position,
+            delta: Point::ZERO,
+            total,
         });
 
-        let dx = x - self.start_x;
-        let dy = y - self.start_y;
-        let distance = (dx * dx + dy * dy).sqrt();
-        let duration_ms = time.saturating_sub(self.start_time);
+        let distance = total.length();
+        let duration = time.saturating_sub(self.start_time);
 
-        if distance >= SWIPE_MIN_DISTANCE && duration_ms <= SWIPE_MAX_DURATION_MS {
-            let direction = if dx.abs() > dy.abs() {
-                if dx > 0.0 {
+        if distance >= SWIPE_MIN_DISTANCE && duration <= SWIPE_MAX_DURATION {
+            let direction = if total.x().abs() > total.y().abs() {
+                if total.x() > 0.0 {
                     SwipeDirection::Right
                 } else {
                     SwipeDirection::Left
                 }
             } else {
-                if dy > 0.0 {
+                if total.y() > 0.0 {
                     SwipeDirection::Down
                 } else {
                     SwipeDirection::Up
                 }
             };
-            let velocity = if duration_ms > 0 {
-                distance / duration_ms as f64
+            let duration_ms = duration.as_secs_f32() * 1000.0;
+            let velocity = if duration_ms > 0.0 {
+                distance / duration_ms
             } else {
                 distance
             };
-            self.swipe_data = Some(GestureSwipeData {
+            self.swipe_data = Some(SwipeData {
                 direction,
-                start_x: self.start_x,
-                start_y: self.start_y,
-                end_x: x,
-                end_y: y,
+                start_position: self.start_position,
+                end_position: position,
                 start_time: self.start_time,
                 end_time: time,
-                duration_ms,
+                duration,
                 velocity,
             });
         }
     }
 
     pub(crate) fn on_source_cancel(&mut self) {
-        self.drag_data = Some(GestureDragData {
+        let total = self.last_position - self.start_position;
+        self.drag_data = Some(DragData {
             state: DragState::Cancel,
-            start_x: self.start_x,
-            start_y: self.start_y,
-            x: self.last_x,
-            y: self.last_y,
-            delta_x: 0.0,
-            delta_y: 0.0,
-            total_dx: self.last_x - self.start_x,
-            total_dy: self.last_y - self.start_y,
+            start_position: self.start_position,
+            current_position: self.last_position,
+            delta: Point::ZERO,
+            total,
         });
         self.clear();
     }

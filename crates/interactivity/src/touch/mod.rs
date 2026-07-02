@@ -1,10 +1,11 @@
 use crate::gesture::GestureSingle;
 use std::collections::HashMap;
-use utils::Rect;
+use std::time::Duration;
+use utils::{Point, Rect};
 use wayland::WlTouchEvent;
 
-const TAP_MAX_DISTANCE: f64 = 15.0;
-const TAP_MAX_DURATION_MS: u32 = 300;
+const TAP_MAX_DISTANCE: f32 = 15.0;
+const TAP_MAX_DURATION: Duration = Duration::from_millis(300);
 
 /// Phase of a drag gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,18 +18,15 @@ pub enum DragState {
 
 #[derive(Debug, Clone)]
 struct ActiveTouch {
-    start_x: f64,
-    start_y: f64,
-    last_x: f64,
-    last_y: f64,
-    start_time: u32,
-    last_time: u32,
+    start_position: Point,
+    last_position: Point,
+    start_time: Duration,
+    last_time: Duration,
 }
 
 #[derive(Debug, Default)]
 pub struct TouchState {
-    x: f64,
-    y: f64,
+    position: Point,
     active_touches: HashMap<i32, ActiveTouch>,
     pointer_touch_id: Option<i32>,
     just_tapped: bool,
@@ -44,67 +42,61 @@ impl TouchState {
     pub fn process(&mut self, ev: &WlTouchEvent, gesture: &mut GestureSingle) {
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
-                let x = *x as f64 / 256.0;
-                let y = *y as f64 / 256.0;
+                let position = Point::new(*x as f32 / 256.0, *y as f32 / 256.0);
+                let time_dur = Duration::from_millis(*time as u64);
                 let active = ActiveTouch {
-                    start_x: x,
-                    start_y: y,
-                    last_x: x,
-                    last_y: y,
-                    start_time: *time,
-                    last_time: *time,
+                    start_position: position,
+                    last_position: position,
+                    start_time: time_dur,
+                    last_time: time_dur,
                 };
                 // If no pointer touch id is set, set the first touch id as the pointer touch id
                 if self.pointer_touch_id.is_none() {
                     if self.active_touches.is_empty() {
                         self.pointer_touch_id = Some(*id);
-                        self.x = x;
-                        self.y = y;
-                        gesture.on_source_down(x, y, *time);
+                        self.position = position;
+                        gesture.on_source_down(position, time_dur);
                     }
                 }
                 self.active_touches.insert(*id, active);
             }
 
             WlTouchEvent::Motion { id, x, y, time, .. } => {
-                let x = *x as f64 / 256.0;
-                let y = *y as f64 / 256.0;
+                let position = Point::new(*x as f32 / 256.0, *y as f32 / 256.0);
+                let time_dur = Duration::from_millis(*time as u64);
                 if let Some(active) = self.active_touches.get_mut(id) {
-                    active.last_x = x;
-                    active.last_y = y;
-                    active.last_time = *time;
+                    active.last_position = position;
+                    active.last_time = time_dur;
                 }
 
                 if self.pointer_touch_id == Some(*id) {
-                    self.x = x;
-                    self.y = y;
+                    self.position = position;
                     if let Some(active) = self.active_touches.get(id) {
-                        let dx = x - active.start_x;
-                        let dy = y - active.start_y;
+                        let dx = position.x() - active.start_position.x();
+                        let dy = position.y() - active.start_position.y();
                         let distance = (dx * dx + dy * dy).sqrt();
-                        let duration_ms = time.saturating_sub(active.start_time);
+                        let duration = time_dur.saturating_sub(active.start_time);
 
-                        if distance < TAP_MAX_DISTANCE && duration_ms > TAP_MAX_DURATION_MS {
+                        if distance < TAP_MAX_DISTANCE && duration > TAP_MAX_DURATION {
                             self.held = true;
                         }
                     }
-                    gesture.on_source_update(x, y, *time);
+                    gesture.on_source_update(position, time_dur);
                 }
             }
 
             WlTouchEvent::Up { id, time, .. } => {
+                let time_dur = Duration::from_millis(*time as u64);
                 if let Some(active) = self.active_touches.remove(id)
                     && self.pointer_touch_id == Some(*id)
                 {
-                    let x = active.last_x;
-                    let y = active.last_y;
-                    let dx = x - active.start_x;
-                    let dy = y - active.start_y;
+                    let dx = active.last_position.x() - active.start_position.x();
+                    let dy = active.last_position.y() - active.start_position.y();
                     let distance = (dx * dx + dy * dy).sqrt();
-                    let duration_ms = time.saturating_sub(active.start_time);
+                    let duration = time_dur.saturating_sub(active.start_time);
 
                     if distance < TAP_MAX_DISTANCE {
-                        if duration_ms < TAP_MAX_DURATION_MS {
+                        if duration < TAP_MAX_DURATION {
                             // tap
                             self.just_tapped = true;
                             self.held = false;
@@ -115,7 +107,7 @@ impl TouchState {
                         }
                     } else {
                         // swipe or drag
-                        gesture.on_source_up(*time);
+                        gesture.on_source_up(time_dur);
                     }
                 }
 
@@ -143,23 +135,23 @@ impl TouchState {
     }
 
     /// Returns the current primary touch position.
-    pub fn position(&self) -> (f64, f64) {
-        (self.x, self.y)
+    pub fn position(&self) -> Point {
+        self.position
     }
 
     /// Returns true if the primary touch was tapped within the given bounds in this frame.
     pub fn tapped(&self, bounds: Rect) -> bool {
-        self.just_tapped && bounds.contains(self.x, self.y)
+        self.just_tapped && bounds.contains_point(self.position)
     }
 
     /// Returns true if the primary touch was held down within the given bounds.
     pub fn held(&self, bounds: Rect) -> bool {
-        self.held && bounds.contains(self.x, self.y)
+        self.held && bounds.contains_point(self.position)
     }
 
     /// Returns true if the primary touch was released after being held down within the given bounds in this frame.
     pub fn hold_released(&self, bounds: Rect) -> bool {
-        self.just_hold_released && bounds.contains(self.x, self.y)
+        self.just_hold_released && bounds.contains_point(self.position)
     }
 
     /// Get the touch with the earliest start time.
@@ -170,7 +162,7 @@ impl TouchState {
         }
 
         let mut earliest_id = 0;
-        let mut earliest_time = u32::MAX;
+        let mut earliest_time = Duration::MAX;
         for (id, active) in &self.active_touches {
             if active.start_time < earliest_time {
                 earliest_time = active.start_time;

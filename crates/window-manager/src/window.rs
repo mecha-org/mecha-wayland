@@ -185,7 +185,7 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
             },
         );
 
-        let commands = self.ui.render_children(&self.tree, Point::new(0.0, 0.0));
+        let commands = self.ui.render_children(&self.tree, Point::ZERO);
 
         self.hit_areas.clear();
         for cmd in &commands {

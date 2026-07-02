@@ -43,7 +43,6 @@ pub struct TouchState {
     active_touches: HashMap<i32, ActiveTouch>,
     pointer_touch_id: Option<i32>,
     just_tapped: bool,
-    held: bool,
     just_hold_released: bool,
 }
 
@@ -91,18 +90,6 @@ impl TouchState {
 
                 if self.pointer_touch_id == Some(*id) {
                     self.position = position;
-                    if let Some(active) = self.active_touches.get(id) {
-                        let dx = position.x() - active.start_position.x();
-                        let dy = position.y() - active.start_position.y();
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        let duration = time_dur.saturating_sub(active.start_time);
-
-                        if distance < self.config.tap_max_distance
-                            && duration > self.config.tap_max_duration
-                        {
-                            self.held = true;
-                        }
-                    }
                     gesture.on_source_update(position, time_dur);
                 }
             }
@@ -121,10 +108,7 @@ impl TouchState {
                         if duration < self.config.tap_max_duration {
                             // tap
                             self.just_tapped = true;
-                            self.held = false;
                         } else {
-                            // TODO What about hold and drag like text select?
-                            self.held = false;
                             self.just_hold_released = true;
                         }
                     } else {
@@ -168,7 +152,22 @@ impl TouchState {
 
     /// Returns true if the primary touch was held down within the given bounds.
     pub fn held(&self, bounds: Rect) -> bool {
-        self.held && bounds.contains_point(self.position)
+        if self.just_hold_released || !bounds.contains_point(self.position) {
+            return false;
+        }
+        if let Some(id) = self.pointer_touch_id {
+            if let Some(active) = self.active_touches.get(&id) {
+                let distance = {
+                    let dx = self.position.x() - active.start_position.x();
+                    let dy = self.position.y() - active.start_position.y();
+                    (dx * dx + dy * dy).sqrt()
+                };
+                let duration = active.last_time.saturating_sub(active.start_time);
+                return distance < self.config.tap_max_distance
+                    && duration > self.config.tap_max_duration;
+            }
+        }
+        false
     }
 
     /// Returns true if the primary touch was released after being held down within the given bounds in this frame.

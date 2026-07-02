@@ -140,6 +140,7 @@ impl TouchState {
     pub fn clear(&mut self) {
         self.just_tapped = false;
         self.just_hold_released = false;
+        self.gesture_single.clear();
     }
 
     /// Returns the current primary touch position.

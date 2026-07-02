@@ -93,8 +93,6 @@ impl PointerState {
                 self.y = *surface_y as f64 / 256.0;
                 if self.pressed(MouseButton::Left) {
                     self.gesture_single.on_source_update(self.x, self.y, *time);
-                } else {
-                    self.gesture_single.clear();
                 }
             }
 
@@ -144,6 +142,7 @@ impl PointerState {
         self.just_pressed_buttons.clear();
         self.just_released_buttons.clear();
         self.just_scrolled = None;
+        self.gesture_single.clear();
     }
 
     /// Returns the current pointer position.

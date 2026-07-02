@@ -1,3 +1,4 @@
+pub mod gesture;
 pub mod hit;
 pub mod keyboard;
 pub mod pointer;

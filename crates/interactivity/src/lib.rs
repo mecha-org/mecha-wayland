@@ -24,6 +24,20 @@ impl InteractivityState {
         Self::default()
     }
 
+    pub fn with_configs(
+        touch_config: Option<touch::TouchConfig>,
+        gesture_config: Option<gesture::GestureConfig>,
+    ) -> Self {
+        let mut state = Self::default();
+        if let Some(config) = touch_config {
+            state.touch = touch::TouchState::with_config(config);
+        }
+        if let Some(config) = gesture_config {
+            state.gesture = gesture::GestureSingle::with_config(config);
+        }
+        state
+    }
+
     pub fn process_pointer(&mut self, ev: &WlPointerEvent) {
         self.pointer.process(ev, &mut self.gesture);
     }

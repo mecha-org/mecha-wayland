@@ -22,6 +22,8 @@ pub struct WindowSettings {
     pub height: u32,
     pub clear_color: Color,
     pub kind: WindowKind,
+    pub touch_config: Option<interactivity::touch::TouchConfig>,
+    pub gesture_config: Option<interactivity::gesture::GestureConfig>,
 }
 
 pub enum WindowKind {
@@ -91,7 +93,14 @@ pub struct Window<T> {
 }
 
 impl<T: WidgetList> Window<T> {
-    pub fn new(width: u32, height: u32, clear_color: Color, ui: T) -> Self {
+    pub fn new(
+        width: u32,
+        height: u32,
+        clear_color: Color,
+        ui: T,
+        touch_config: Option<interactivity::touch::TouchConfig>,
+        gesture_config: Option<interactivity::gesture::GestureConfig>,
+    ) -> Self {
         Self {
             surface: None,
             slots: None,
@@ -104,7 +113,7 @@ impl<T: WidgetList> Window<T> {
             tree: WidgetTree::new(),
             root_node: None,
             ui,
-            interactivity: InteractivityState::new(),
+            interactivity: InteractivityState::with_configs(touch_config, gesture_config),
             hit_areas: HitAreaRegistry::new(),
         }
     }

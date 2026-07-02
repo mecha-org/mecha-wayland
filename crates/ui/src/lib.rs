@@ -80,6 +80,12 @@ pub trait WidgetList {
     fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
         false
     }
+    fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {
+        None
+    }
+    fn gesture_config(&self) -> Option<interactivity::gesture::GestureConfig> {
+        None
+    }
 }
 
 impl WidgetList for () {

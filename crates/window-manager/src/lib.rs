@@ -80,11 +80,16 @@ impl WindowManager {
     }
 
     pub fn spawn_window<T: WidgetList + 'static>(&mut self, settings: WindowSettings, ui: T) {
+        let touch_config = settings.touch_config.or_else(|| ui.touch_config());
+        let gesture_config = settings.gesture_config.or_else(|| ui.gesture_config());
+
         let window = Box::new(Window::new(
             settings.width,
             settings.height,
             settings.clear_color,
             ui,
+            touch_config,
+            gesture_config,
         ));
         self.pending.push((settings, window));
     }

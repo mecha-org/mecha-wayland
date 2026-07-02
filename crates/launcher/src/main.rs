@@ -46,6 +46,11 @@ fn main() {
                 namespace: "status-bar".to_string(),
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::None,
             },
+            touch_config: Some(interactivity::touch::TouchConfig {
+                tap_max_distance: 20.0,
+                tap_max_duration: std::time::Duration::from_millis(400),
+            }),
+            gesture_config: None,
         },
         StatusBarUi::new(),
     );
@@ -65,6 +70,8 @@ fn main() {
                 namespace: "counter".to_string(),
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
+            touch_config: None,
+            gesture_config: None,
         },
         CounterUi::new(&UI_FONT_INTER_24, &UI_FONT_INTER_100),
     );
@@ -83,6 +90,8 @@ fn main() {
                 namespace: "navbar".to_string(),
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
+            touch_config: None,
+            gesture_config: None,
         },
         NavbarUi::new(&UI_FONT_INTER_16),
     );

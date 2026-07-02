@@ -1,27 +1,34 @@
 use std::collections::HashMap;
+use wayland::{WlPointerAxis, WlPointerButtonState, WlPointerEvent};
 
-use utils::Rect;
-use wayland::{WlPointerButtonState, WlPointerEvent};
-
-// https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
+/// Linux mouse button codes (`BTN_*`).
+///
+/// See:
+/// <https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
     Right,
     Middle,
-    Side,            // BTN_SIDE
-    Extra,           // BTN_EXTRA
-    Forward,         // BTN_FORWARD
-    Back,            // BTN_BACK
-    Task,            // BTN_TASK
-    Numbered(u8),    // BTN_0..BTN_9   -> 0..=9
-    ExtraButton(u8), // BTN_TRIGGER_HAPPY1..40 -> 0..=39
-    Unknown(u32),    // anything else — don't drop the event, just pass the raw code through
+    Side,
+    Extra,
+    Forward,
+    Back,
+    Task,
+    /// Linux `BTN_0..BTN_9`.
+    Numbered(u8),
+    /// Linux `BTN_TRIGGER_HAPPY1..40`.
+    ExtraButton(u8),
+    /// Anything else — don't drop the event, just pass the raw code through.
+    Unknown(u32),
 }
 
 #[derive(Debug, Default)]
 pub struct ScrollData {
-    pub delta: f64,
+    /// Horizontal scroll delta, positive = right.
+    pub dx: f64,
+    /// Vertical scroll delta, positive = down.
+    pub dy: f64,
 }
 
 impl From<u32> for MouseButton {
@@ -36,7 +43,7 @@ impl From<u32> for MouseButton {
             0x116 => MouseButton::Back,
             0x117 => MouseButton::Task,
             0x100..=0x109 => MouseButton::Numbered((code - 0x100) as u8),
-            0x2c0..=0x2e7 => MouseButton::ExtraButton((code - 0x2c0) as u8),
+            0x2c0..=0x2e7 => MouseButton::ExtraButton((code - 0x2c0 + 1) as u8),
             other => MouseButton::Unknown(other),
         }
     }
@@ -46,7 +53,7 @@ impl From<u32> for MouseButton {
 pub struct PointerState {
     x: f64,
     y: f64,
-    press: Option<(f64, f64)>,
+    last_press_position: Option<(f64, f64)>,
     pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     just_released_buttons: HashMap<MouseButton, (f64, f64)>,
@@ -56,62 +63,6 @@ pub struct PointerState {
 impl PointerState {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn pos(&self) -> (f64, f64) {
-        (self.x, self.y)
-    }
-
-    pub fn is_clicked(&self, bounds: Rect) -> bool {
-        self.press.map_or(false, |(x, y)| bounds.contains(x, y))
-    }
-
-    pub fn clear_press(&mut self) {
-        self.press = None;
-        self.just_pressed_buttons.clear();
-        self.just_released_buttons.clear();
-        self.just_scrolled = None;
-    }
-
-    pub fn just_pressed(&self, button: MouseButton) -> bool {
-        self.just_pressed_buttons.contains_key(&button)
-    }
-
-    pub fn any_just_pressed(&self, buttons: &[MouseButton]) -> bool {
-        for button in buttons {
-            if self.just_pressed_buttons.contains_key(button) {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn just_released(&self, button: MouseButton) -> bool {
-        self.just_released_buttons.contains_key(&button)
-    }
-
-    pub fn pressed(&self, button: MouseButton) -> bool {
-        self.pressed_buttons.contains_key(&button)
-    }
-
-    pub fn scrolled(&self) -> bool {
-        self.just_scrolled.is_some()
-    }
-
-    pub fn get_pressed(&self, button: MouseButton) -> Option<&(f64, f64)> {
-        self.pressed_buttons.get(&button)
-    }
-
-    pub fn get_just_pressed(&self, button: MouseButton) -> Option<&(f64, f64)> {
-        self.just_pressed_buttons.get(&button)
-    }
-
-    pub fn get_just_released(&self, button: MouseButton) -> Option<&(f64, f64)> {
-        self.just_released_buttons.get(&button)
-    }
-
-    pub fn get_scrolled(&self) -> Option<&ScrollData> {
-        self.just_scrolled.as_ref()
     }
 
     pub fn process(&mut self, ev: &WlPointerEvent) {
@@ -132,19 +83,15 @@ impl PointerState {
                 surface_y,
                 ..
             } => {
-                let x = *surface_x as f64 / 256.0;
-                let y = *surface_y as f64 / 256.0;
-                let dx = x - self.x;
-                let dy = y - self.y;
-                self.x = x;
-                self.y = y;
+                self.x = *surface_x as f64 / 256.0;
+                self.y = *surface_y as f64 / 256.0;
             }
 
             WlPointerEvent::Button { state, button, .. } => {
                 let button = MouseButton::from(*button);
                 match state {
                     WlPointerButtonState::Pressed => {
-                        self.press = Some((self.x, self.y));
+                        self.last_press_position = Some((self.x, self.y));
                         self.pressed_buttons.insert(button, (self.x, self.y));
                         self.just_pressed_buttons.insert(button, (self.x, self.y));
                     }
@@ -152,19 +99,95 @@ impl PointerState {
                         self.pressed_buttons.remove(&button);
                         self.just_released_buttons.insert(button, (self.x, self.y));
                     }
-                    _ => (),
                 }
             }
 
-            WlPointerEvent::Axis { value, .. } => {
-                self.just_scrolled = Some(ScrollData {
-                    delta: *value as f64 / 256.0,
-                });
+            WlPointerEvent::Axis { axis, value, .. } => {
+                let data = self.just_scrolled.get_or_insert_with(ScrollData::default);
+                let delta = *value as f64 / 256.0;
+                match axis {
+                    WlPointerAxis::VerticalScroll => data.dy += delta,
+                    WlPointerAxis::HorizontalScroll => data.dx += delta,
+                }
             }
 
-            WlPointerEvent::Frame { .. } => (),
+            WlPointerEvent::Frame { .. } => {}
 
             _ => (),
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.last_press_position = None;
+        self.just_pressed_buttons.clear();
+        self.just_released_buttons.clear();
+        self.just_scrolled = None;
+    }
+
+    /// Returns the current pointer position.
+    pub fn position(&self) -> (f64, f64) {
+        (self.x, self.y)
+    }
+
+    /// Returns the scroll event for this frame, if any.
+    pub fn just_scrolled(&self) -> Option<&ScrollData> {
+        self.just_scrolled.as_ref()
+    }
+
+    // -----------------------------------------------------------------------------
+    // Just Pressed
+    // -----------------------------------------------------------------------------
+
+    /// Returns all buttons that were pressed this frame.
+    pub fn just_pressed_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+        &self.just_pressed_buttons
+    }
+
+    /// Returns true if `button` was pressed this frame.
+    pub fn just_pressed(&self, button: MouseButton) -> bool {
+        self.just_pressed_buttons.contains_key(&button)
+    }
+
+    /// Returns the position where `button` was pressed this frame.
+    pub fn just_pressed_position(&self, button: MouseButton) -> Option<(f64, f64)> {
+        self.just_pressed_buttons.get(&button).copied()
+    }
+
+    // -----------------------------------------------------------------------------
+    // Pressed
+    // -----------------------------------------------------------------------------
+
+    /// Returns all buttons that are currently held down.
+    pub fn pressed_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+        &self.pressed_buttons
+    }
+
+    /// Returns true if `button` is currently held down.
+    pub fn pressed(&self, button: MouseButton) -> bool {
+        self.pressed_buttons.contains_key(&button)
+    }
+
+    /// Returns the position where `button` was pressed.
+    pub fn pressed_position(&self, button: MouseButton) -> Option<(f64, f64)> {
+        self.pressed_buttons.get(&button).copied()
+    }
+
+    // -----------------------------------------------------------------------------
+    // Just Released
+    // -----------------------------------------------------------------------------
+
+    /// Returns all buttons that were released this frame.
+    pub fn just_released_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+        &self.just_released_buttons
+    }
+
+    /// Returns true if `button` was released this frame.
+    pub fn just_released(&self, button: MouseButton) -> bool {
+        self.just_released_buttons.contains_key(&button)
+    }
+
+    /// Returns the position where `button` was released this frame.
+    pub fn just_released_position(&self, button: MouseButton) -> Option<(f64, f64)> {
+        self.just_released_buttons.get(&button).copied()
     }
 }

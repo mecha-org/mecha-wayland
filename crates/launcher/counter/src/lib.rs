@@ -22,7 +22,11 @@ pub struct CounterUi {
 }
 
 impl CounterUi {
-    pub fn new(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> Self {
+    pub fn new(
+        atlas_id: AtlasId,
+        font_24: &'static BakedFont,
+        font_100: &'static BakedFont,
+    ) -> Self {
         Self {
             root: make_root(atlas_id, font_24, font_100),
             count: 0,
@@ -68,7 +72,11 @@ impl WidgetList for CounterUi {
     }
 }
 
-fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {
+fn make_root(
+    atlas_id: AtlasId,
+    font_24: &'static BakedFont,
+    font_100: &'static BakedFont,
+) -> RootDiv {
     let mut title = Text::new(Style::default());
     title.font = Some(font_24);
     title.text = "Counter".to_string();

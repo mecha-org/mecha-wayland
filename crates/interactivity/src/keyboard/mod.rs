@@ -14,7 +14,7 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    pub(super) fn from_xkb(combined: u32) -> Self {
+    pub(super) fn from_wayland(combined: u32) -> Self {
         Self {
             shift: combined & 0x01 != 0,
             caps_lock: combined & 0x02 != 0,
@@ -26,42 +26,60 @@ impl Modifiers {
         }
     }
 
-    pub fn is_empty(self) -> bool {
-        !self.shift && !self.ctrl && !self.alt && !self.logo && !self.caps_lock && !self.num_lock
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
     }
 }
 
 #[derive(Debug, Default)]
 pub struct KeyboardState {
-    pub modifiers: Modifiers,
-    pub held_keys: HashSet<u32>,
-    pub repeat_rate: i32,
-    pub repeat_delay: i32,
+    modifiers: Modifiers,
+    pressed_keys: HashSet<u32>,
+    just_pressed_keys: HashSet<u32>,
+    just_released_keys: HashSet<u32>,
+    just_repeated_keys: HashSet<u32>,
+    repeat_rate: i32,
+    repeat_delay: i32,
 }
 
 impl KeyboardState {
     pub fn new() -> Self {
-        Self {
-            repeat_rate: -1,
-            repeat_delay: -1,
-            ..Self::default()
-        }
-    }
-
-    pub fn is_held(&self, key: u32) -> bool {
-        self.held_keys.contains(&key)
+        Self::default()
     }
 
     pub fn process(&mut self, ev: &WlKeyboardEvent) {
         match ev {
+            WlKeyboardEvent::Keymap { .. } => {}
+
+            WlKeyboardEvent::Enter { keys, .. } => {
+                self.pressed_keys.clear();
+
+                for chunk in keys.chunks_exact(4) {
+                    self.pressed_keys
+                        .insert(u32::from_ne_bytes(chunk.try_into().unwrap()));
+                }
+            }
+
+            WlKeyboardEvent::Leave { .. } => {
+                self.pressed_keys.clear();
+                self.just_pressed_keys.clear();
+                self.just_released_keys.clear();
+            }
+
             WlKeyboardEvent::Key { key, state, .. } => match state {
                 WlKeyboardKeyState::Pressed => {
-                    self.held_keys.insert(*key);
+                    self.pressed_keys.insert(*key);
+                    self.just_pressed_keys.insert(*key);
                 }
+
                 WlKeyboardKeyState::Released => {
-                    self.held_keys.remove(key);
+                    self.pressed_keys.remove(key);
+                    self.just_released_keys.insert(*key);
                 }
-                _ => (),
+
+                WlKeyboardKeyState::Repeated => {
+                    self.just_repeated_keys.insert(*key);
+                }
             },
 
             WlKeyboardEvent::Modifiers {
@@ -71,29 +89,93 @@ impl KeyboardState {
                 ..
             } => {
                 let combined = mods_depressed | mods_latched | mods_locked;
-                self.modifiers = Modifiers::from_xkb(combined);
-            }
-
-            WlKeyboardEvent::Enter { keys, .. } => {
-                let held: Vec<u32> = keys
-                    .chunks_exact(4)
-                    .map(|c| u32::from_ne_bytes(c.try_into().unwrap()))
-                    .collect();
-                for &k in &held {
-                    self.held_keys.insert(k);
-                }
-            }
-
-            WlKeyboardEvent::Leave { .. } => {
-                self.held_keys.clear();
+                self.modifiers = Modifiers::from_wayland(combined);
             }
 
             WlKeyboardEvent::RepeatInfo { rate, delay, .. } => {
                 self.repeat_rate = *rate;
                 self.repeat_delay = *delay;
             }
-
-            WlKeyboardEvent::Keymap { .. } => (),
         }
+    }
+
+    /// Clears all per-frame state.
+    ///
+    /// This should be called once per frame before processing new events.
+    pub fn clear(&mut self) {
+        self.just_pressed_keys.clear();
+        self.just_released_keys.clear();
+        self.just_repeated_keys.clear();
+    }
+
+    /// Returns the current modifier keys.
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    /// Returns the configured key repeat rate.
+    pub fn repeat_rate(&self) -> i32 {
+        self.repeat_rate
+    }
+
+    /// Returns the configured key repeat delay.
+    pub fn repeat_delay(&self) -> i32 {
+        self.repeat_delay
+    }
+
+    // -----------------------------------------------------------------------------
+    // Just Pressed
+    // -----------------------------------------------------------------------------
+
+    /// Returns all keys that were pressed this frame.
+    pub fn just_pressed_keys(&self) -> &HashSet<u32> {
+        &self.just_pressed_keys
+    }
+
+    /// Returns true if `key` was pressed this frame.
+    pub fn just_pressed(&self, key: u32) -> bool {
+        self.just_pressed_keys.contains(&key)
+    }
+
+    // -----------------------------------------------------------------------------
+    // Pressed
+    // -----------------------------------------------------------------------------
+
+    /// Returns all keys that are currently held down.
+    pub fn pressed_keys(&self) -> &HashSet<u32> {
+        &self.pressed_keys
+    }
+
+    /// Returns true if `key` is currently held down.
+    pub fn pressed(&self, key: u32) -> bool {
+        self.pressed_keys.contains(&key)
+    }
+
+    // -----------------------------------------------------------------------------
+    // Just Repeated
+    // -----------------------------------------------------------------------------
+
+    /// Returns all keys that repeated this frame.
+    pub fn just_repeated_keys(&self) -> &HashSet<u32> {
+        &self.just_repeated_keys
+    }
+
+    /// Returns true if `key` repeated this frame.
+    pub fn just_repeated(&self, key: u32) -> bool {
+        self.just_repeated_keys.contains(&key)
+    }
+
+    // -----------------------------------------------------------------------------
+    // Just Released
+    // -----------------------------------------------------------------------------
+
+    /// Returns all keys that were released this frame.
+    pub fn just_released_keys(&self) -> &HashSet<u32> {
+        &self.just_released_keys
+    }
+
+    /// Returns true if `key` was released this frame.
+    pub fn just_released(&self, key: u32) -> bool {
+        self.just_released_keys.contains(&key)
     }
 }

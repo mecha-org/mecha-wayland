@@ -4,9 +4,10 @@ pub mod keyboard;
 pub mod pointer;
 pub mod touch;
 
+pub use gesture::{DragState, SwipeDirection};
 pub use keyboard::{KeyboardState, Modifiers};
 pub use pointer::PointerState;
-pub use touch::{DragState, SwipeDirection, TouchState};
+pub use touch::TouchState;
 
 #[derive(Debug, Default)]
 pub struct InteractivityState {
@@ -21,6 +22,9 @@ impl InteractivityState {
     }
 
     pub fn is_clicked(&self, bounds: utils::Rect) -> bool {
-        self.pointer.is_clicked(bounds)
+        self.pointer
+            .just_pressed_buttons()
+            .values()
+            .any(|&(x, y)| bounds.contains(x, y))
     }
 }

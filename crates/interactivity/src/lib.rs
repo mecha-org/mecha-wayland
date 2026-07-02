@@ -28,24 +28,18 @@ impl InteractivityState {
         self.pointer.process(ev, &mut self.gesture);
     }
 
-    pub fn clear_pointer(&mut self) {
-        self.pointer.clear(&mut self.gesture);
+    pub fn process_keyboard(&mut self, ev: &WlKeyboardEvent) {
+        self.keyboard.process(ev);
     }
 
     pub fn process_touch(&mut self, ev: &WlTouchEvent) {
         self.touch.process(ev, &mut self.gesture);
     }
 
-    pub fn clear_touch(&mut self) {
-        self.touch.clear(&mut self.gesture);
-    }
-
-    pub fn process_keyboard(&mut self, ev: &WlKeyboardEvent) {
-        self.keyboard.process(ev);
-    }
-
-    pub fn clear_keyboard(&mut self) {
+    pub fn call_before_frame(&mut self) {
+        self.pointer.clear(&mut self.gesture);
         self.keyboard.clear();
+        self.touch.clear(&mut self.gesture);
     }
 
     pub fn is_clicked(&self, bounds: utils::Rect) -> bool {

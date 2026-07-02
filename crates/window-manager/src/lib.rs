@@ -18,6 +18,7 @@ pub use renderer::commands::Color;
 pub use ui::WidgetList as WindowUi;
 pub use window::{
     WindowId, WindowKind, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor,
+    ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
 
 #[derive(State)]
@@ -113,6 +114,7 @@ impl WindowManager {
                     anchor,
                     exclusive_zone,
                     namespace,
+                    keyboard_interactivity,
                 } => {
                     let compositor = self
                         .globals
@@ -131,6 +133,7 @@ impl WindowManager {
                     layer_surface.set_size(width, height);
                     layer_surface.set_anchor(anchor);
                     layer_surface.set_exclusive_zone(exclusive_zone);
+                    layer_surface.set_keyboard_interactivity(keyboard_interactivity);
                     surface.commit();
 
                     let id = WindowId(layer_surface.object_id().expect("just allocated"));

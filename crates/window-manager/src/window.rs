@@ -301,13 +301,13 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
     fn on_pointer_event(&mut self, ev: &WlPointerEvent) {
         self.interactivity.pointer.process(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.pointer.clear_press();
+        self.interactivity.pointer.clear();
     }
 
     fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent) {
         self.interactivity.keyboard.process(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.keyboard.clear_press();
+        self.interactivity.keyboard.clear();
     }
 
     fn on_touch_event(&mut self, ev: &WlTouchEvent) {

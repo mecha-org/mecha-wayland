@@ -2,10 +2,12 @@ use app::prelude::*;
 use io_ring::{Ring, RingSettings};
 use launcher_counter::CounterUi;
 use launcher_navbar::NavbarUi;
-use launcher_status_bar::{ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100};
+use launcher_status_bar::{
+    ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
+};
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
-    ZwlrLayerSurfaceV1Anchor,
+    ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
 
 #[derive(State)]
@@ -42,6 +44,7 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 36,
                 namespace: "status-bar".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::None,
             },
         },
         StatusBarUi::new(),
@@ -60,6 +63,7 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 0,
                 namespace: "counter".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
         },
         CounterUi::new(ATLAS.id, &UI_FONT_INTER_24, &UI_FONT_INTER_100),
@@ -77,6 +81,7 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 60,
                 namespace: "navbar".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
         },
         NavbarUi::new(ATLAS.id, &UI_FONT_INTER_16),

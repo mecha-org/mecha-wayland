@@ -299,20 +299,20 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
     }
 
     fn on_pointer_event(&mut self, ev: &WlPointerEvent) {
-        self.interactivity.pointer.process(ev);
+        self.interactivity.process_pointer(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.pointer.clear();
+        self.interactivity.clear_pointer();
     }
 
     fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent) {
-        self.interactivity.keyboard.process(ev);
+        self.interactivity.process_keyboard(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.keyboard.clear();
+        self.interactivity.clear_keyboard();
     }
 
     fn on_touch_event(&mut self, ev: &WlTouchEvent) {
-        self.interactivity.touch.process(ev);
+        self.interactivity.process_touch(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.touch.clear();
+        self.interactivity.clear_touch();
     }
 }

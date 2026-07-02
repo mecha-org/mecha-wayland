@@ -31,7 +31,6 @@ pub struct TouchState {
     y: f64,
     active_touches: HashMap<i32, ActiveTouch>,
     pointer_touch_id: Option<i32>,
-    pub gesture_single: GestureSingle,
     just_tapped: bool,
     held: bool,
     just_hold_released: bool,
@@ -42,7 +41,7 @@ impl TouchState {
         Self::default()
     }
 
-    pub fn process(&mut self, ev: &WlTouchEvent) {
+    pub fn process(&mut self, ev: &WlTouchEvent, gesture: &mut GestureSingle) {
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
                 let x = *x as f64 / 256.0;
@@ -61,7 +60,7 @@ impl TouchState {
                         self.pointer_touch_id = Some(*id);
                         self.x = x;
                         self.y = y;
-                        self.gesture_single.on_source_down(x, y, *time);
+                        gesture.on_source_down(x, y, *time);
                     }
                 }
                 self.active_touches.insert(*id, active);
@@ -89,7 +88,7 @@ impl TouchState {
                             self.held = true;
                         }
                     }
-                    self.gesture_single.on_source_update(x, y, *time);
+                    gesture.on_source_update(x, y, *time);
                 }
             }
 
@@ -116,7 +115,7 @@ impl TouchState {
                         }
                     } else {
                         // swipe or drag
-                        self.gesture_single.on_source_up(*time);
+                        gesture.on_source_up(*time);
                     }
                 }
 
@@ -128,7 +127,7 @@ impl TouchState {
 
             WlTouchEvent::Cancel { .. } => {
                 self.active_touches.clear();
-                self.gesture_single.on_source_cancel();
+                gesture.on_source_cancel();
             }
 
             WlTouchEvent::Frame { .. } => (),
@@ -137,10 +136,10 @@ impl TouchState {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, gesture: &mut GestureSingle) {
         self.just_tapped = false;
         self.just_hold_released = false;
-        self.gesture_single.clear();
+        gesture.clear();
     }
 
     /// Returns the current primary touch position.

@@ -60,7 +60,6 @@ pub struct PointerState {
     just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
     just_released_buttons: HashMap<MouseButton, (f64, f64)>,
     just_scrolled: Option<ScrollData>,
-    pub gesture_single: GestureSingle,
 }
 
 impl PointerState {
@@ -68,7 +67,7 @@ impl PointerState {
         Self::default()
     }
 
-    pub fn process(&mut self, ev: &WlPointerEvent) {
+    pub fn process(&mut self, ev: &WlPointerEvent, gesture: &mut GestureSingle) {
         match ev {
             WlPointerEvent::Enter {
                 surface_x,
@@ -80,7 +79,7 @@ impl PointerState {
             }
 
             WlPointerEvent::Leave { .. } => {
-                self.gesture_single.on_source_cancel();
+                gesture.on_source_cancel();
             }
 
             WlPointerEvent::Motion {
@@ -92,7 +91,7 @@ impl PointerState {
                 self.x = *surface_x as f64 / 256.0;
                 self.y = *surface_y as f64 / 256.0;
                 if self.pressed(MouseButton::Left) {
-                    self.gesture_single.on_source_update(self.x, self.y, *time);
+                    gesture.on_source_update(self.x, self.y, *time);
                 }
             }
 
@@ -109,14 +108,14 @@ impl PointerState {
                         self.pressed_buttons.insert(button, (self.x, self.y));
                         self.just_pressed_buttons.insert(button, (self.x, self.y));
                         if button == MouseButton::Left {
-                            self.gesture_single.on_source_down(self.x, self.y, *time);
+                            gesture.on_source_down(self.x, self.y, *time);
                         }
                     }
                     WlPointerButtonState::Released => {
                         self.pressed_buttons.remove(&button);
                         self.just_released_buttons.insert(button, (self.x, self.y));
                         if button == MouseButton::Left {
-                            self.gesture_single.on_source_up(*time);
+                            gesture.on_source_up(*time);
                         }
                     }
                 }
@@ -137,12 +136,12 @@ impl PointerState {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, gesture: &mut GestureSingle) {
         self.last_press_position = None;
         self.just_pressed_buttons.clear();
         self.just_released_buttons.clear();
         self.just_scrolled = None;
-        self.gesture_single.clear();
+        gesture.clear();
     }
 
     /// Returns the current pointer position.

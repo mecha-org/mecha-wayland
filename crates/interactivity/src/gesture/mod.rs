@@ -1,8 +1,20 @@
 use std::time::Duration;
 use utils::Point;
 
-const SWIPE_MIN_DISTANCE: f32 = 40.0;
-const SWIPE_MAX_DURATION: Duration = Duration::from_millis(500);
+#[derive(Debug, Clone, Copy)]
+pub struct GestureConfig {
+    pub swipe_min_distance: f32,
+    pub swipe_max_duration: Duration,
+}
+
+impl Default for GestureConfig {
+    fn default() -> Self {
+        Self {
+            swipe_min_distance: 40.0,
+            swipe_max_duration: Duration::from_millis(500),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SwipeData {
@@ -44,6 +56,7 @@ pub enum SwipeDirection {
 
 #[derive(Debug, Default)]
 pub struct GestureSingle {
+    pub config: GestureConfig,
     start_position: Point,
     last_position: Point,
     start_time: Duration,
@@ -53,8 +66,15 @@ pub struct GestureSingle {
 }
 
 impl GestureSingle {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_config(config: GestureConfig) -> Self {
+        Self {
+            config,
+            ..Default::default()
+        }
     }
 
     pub fn clear(&mut self) {
@@ -118,7 +138,8 @@ impl GestureSingle {
         let distance = total.length();
         let duration = time.saturating_sub(self.start_time);
 
-        if distance >= SWIPE_MIN_DISTANCE && duration <= SWIPE_MAX_DURATION {
+        if distance >= self.config.swipe_min_distance && duration <= self.config.swipe_max_duration
+        {
             let direction = if total.x().abs() > total.y().abs() {
                 if total.x() > 0.0 {
                     SwipeDirection::Right

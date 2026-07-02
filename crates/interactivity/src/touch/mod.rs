@@ -4,8 +4,20 @@ use std::time::Duration;
 use utils::{Point, Rect};
 use wayland::WlTouchEvent;
 
-const TAP_MAX_DISTANCE: f32 = 15.0;
-const TAP_MAX_DURATION: Duration = Duration::from_millis(300);
+#[derive(Debug, Clone, Copy)]
+pub struct TouchConfig {
+    pub tap_max_distance: f32,
+    pub tap_max_duration: Duration,
+}
+
+impl Default for TouchConfig {
+    fn default() -> Self {
+        Self {
+            tap_max_distance: 15.0,
+            tap_max_duration: Duration::from_millis(300),
+        }
+    }
+}
 
 /// Phase of a drag gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +38,7 @@ struct ActiveTouch {
 
 #[derive(Debug, Default)]
 pub struct TouchState {
+    pub config: TouchConfig,
     position: Point,
     active_touches: HashMap<i32, ActiveTouch>,
     pointer_touch_id: Option<i32>,
@@ -37,6 +50,13 @@ pub struct TouchState {
 impl TouchState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_config(config: TouchConfig) -> Self {
+        Self {
+            config,
+            ..Default::default()
+        }
     }
 
     pub fn process(&mut self, ev: &WlTouchEvent, gesture: &mut GestureSingle) {
@@ -77,7 +97,9 @@ impl TouchState {
                         let distance = (dx * dx + dy * dy).sqrt();
                         let duration = time_dur.saturating_sub(active.start_time);
 
-                        if distance < TAP_MAX_DISTANCE && duration > TAP_MAX_DURATION {
+                        if distance < self.config.tap_max_distance
+                            && duration > self.config.tap_max_duration
+                        {
                             self.held = true;
                         }
                     }
@@ -95,8 +117,8 @@ impl TouchState {
                     let distance = (dx * dx + dy * dy).sqrt();
                     let duration = time_dur.saturating_sub(active.start_time);
 
-                    if distance < TAP_MAX_DISTANCE {
-                        if duration < TAP_MAX_DURATION {
+                    if distance < self.config.tap_max_distance {
+                        if duration < self.config.tap_max_duration {
                             // tap
                             self.just_tapped = true;
                             self.held = false;

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::time::Duration;
+use utils::Point;
 use wayland::{WlPointerAxis, WlPointerButtonState, WlPointerEvent};
 
 use crate::gesture::GestureSingle;
@@ -28,9 +30,9 @@ pub enum MouseButton {
 #[derive(Debug, Default)]
 pub struct ScrollData {
     /// Horizontal scroll delta, positive = right.
-    pub dx: f64,
+    pub dx: f32,
     /// Vertical scroll delta, positive = down.
-    pub dy: f64,
+    pub dy: f32,
 }
 
 impl From<u32> for MouseButton {
@@ -53,12 +55,11 @@ impl From<u32> for MouseButton {
 
 #[derive(Debug, Default)]
 pub struct PointerState {
-    x: f64,
-    y: f64,
-    last_press_position: Option<(f64, f64)>,
-    pressed_buttons: HashMap<MouseButton, (f64, f64)>,
-    just_pressed_buttons: HashMap<MouseButton, (f64, f64)>,
-    just_released_buttons: HashMap<MouseButton, (f64, f64)>,
+    position: Point,
+    last_press_position: Option<Point>,
+    pressed_buttons: HashMap<MouseButton, Point>,
+    just_pressed_buttons: HashMap<MouseButton, Point>,
+    just_released_buttons: HashMap<MouseButton, Point>,
     just_scrolled: Option<ScrollData>,
 }
 
@@ -74,8 +75,7 @@ impl PointerState {
                 surface_y,
                 ..
             } => {
-                self.x = *surface_x as f64 / 256.0;
-                self.y = *surface_y as f64 / 256.0;
+                self.position = Point::new(*surface_x as f32 / 256.0, *surface_y as f32 / 256.0);
             }
 
             WlPointerEvent::Leave { .. } => {
@@ -88,10 +88,9 @@ impl PointerState {
                 time,
                 ..
             } => {
-                self.x = *surface_x as f64 / 256.0;
-                self.y = *surface_y as f64 / 256.0;
+                self.position = Point::new(*surface_x as f32 / 256.0, *surface_y as f32 / 256.0);
                 if self.pressed(MouseButton::Left) {
-                    gesture.on_source_update(self.x, self.y, *time);
+                    gesture.on_source_update(self.position, Duration::from_millis(*time as u64));
                 }
             }
 
@@ -102,20 +101,21 @@ impl PointerState {
                 ..
             } => {
                 let button = MouseButton::from(*button);
+                let time_dur = Duration::from_millis(*time as u64);
                 match state {
                     WlPointerButtonState::Pressed => {
-                        self.last_press_position = Some((self.x, self.y));
-                        self.pressed_buttons.insert(button, (self.x, self.y));
-                        self.just_pressed_buttons.insert(button, (self.x, self.y));
+                        self.last_press_position = Some(self.position);
+                        self.pressed_buttons.insert(button, self.position);
+                        self.just_pressed_buttons.insert(button, self.position);
                         if button == MouseButton::Left {
-                            gesture.on_source_down(self.x, self.y, *time);
+                            gesture.on_source_down(self.position, time_dur);
                         }
                     }
                     WlPointerButtonState::Released => {
                         self.pressed_buttons.remove(&button);
-                        self.just_released_buttons.insert(button, (self.x, self.y));
+                        self.just_released_buttons.insert(button, self.position);
                         if button == MouseButton::Left {
-                            gesture.on_source_up(*time);
+                            gesture.on_source_up(time_dur);
                         }
                     }
                 }
@@ -123,7 +123,7 @@ impl PointerState {
 
             WlPointerEvent::Axis { axis, value, .. } => {
                 let data = self.just_scrolled.get_or_insert_with(ScrollData::default);
-                let delta = *value as f64 / 256.0;
+                let delta = *value as f32 / 256.0;
                 match axis {
                     WlPointerAxis::VerticalScroll => data.dy += delta,
                     WlPointerAxis::HorizontalScroll => data.dx += delta,
@@ -145,8 +145,8 @@ impl PointerState {
     }
 
     /// Returns the current pointer position.
-    pub fn position(&self) -> (f64, f64) {
-        (self.x, self.y)
+    pub fn position(&self) -> Point {
+        self.position
     }
 
     /// Returns the scroll event for this frame, if any.
@@ -159,7 +159,7 @@ impl PointerState {
     // -----------------------------------------------------------------------------
 
     /// Returns all buttons that were pressed this frame.
-    pub fn just_pressed_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+    pub fn just_pressed_buttons(&self) -> &HashMap<MouseButton, Point> {
         &self.just_pressed_buttons
     }
 
@@ -169,8 +169,8 @@ impl PointerState {
     }
 
     /// Returns the position where `button` was pressed this frame.
-    pub fn just_pressed_position(&self, button: MouseButton) -> Option<(f64, f64)> {
-        self.just_pressed_buttons.get(&button).copied()
+    pub fn just_pressed_position(&self, button: MouseButton) -> Option<&Point> {
+        self.just_pressed_buttons.get(&button)
     }
 
     // -----------------------------------------------------------------------------
@@ -178,7 +178,7 @@ impl PointerState {
     // -----------------------------------------------------------------------------
 
     /// Returns all buttons that are currently held down.
-    pub fn pressed_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+    pub fn pressed_buttons(&self) -> &HashMap<MouseButton, Point> {
         &self.pressed_buttons
     }
 
@@ -188,8 +188,8 @@ impl PointerState {
     }
 
     /// Returns the position where `button` was pressed.
-    pub fn pressed_position(&self, button: MouseButton) -> Option<(f64, f64)> {
-        self.pressed_buttons.get(&button).copied()
+    pub fn pressed_position(&self, button: MouseButton) -> Option<&Point> {
+        self.pressed_buttons.get(&button)
     }
 
     // -----------------------------------------------------------------------------
@@ -197,7 +197,7 @@ impl PointerState {
     // -----------------------------------------------------------------------------
 
     /// Returns all buttons that were released this frame.
-    pub fn just_released_buttons(&self) -> &HashMap<MouseButton, (f64, f64)> {
+    pub fn just_released_buttons(&self) -> &HashMap<MouseButton, Point> {
         &self.just_released_buttons
     }
 
@@ -207,7 +207,7 @@ impl PointerState {
     }
 
     /// Returns the position where `button` was released this frame.
-    pub fn just_released_position(&self, button: MouseButton) -> Option<(f64, f64)> {
-        self.just_released_buttons.get(&button).copied()
+    pub fn just_released_position(&self, button: MouseButton) -> Option<&Point> {
+        self.just_released_buttons.get(&button)
     }
 }

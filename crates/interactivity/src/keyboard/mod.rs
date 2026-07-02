@@ -2,6 +2,9 @@ use std::collections::HashSet;
 
 use wayland::{WlKeyboardEvent, WlKeyboardKeyState};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyCode(pub u32);
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
@@ -34,10 +37,10 @@ impl Modifiers {
 #[derive(Debug, Default)]
 pub struct KeyboardState {
     modifiers: Modifiers,
-    pressed_keys: HashSet<u32>,
-    just_pressed_keys: HashSet<u32>,
-    just_released_keys: HashSet<u32>,
-    just_repeated_keys: HashSet<u32>,
+    pressed_keys: HashSet<KeyCode>,
+    just_pressed_keys: HashSet<KeyCode>,
+    just_released_keys: HashSet<KeyCode>,
+    just_repeated_keys: HashSet<KeyCode>,
     repeat_rate: i32,
     repeat_delay: i32,
 }
@@ -56,7 +59,7 @@ impl KeyboardState {
 
                 for chunk in keys.chunks_exact(4) {
                     self.pressed_keys
-                        .insert(u32::from_ne_bytes(chunk.try_into().unwrap()));
+                        .insert(KeyCode(u32::from_ne_bytes(chunk.try_into().unwrap())));
                 }
             }
 
@@ -68,17 +71,17 @@ impl KeyboardState {
 
             WlKeyboardEvent::Key { key, state, .. } => match state {
                 WlKeyboardKeyState::Pressed => {
-                    self.pressed_keys.insert(*key);
-                    self.just_pressed_keys.insert(*key);
+                    self.pressed_keys.insert(KeyCode(*key));
+                    self.just_pressed_keys.insert(KeyCode(*key));
                 }
 
                 WlKeyboardKeyState::Released => {
-                    self.pressed_keys.remove(key);
-                    self.just_released_keys.insert(*key);
+                    self.pressed_keys.remove(&KeyCode(*key));
+                    self.just_released_keys.insert(KeyCode(*key));
                 }
 
                 WlKeyboardKeyState::Repeated => {
-                    self.just_repeated_keys.insert(*key);
+                    self.just_repeated_keys.insert(KeyCode(*key));
                 }
             },
 
@@ -128,12 +131,12 @@ impl KeyboardState {
     // -----------------------------------------------------------------------------
 
     /// Returns all keys that were pressed this frame.
-    pub fn just_pressed_keys(&self) -> &HashSet<u32> {
+    pub fn just_pressed_keys(&self) -> &HashSet<KeyCode> {
         &self.just_pressed_keys
     }
 
     /// Returns true if `key` was pressed this frame.
-    pub fn just_pressed(&self, key: u32) -> bool {
+    pub fn just_pressed(&self, key: KeyCode) -> bool {
         self.just_pressed_keys.contains(&key)
     }
 
@@ -142,12 +145,12 @@ impl KeyboardState {
     // -----------------------------------------------------------------------------
 
     /// Returns all keys that are currently held down.
-    pub fn pressed_keys(&self) -> &HashSet<u32> {
+    pub fn pressed_keys(&self) -> &HashSet<KeyCode> {
         &self.pressed_keys
     }
 
     /// Returns true if `key` is currently held down.
-    pub fn pressed(&self, key: u32) -> bool {
+    pub fn pressed(&self, key: KeyCode) -> bool {
         self.pressed_keys.contains(&key)
     }
 
@@ -156,12 +159,12 @@ impl KeyboardState {
     // -----------------------------------------------------------------------------
 
     /// Returns all keys that repeated this frame.
-    pub fn just_repeated_keys(&self) -> &HashSet<u32> {
+    pub fn just_repeated_keys(&self) -> &HashSet<KeyCode> {
         &self.just_repeated_keys
     }
 
     /// Returns true if `key` repeated this frame.
-    pub fn just_repeated(&self, key: u32) -> bool {
+    pub fn just_repeated(&self, key: KeyCode) -> bool {
         self.just_repeated_keys.contains(&key)
     }
 
@@ -170,12 +173,12 @@ impl KeyboardState {
     // -----------------------------------------------------------------------------
 
     /// Returns all keys that were released this frame.
-    pub fn just_released_keys(&self) -> &HashSet<u32> {
+    pub fn just_released_keys(&self) -> &HashSet<KeyCode> {
         &self.just_released_keys
     }
 
     /// Returns true if `key` was released this frame.
-    pub fn just_released(&self, key: u32) -> bool {
+    pub fn just_released(&self, key: KeyCode) -> bool {
         self.just_released_keys.contains(&key)
     }
 }

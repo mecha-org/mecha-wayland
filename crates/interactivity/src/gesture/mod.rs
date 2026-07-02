@@ -53,8 +53,8 @@ pub struct GestureSingle {
     last_y: f64,
     start_time: u32,
     last_time: u32,
-    pub drag_data: Option<GestureDragData>,
-    pub swipe_data: Option<GestureSwipeData>,
+    drag_data: Option<GestureDragData>,
+    swipe_data: Option<GestureSwipeData>,
 }
 
 impl GestureSingle {
@@ -69,6 +69,14 @@ impl GestureSingle {
                 self.drag_data = None;
             }
         }
+    }
+
+    pub fn drag_data(&self) -> Option<&GestureDragData> {
+        self.drag_data.as_ref()
+    }
+
+    pub fn swipe_data(&self) -> Option<&GestureSwipeData> {
+        self.swipe_data.as_ref()
     }
 
     pub(crate) fn on_source_down(&mut self, x: f64, y: f64, time: u32) {

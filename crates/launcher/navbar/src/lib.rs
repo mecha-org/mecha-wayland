@@ -1,4 +1,4 @@
-use assets::{AtlasId, BakedFont};
+use assets::BakedFont;
 use taffy::{NodeId, Style};
 use ui::{Point, RenderCommand, Widget, WidgetList, WidgetTree, widgets::Text};
 use utils::Color;
@@ -8,12 +8,11 @@ pub struct NavbarUi {
 }
 
 impl NavbarUi {
-    pub fn new(atlas_id: AtlasId, font: &'static BakedFont) -> Self {
+    pub fn new(font: &'static BakedFont) -> Self {
         let mut text = Text::new(Style::default());
         text.text = "Navbar".to_string();
         text.color = Color::WHITE;
         text.z = 0.5;
-        text.atlas_id = Some(atlas_id);
         text.font = Some(font);
         Self { text }
     }

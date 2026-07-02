@@ -14,7 +14,6 @@ use interactivity::touch::{DragState, SwipeDirection, TouchEvent};
 use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
-use assets::AtlasId;
 use drm_fourcc::DrmFourcc;
 use notification_entry::{
     CardContent, DISMISS_SIGNAL, DRAG_THRESHOLD, EntryPhase, NotificationEntry,
@@ -71,8 +70,8 @@ struct UiState {
 }
 
 impl UiState {
-    fn new(atlas_id: AtlasId) -> Self {
-        let (mut tree, mut root) = build_ui(atlas_id);
+    fn new() -> Self {
+        let (mut tree, mut root) = build_ui();
         compute_initial_layout(&mut tree, &mut root);
 
         Self {
@@ -234,7 +233,7 @@ impl AppState {
         let timer = Timer::new(ring.get_proxy());
         let wayland = Wayland::new(ring.get_proxy()).expect("failed to create wayland connection");
         let renderer = ::renderer::Renderer::new().expect("failed to create renderer");
-        let ui = UiState::new(atlas::UI.id);
+        let ui = UiState::new();
         Self {
             ring,
             timer,
@@ -647,7 +646,7 @@ fn request_redraw(s: &mut AppState) {
     }
 }
 
-fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
+fn build_ui() -> (WidgetTree, RootDiv) {
     let mut tree = WidgetTree::new();
 
     let mut header = Text::new(Style::default());
@@ -655,19 +654,14 @@ fn build_ui(atlas_id: AtlasId) -> (WidgetTree, RootDiv) {
     header.text = "Notifications".to_string();
     header.color = Color::WHITE;
     header.z = 0.95;
-    header.atlas_id = Some(atlas_id);
 
     let mk = |color, title: &str, body: &str| -> NotificationEntry<CardContent> {
         let card = PlainNotificationContent::new(color, title, body);
         let mut e = NotificationEntry::new(card);
         e.font = Some(&atlas::UI_FONT_INTER_16); // bg label font
-        e.atlas_id = Some(atlas_id); // bg label texture atlas
         e.card.children.1.children.0.font = Some(&atlas::UI_FONT_INTER_16); // title font
-        e.card.children.1.children.0.atlas_id = Some(atlas_id);
         e.card.children.1.children.1.font = Some(&atlas::UI_FONT_INTER_14); // body font
-        e.card.children.1.children.1.atlas_id = Some(atlas_id);
         e.card.children.1.children.1.font = Some(&atlas::UI_FONT_INTER_14);
-        e.card.children.1.children.1.atlas_id = Some(atlas_id);
         e
     };
 
@@ -767,15 +761,8 @@ fn render_ui(renderer: &mut ::renderer::Renderer, commands: &[RenderCommand]) {
                     border_thickness: *border_thickness,
                 });
             }
-            RenderCommand::DrawText {
-                font,
-                text,
-                origin,
-                z,
-                color,
-                atlas_id: Some(aid),
-            } => {
-                let texture_id = renderer.get_texture_id(*aid);
+            RenderCommand::DrawText { font, text, origin, z, color } => {
+                let texture_id = renderer.get_texture_id(font.atlas_id);
                 renderer.send_command(::renderer::commands::DrawText {
                     font: *font,
                     texture_id,
@@ -785,8 +772,8 @@ fn render_ui(renderer: &mut ::renderer::Renderer, commands: &[RenderCommand]) {
                     color: *color,
                 });
             }
-            RenderCommand::DrawText { atlas_id: None, .. } => {}
             RenderCommand::RegisterHitArea { .. } => {}
+            _ => {}
         }
     }
     renderer.process_command_queue::<ClearColor>();

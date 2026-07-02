@@ -43,30 +43,15 @@ pub fn render_frame(renderer: &mut Renderer, commands: Vec<RenderCommand>, bg_co
                 });
             }
 
-            RenderCommand::DrawText {
-                font,
-                text,
-                origin,
-                z,
-                color,
-                atlas_id: Some(aid),
-            } => {
-                let texture_id = renderer.get_texture_id(aid);
-                renderer.send_command(DrawText {
-                    font,
-                    texture_id,
-                    text,
-                    origin,
-                    z,
-                    color,
-                });
+            RenderCommand::DrawText { font, text, origin, z, color } => {
+                let texture_id = renderer.get_texture_id(font.atlas_id);
+                renderer.send_command(DrawText { font, texture_id, text, origin, z, color });
             }
-
-            // Text node with no atlas — skip silently.
-            RenderCommand::DrawText { atlas_id: None, .. } => {}
 
             // RegisterHitArea is handled by collect_hit_areas(); nothing to draw here.
             RenderCommand::RegisterHitArea { .. } => {}
+
+            _ => {}
         }
     }
 

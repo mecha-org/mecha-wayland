@@ -65,7 +65,7 @@ fn main() {
                 anchor: ZwlrLayerSurfaceV1Anchor::Top
                     | ZwlrLayerSurfaceV1Anchor::Left
                     | ZwlrLayerSurfaceV1Anchor::Right,
-                exclusive_zone: 584,
+                exclusive_zone: 0,
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
                 namespace: "pagination".to_string(),
             },

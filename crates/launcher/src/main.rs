@@ -1,14 +1,19 @@
+use std::sync::mpsc;
+
 use app::prelude::*;
 use io_ring::{Ring, RingSettings};
-use launcher_navbar::NavbarUi;
+use launcher_navbar::{NavbarUi, NAV_EXCLUSIVE_ZONE, NAV_SURFACE_HEIGHT};
 use launcher_pagination::PaginationUi;
 use launcher_status_bar::{
-    ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
+    ATLAS, StatusBarUi, UI_FONT_INTER_14, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
 };
+use notification::{create_notification_ui, PANEL_HEIGHT};
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
+
+const NOTIFICATION_NS: &str = "notification";
 
 #[derive(State)]
 pub struct Launcher {
@@ -28,6 +33,7 @@ impl Launcher {
 }
 
 fn main() {
+    let (notif_tx, notif_rx) = mpsc::channel();
     let mut launcher = Launcher::new();
 
     launcher.window_manager.upload_atlas(&ATLAS);
@@ -78,21 +84,46 @@ fn main() {
     launcher.window_manager.spawn_window(
         WindowSettings {
             width: 0,
-            height: 60,
-            clear_color: Color::rgba(0.08, 0.10, 0.14, 0.95),
+            height: PANEL_HEIGHT as u32,
+            clear_color: Color::TRANSPARENT,
             kind: WindowKind::LayerShell {
                 layer: ZwlrLayerShellV1Layer::Top,
                 anchor: ZwlrLayerSurfaceV1Anchor::Bottom
                     | ZwlrLayerSurfaceV1Anchor::Left
                     | ZwlrLayerSurfaceV1Anchor::Right,
-                exclusive_zone: 60,
+                exclusive_zone: 0,
+                namespace: NOTIFICATION_NS.to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::OnDemand,
+            },
+            touch_config: None,
+            gesture_config: None,
+        },
+        create_notification_ui(
+            &UI_FONT_INTER_24,
+            &UI_FONT_INTER_16,
+            &UI_FONT_INTER_14,
+            notif_rx,
+        ),
+    );
+
+    launcher.window_manager.spawn_window(
+        WindowSettings {
+            width: 0,
+            height: NAV_SURFACE_HEIGHT,
+            clear_color: Color::TRANSPARENT,
+            kind: WindowKind::LayerShell {
+                layer: ZwlrLayerShellV1Layer::Overlay,
+                anchor: ZwlrLayerSurfaceV1Anchor::Bottom
+                    | ZwlrLayerSurfaceV1Anchor::Left
+                    | ZwlrLayerSurfaceV1Anchor::Right,
+                exclusive_zone: NAV_EXCLUSIVE_ZONE,
                 namespace: "navbar".to_string(),
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
             touch_config: None,
             gesture_config: None,
         },
-        NavbarUi::new(&UI_FONT_INTER_16),
+        NavbarUi::new(notif_tx),
     );
 
     let mut app = App::new(launcher)

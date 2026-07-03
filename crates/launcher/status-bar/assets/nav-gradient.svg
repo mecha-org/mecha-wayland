@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="8" height="160" viewBox="0 0 8 160">
+  <!-- Approximate original procedural alpha = t*t from top (0) to bottom (1). -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="70%" stop-color="#ffffff" stop-opacity="0.49"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+  <rect width="8" height="160" fill="url(#g)"/>
+</svg>

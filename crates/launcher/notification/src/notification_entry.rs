@@ -7,9 +7,9 @@ use taffy::{Layout, Style};
 use ui::Point;
 use ui::Widget;
 
-use renderer::commands::Color;
 use ui::widgets::{Div, Text};
 use ui::{Render, RenderCommand, WidgetList};
+use utils::Color;
 
 pub type CardContent = (Div<()>, Div<(Text, Text)>);
 
@@ -27,7 +27,7 @@ pub const TEXT_GAP: f32 = 4.0;
 pub const OPTIONS_THRESHOLD: f32 = 140.0;
 pub const FLING_OFFSCREEN_DISTANCE: f32 = 500.0;
 pub const DISMISS_SIGNAL: f32 = 200.0;
-pub const DRAG_THRESHOLD: f32 = 0.1;
+pub const DRAG_THRESHOLD: f32 = 20.0;
 
 // Z-ordering
 pub const BG_Z: f32 = 0.35;
@@ -76,7 +76,7 @@ pub struct NotificationEntry<T: WidgetList> {
     pub bg_color: Color,
     pub font: Option<&'static BakedFont>,
     bg_label: BgLabel,
-    last_offset: f32,
+    pub last_offset: f32,
     flash_frames: u8,
 }
 
@@ -111,7 +111,7 @@ impl<T: WidgetList> NotificationEntry<T> {
         }
     }
 
-    pub fn tick(&mut self, tree: &mut ui::WidgetTree, now: Duration) -> bool {
+    pub fn update(&mut self, now: Duration) -> bool {
         if self.flash_frames > 0 {
             self.flash_frames -= 1;
             if self.flash_frames == 0 {
@@ -136,21 +136,12 @@ impl<T: WidgetList> NotificationEntry<T> {
         }
         if self.phase == EntryPhase::Swapping && !animating {
             self.phase = EntryPhase::Idle;
-            let mut s = self.card.style().clone();
-            s.margin.left = zero();
-            s.margin.right = zero();
-            self.card.set_style(tree, s);
             self.bg_label = BgLabel::None;
             self.bg_color = Color::TRANSPARENT;
             return false;
         }
 
         if animating || offset.abs() > f32::EPSILON {
-            let mut s = self.card.style().clone();
-            s.margin.left = length(offset);
-            s.margin.right = length(-offset);
-            self.card.set_style(tree, s);
-
             if self.phase == EntryPhase::Idle || self.phase == EntryPhase::Animating {
                 let abs = offset.abs();
                 if offset < 0.0 {

@@ -343,24 +343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
-name = "demo-pagination"
-version = "0.1.0"
-dependencies = [
- "animation",
- "anyhow",
- "app",
- "assets",
- "interactivity",
- "io-ring",
- "libc",
- "renderer",
- "taffy",
- "ui",
- "utils",
- "wayland",
-]
-
-[[package]]
 name = "drm-fourcc"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -742,7 +724,9 @@ dependencies = [
  "io-ring",
  "launcher-counter",
  "launcher-navbar",
+ "launcher-pagination",
  "launcher-status-bar",
+ "launcher-volume",
  "window-manager",
 ]
 
@@ -768,6 +752,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "launcher-pagination"
+version = "0.1.0"
+dependencies = [
+ "animation",
+ "assets",
+ "interactivity",
+ "launcher-counter",
+ "launcher-volume",
+ "taffy",
+ "ui",
+ "utils",
+]
+
+[[package]]
 name = "launcher-status-bar"
 version = "0.1.0"
 dependencies = [
@@ -776,6 +774,17 @@ dependencies = [
  "libc",
  "taffy",
  "timer",
+ "ui",
+ "utils",
+]
+
+[[package]]
+name = "launcher-volume"
+version = "0.1.0"
+dependencies = [
+ "assets",
+ "interactivity",
+ "taffy",
  "ui",
  "utils",
 ]
@@ -1784,30 +1793,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "volume"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "app",
- "assets",
- "frunk",
- "glow",
- "interactivity",
- "io-ring",
- "io-uring",
- "libc",
- "png 0.18.1",
- "renderer",
- "taffy",
- "timer",
- "tracing",
- "tracing-subscriber",
- "ui",
- "utils",
- "wayland",
-]
 
 [[package]]
 name = "walkdir"

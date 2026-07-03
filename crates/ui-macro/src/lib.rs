@@ -75,6 +75,7 @@ pub fn widget(attr: TokenStream, input: TokenStream) -> TokenStream {
     let is_measure = matches!(arg, WidgetArg::Measure);
     let build_tree_body = build_tree_body(&child_fields, is_measure);
     let render_node_body = render_node_body(&child_fields);
+    let on_event_body = on_event_body(&child_fields);
 
     quote! {
         #item
@@ -94,6 +95,14 @@ pub fn widget(attr: TokenStream, input: TokenStream) -> TokenStream {
                 offset: ::ui::Point,
             ) -> ::std::vec::Vec<::ui::RenderCommand> {
                 #render_node_body
+            }
+
+            fn on_event(
+                &mut self,
+                interactivity: &::interactivity::InteractivityState,
+                tree: &mut ::ui::WidgetTree,
+            ) -> bool {
+                #on_event_body
             }
         }
 
@@ -159,6 +168,22 @@ fn render_node_body(child_fields: &[Ident]) -> TokenStream2 {
                 __cmds.extend(::ui::WidgetList::render_children(&mut self.#child_fields, tree, __abs));
             )*
             __cmds
+        }
+    }
+}
+
+fn on_event_body(child_fields: &[Ident]) -> TokenStream2 {
+    if child_fields.is_empty() {
+        quote! {
+            false
+        }
+    } else {
+        quote! {
+            let mut __dirty = false;
+            #(
+                __dirty |= ::ui::WidgetList::on_event(&mut self.#child_fields, interactivity, tree);
+            )*
+            __dirty
         }
     }
 }

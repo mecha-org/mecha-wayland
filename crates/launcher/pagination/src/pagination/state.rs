@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use animation::{Animated, AnimationConfig, Easing};
+use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 
 pub const DEFAULT_ANIMATION_DURATION: Duration = Duration::from_millis(300);
 pub const DEFAULT_ANIMATION_EASING: Easing = Easing::EaseOut;
-pub const DRAG_EDGE_RESISTANCE: f32 = 0.05;
+pub const DRAG_EDGE_RESISTANCE: f32 = 0.06;
 pub const SLOW_SWIPE_FRACTION_THRESHOLD: f32 = 0.35;
 
 #[derive(Debug, Clone)]
@@ -34,19 +34,21 @@ impl PagerState {
 
     pub fn next_page(&mut self) {
         if self.current_page + 1 < self.page_count && !self.is_dragging {
-            let start = self.animation_offset.get();
+            let now = monotonic_now();
+            let start = self.animation_offset.get(now);
             self.current_page += 1;
             self.animation_offset =
-                Animated::new(start, self.current_page as f32, self.animation_config);
+                Animated::new(start, self.current_page as f32, self.animation_config, now);
         }
     }
 
     pub fn previous_page(&mut self) {
         if self.current_page > 0 && !self.is_dragging {
-            let start = self.animation_offset.get();
+            let now = monotonic_now();
+            let start = self.animation_offset.get(now);
             self.current_page -= 1;
             self.animation_offset =
-                Animated::new(start, self.current_page as f32, self.animation_config);
+                Animated::new(start, self.current_page as f32, self.animation_config, now);
         }
     }
 
@@ -54,7 +56,7 @@ impl PagerState {
         if self.is_dragging {
             self.current_page as f32
         } else {
-            self.animation_offset.get()
+            self.animation_offset.get(monotonic_now())
         }
     }
 
@@ -100,12 +102,17 @@ impl PagerState {
         let start_frac = self.current_page as f32 - drag_frac;
         self.current_page = target_page;
 
+        let now = monotonic_now();
         if (start_frac - target_page as f32).abs() < f32::EPSILON {
             self.animation_offset = Animated::static_value(target_page as f32);
         } else {
             self.animation_offset =
-                Animated::new(start_frac, target_page as f32, self.animation_config);
+                Animated::new(start_frac, target_page as f32, self.animation_config, now);
         }
         self.drag_offset = 0.0;
+    }
+
+    pub fn is_animating(&self) -> bool {
+        self.animation_offset.is_animating(monotonic_now())
     }
 }

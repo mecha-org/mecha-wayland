@@ -1,0 +1,16 @@
+
+[package]
+name = "launcher-volume"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "launcher_volume"
+
+[dependencies]
+assets = { path = "../../assets" }
+interactivity = { path = "../../interactivity" }
+ui = { path = "../../ui" }
+utils = { path = "../../utils" }
+taffy = { workspace = true }
+

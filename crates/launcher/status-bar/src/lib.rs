@@ -6,9 +6,16 @@ pub mod widgets;
 
 pub use atlas::UI as ATLAS;
 pub use atlas::UI_FONT_INTER_6;
+pub use atlas::UI_FONT_INTER_14;
 pub use atlas::UI_FONT_INTER_16;
 pub use atlas::UI_FONT_INTER_24;
 pub use atlas::UI_FONT_INTER_100;
+pub use atlas::UI_NAV_GRADIENT;
+pub use atlas::UI_NAV_HEART;
+pub use atlas::UI_NAV_NOTIFICATIONS;
+pub use atlas::UI_NAV_RECENT;
+pub use atlas::UI_NAV_SEARCH;
+pub use atlas::UI_NAV_SETTINGS;
 
 use widgets::{
     battery::BatteryWidget,

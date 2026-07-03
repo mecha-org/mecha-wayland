@@ -191,6 +191,17 @@ impl WindowManager {
     fn do_render_frame(&mut self, window_id: WindowId) {
         if let Some(window) = self.windows.get_mut(&window_id) {
             let cb = window.render_frame(&mut self.renderer);
+
+            let wants = window.wants_input();
+            let surface = window.surface().clone();
+            if wants {
+                surface.set_input_region(None);
+            } else if let Some(comp) = self.globals.compositor.clone() {
+                let region = comp.create_region();
+                surface.set_input_region(Some(&region));
+                region.destroy();
+            }
+
             let cb_id = cb.object_id().expect("live callback");
             self.frame_callbacks.insert(cb_id, window_id);
         }

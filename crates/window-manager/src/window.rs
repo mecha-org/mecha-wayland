@@ -74,6 +74,7 @@ pub(crate) trait AnyWindow {
     fn on_pointer_event(&mut self, ev: &WlPointerEvent);
     fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent);
     fn on_touch_event(&mut self, ev: &WlTouchEvent);
+    fn wants_input(&self) -> bool;
 }
 
 pub struct Window<T> {
@@ -322,5 +323,9 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
         self.interactivity.call_before_frame();
         self.interactivity.process_touch(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
+    }
+
+    fn wants_input(&self) -> bool {
+        self.ui.wants_input()
     }
 }

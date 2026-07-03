@@ -89,6 +89,9 @@ pub trait WidgetList {
     fn gesture_config(&self) -> Option<interactivity::gesture::GestureConfig> {
         None
     }
+    fn wants_input(&self) -> bool {
+        true
+    }
 }
 
 impl WidgetList for () {

@@ -101,6 +101,20 @@ impl WidgetList for VolumeUi {
             self.update_ui(tree);
             return true;
         }
+        if let Some(scroll) = interactivity.pointer.just_scrolled()
+            && self
+                .slider_rect
+                .contains_point(interactivity.pointer.position())
+        {
+            if scroll.dy < 0.0 {
+                self.update_value(self.count + STEP_SIZE);
+            } else {
+                self.update_value(self.count - STEP_SIZE);
+            }
+            self.update_ui(tree);
+            self.update_ui(tree);
+            return true;
+        }
         if let Some(drag_data) = &interactivity.gesture.drag_data() {
             match drag_data.state {
                 DragState::Start => {

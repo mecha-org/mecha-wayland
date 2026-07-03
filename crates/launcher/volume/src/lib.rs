@@ -5,6 +5,7 @@ mod slider;
 
 use assets::BakedFont;
 use button::Button;
+use interactivity::DragState;
 use interactivity::InteractivityState;
 use slider::Slider;
 use taffy::Style;
@@ -26,6 +27,7 @@ pub struct VolumeUi {
     minus_rect: utils::Rect,
     plus_rect: utils::Rect,
     slider_rect: utils::Rect,
+    dragging: bool,
 }
 
 impl VolumeUi {
@@ -36,6 +38,7 @@ impl VolumeUi {
             minus_rect: utils::Rect::ZERO,
             plus_rect: utils::Rect::ZERO,
             slider_rect: utils::Rect::ZERO,
+            dragging: false,
         }
     }
 
@@ -97,6 +100,34 @@ impl WidgetList for VolumeUi {
             self.update_value(new_value as i32);
             self.update_ui(tree);
             return true;
+        }
+        if let Some(drag_data) = &interactivity.gesture.drag_data() {
+            match drag_data.state {
+                DragState::Start => {
+                    if self.slider_rect.contains_point(drag_data.current_position) {
+                        self.dragging = true;
+                    }
+                    return true;
+                }
+                DragState::Move => {
+                    if !self.dragging {
+                        return false;
+                    }
+                    let slider = &mut self.root.children.1;
+                    let y = drag_data.current_position.y();
+                    let new_value = slider.calculate_new_value(y, self.slider_rect);
+                    self.update_value(new_value as i32);
+                    self.update_ui(tree);
+                    return true;
+                }
+                DragState::End | DragState::Cancel => {
+                    if self.dragging {
+                        self.dragging = false;
+                    }
+                }
+            }
+        } else {
+            self.dragging = false;
         }
         false
     }

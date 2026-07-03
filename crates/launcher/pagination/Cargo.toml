@@ -15,4 +15,4 @@ utils = { path = "../../utils" }
 animation = { path = "../../animation" }
 taffy = { workspace = true }
 launcher-counter = { path = "../counter" }
-
+launcher-volume = { path = "../volume" }

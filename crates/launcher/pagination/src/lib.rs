@@ -6,6 +6,7 @@ use assets::BakedFont;
 use interactivity::InteractivityState;
 use interactivity::hit::{HitArea, HitAreaRegistry};
 use launcher_counter::CounterUi;
+use launcher_volume::VolumeUi;
 use pagination::{PagerState, Pages};
 use taffy::Style;
 use taffy::prelude::*;
@@ -13,7 +14,7 @@ use ui::widgets::{Div, Text};
 use ui::{Point, RenderCommand, Widget, WidgetList, WidgetTree};
 use utils::Color;
 
-type Page1Div = Div<Div<Text>>;
+type Page1Div = Div<VolumeUi>;
 type Page2Div = Div<CounterUi>;
 type Page3Div = Div<CounterUi>;
 type PagerType = Pages<(Page1Div, Page2Div, Page3Div)>;
@@ -109,27 +110,7 @@ impl WidgetList for PaginationUi {
 }
 
 fn build_root(font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {
-    let card_style = Style {
-        display: Display::Flex,
-        justify_content: Some(JustifyContent::Center),
-        align_items: Some(AlignItems::Center),
-        size: Size {
-            width: percent(0.85_f32),
-            height: percent(0.85_f32),
-        },
-        ..Default::default()
-    };
-
-    let mut text1 = Text::new(Style::default());
-    text1.text = "Page 1".to_string();
-    text1.font = Some(font_24);
-    text1.color = Color::rgb(1.0, 1.0, 1.0);
-    text1.z = 0.5;
-
-    let mut card1 = Div::new(card_style.clone(), text1);
-    card1.color = Color::rgb(0.9, 0.35, 0.3);
-    card1.border_radius = 24.0;
-    card1.z = 0.2;
+    let volume = VolumeUi::new(font_24, font_100);
 
     let counter1 = CounterUi::new(font_24, font_100);
     let counter2 = CounterUi::new(font_24, font_100);
@@ -146,7 +127,7 @@ fn build_root(font_24: &'static BakedFont, font_100: &'static BakedFont) -> Root
         ..Default::default()
     };
 
-    let page1 = Div::new(page_style.clone(), card1);
+    let page1 = Div::new(page_style.clone(), volume);
     let page2 = Div::new(page_style.clone(), counter1);
     let page3 = Div::new(page_style.clone(), counter2);
 

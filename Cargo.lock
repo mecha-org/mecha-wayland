@@ -759,6 +759,7 @@ dependencies = [
  "assets",
  "interactivity",
  "launcher-counter",
+ "launcher-volume",
  "taffy",
  "ui",
  "utils",

@@ -2,12 +2,12 @@ use std::sync::mpsc;
 
 use app::prelude::*;
 use io_ring::{Ring, RingSettings};
-use launcher_navbar::{NavbarUi, NAV_EXCLUSIVE_ZONE, NAV_SURFACE_HEIGHT};
+use launcher_navbar::{NAV_EXCLUSIVE_ZONE, NAV_SURFACE_HEIGHT, NavbarUi};
 use launcher_pagination::PaginationUi;
 use launcher_status_bar::{
     ATLAS, StatusBarUi, UI_FONT_INTER_14, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
 };
-use notification::{create_notification_ui, PANEL_HEIGHT};
+use notification::{PANEL_HEIGHT, create_notification_ui};
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,

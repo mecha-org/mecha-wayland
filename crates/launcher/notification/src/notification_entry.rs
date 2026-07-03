@@ -9,7 +9,10 @@ use ui::Widget;
 
 use ui::widgets::{Div, Text};
 use ui::{Render, RenderCommand, WidgetList};
-use utils::Color;
+use utils::{Color, Rect};
+
+use animation::monotonic_now;
+use interactivity::{DragState, InteractivityState, SwipeDirection};
 
 pub type CardContent = (Div<()>, Div<(Text, Text)>);
 
@@ -28,6 +31,7 @@ pub const OPTIONS_THRESHOLD: f32 = 140.0;
 pub const FLING_OFFSCREEN_DISTANCE: f32 = 500.0;
 pub const DISMISS_SIGNAL: f32 = 200.0;
 pub const DRAG_THRESHOLD: f32 = 20.0;
+const DRAG_CAP: f32 = 200.0;
 
 // Z-ordering
 pub const BG_Z: f32 = 0.35;
@@ -75,9 +79,13 @@ pub struct NotificationEntry<T: WidgetList> {
     pub phase: EntryPhase,
     pub bg_color: Color,
     pub font: Option<&'static BakedFont>,
+    pub bounds: Option<Rect>,
     bg_label: BgLabel,
     pub last_offset: f32,
     flash_frames: u8,
+    gesture_active: bool,
+    hold_triggered: bool,
+    prev_drag_state: Option<DragState>,
 }
 
 impl<T: WidgetList> NotificationEntry<T> {
@@ -105,9 +113,13 @@ impl<T: WidgetList> NotificationEntry<T> {
             phase: EntryPhase::Idle,
             bg_color: Color::TRANSPARENT,
             font: None,
+            bounds: None,
             bg_label: BgLabel::None,
             last_offset: 0.0,
             flash_frames: 0,
+            gesture_active: false,
+            hold_triggered: false,
+            prev_drag_state: None,
         }
     }
 
@@ -224,6 +236,103 @@ impl<T: WidgetList> NotificationEntry<T> {
 
     pub fn current_offset(&self) -> f32 {
         self.last_offset
+    }
+
+    pub fn handle_gesture(
+        &mut self,
+        interactivity: &InteractivityState,
+        tree: &mut ui::WidgetTree,
+    ) -> bool {
+        let bounds = match self.bounds {
+            Some(b) => b,
+            None => return false,
+        };
+
+        let now = monotonic_now();
+        let gesture = &interactivity.gesture;
+        let mut ch = false;
+
+        let dd = gesture.drag_data();
+        let cur_state = dd.map(|d| d.state);
+
+        if cur_state != self.prev_drag_state {
+            self.prev_drag_state = cur_state;
+
+            match cur_state {
+                Some(DragState::Start) => {
+                    let d = dd.unwrap();
+                    if bounds.contains_point(d.start_position) {
+                        self.gesture_active = true;
+                        self.hold_triggered = false;
+                    }
+                }
+                Some(DragState::Move) if self.gesture_active => {
+                    let d = dd.unwrap();
+                    self.set_drag_offset(d.total.x().clamp(-DRAG_CAP, DRAG_CAP));
+                    ch = true;
+                }
+                Some(DragState::End) if self.gesture_active => {
+                    self.gesture_active = false;
+
+                    if let Some(sd) = gesture.swipe_data() {
+                        match sd.direction {
+                            SwipeDirection::Left | SwipeDirection::Right => {
+                                let dx = sd.end_position.x() - sd.start_position.x();
+                                self.dismiss(
+                                    now,
+                                    if dx > 0.0 {
+                                        DISMISS_SIGNAL
+                                    } else {
+                                        -DISMISS_SIGNAL
+                                    },
+                                );
+                            }
+                            SwipeDirection::Up | SwipeDirection::Down => {
+                                let o = self.current_offset();
+                                if o.abs() >= DRAG_THRESHOLD {
+                                    self.finish_drag(now, o);
+                                } else {
+                                    self.spring_back(now);
+                                }
+                            }
+                        }
+                    } else {
+                        let d = dd.unwrap();
+                        let o = self.current_offset();
+                        let dx = d.total.x();
+                        if o.abs() >= DRAG_THRESHOLD || dx.abs() >= DRAG_THRESHOLD {
+                            self.finish_drag(now, if o.abs() > dx.abs() { o } else { dx });
+                        } else {
+                            self.spring_back(now);
+                        }
+                    }
+                    self.hold_triggered = false;
+                    ch = true;
+                }
+                Some(DragState::Cancel) if self.gesture_active => {
+                    self.gesture_active = false;
+                    self.hold_triggered = false;
+                }
+                _ => {}
+            }
+        } else if cur_state == Some(DragState::Move) && self.gesture_active {
+            let d = dd.unwrap();
+            self.set_drag_offset(d.total.x().clamp(-DRAG_CAP, DRAG_CAP));
+            ch = true;
+        }
+
+        if interactivity.touch.tapped(bounds) {
+            self.tap_flash();
+            self.spring_back(now);
+            ch = true;
+        }
+        if !self.hold_triggered && interactivity.touch.held(bounds) {
+            self.trigger_hold(tree);
+            self.hold_triggered = true;
+            ch = true;
+        }
+
+        ch
     }
 }
 

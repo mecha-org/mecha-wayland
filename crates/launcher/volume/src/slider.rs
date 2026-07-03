@@ -85,8 +85,8 @@ impl Slider {
         self.normalized_value = self.value / (self.max - self.min);
     }
 
-    pub fn calculate_new_value(&self, y: f64, rect: utils::Rect) -> f32 {
-        let normalized = 1.0 + ((rect.origin.y() - y as f32) / rect.size.height());
+    pub fn calculate_new_value(&self, y: f32, rect: utils::Rect) -> f32 {
+        let normalized = 1.0 + ((rect.origin.y() - y) / rect.size.height());
         normalized.clamp(0.0, 1.0) * (self.max - self.min) + self.min
     }
 }

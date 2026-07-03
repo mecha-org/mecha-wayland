@@ -1,7 +1,7 @@
 mod globals;
+pub mod prelude;
 mod render;
 mod window;
-pub mod prelude;
 
 use app::{RegisteredModule, prelude::State};
 use io_ring::RingProxy;
@@ -16,7 +16,10 @@ use window::{AnyWindow, Window, WindowKindHandles};
 
 pub use renderer::commands::Color;
 pub use ui::WidgetList as WindowUi;
-pub use window::{WindowId, WindowKind, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor};
+pub use window::{
+    WindowId, WindowKind, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor,
+    ZwlrLayerSurfaceV1KeyboardInteractivity,
+};
 
 #[derive(State)]
 pub struct WindowManager {
@@ -71,11 +74,23 @@ impl WindowManager {
     pub fn poll(&mut self) {}
 
     pub fn upload_atlas(&mut self, atlas: &assets::AtlasData) {
-        self.renderer.upload_atlas(atlas).expect("atlas upload failed");
+        self.renderer
+            .upload_atlas(atlas)
+            .expect("atlas upload failed");
     }
 
     pub fn spawn_window<T: WidgetList + 'static>(&mut self, settings: WindowSettings, ui: T) {
-        let window = Box::new(Window::new(settings.width, settings.height, settings.clear_color, ui));
+        let touch_config = settings.touch_config.or_else(|| ui.touch_config());
+        let gesture_config = settings.gesture_config.or_else(|| ui.gesture_config());
+
+        let window = Box::new(Window::new(
+            settings.width,
+            settings.height,
+            settings.clear_color,
+            ui,
+            touch_config,
+            gesture_config,
+        ));
         self.pending.push((settings, window));
     }
 
@@ -92,9 +107,20 @@ impl WindowManager {
     fn flush_pending(&mut self) {
         let pending = std::mem::take(&mut self.pending);
         for (settings, mut window) in pending {
-            let WindowSettings { width, height, kind, .. } = settings;
+            let WindowSettings {
+                width,
+                height,
+                kind,
+                ..
+            } = settings;
             match kind {
-                WindowKind::LayerShell { layer, anchor, exclusive_zone, namespace } => {
+                WindowKind::LayerShell {
+                    layer,
+                    anchor,
+                    exclusive_zone,
+                    namespace,
+                    keyboard_interactivity,
+                } => {
                     let compositor = self
                         .globals
                         .compositor
@@ -112,6 +138,7 @@ impl WindowManager {
                     layer_surface.set_size(width, height);
                     layer_surface.set_anchor(anchor);
                     layer_surface.set_exclusive_zone(exclusive_zone);
+                    layer_surface.set_keyboard_interactivity(keyboard_interactivity);
                     surface.commit();
 
                     let id = WindowId(layer_surface.object_id().expect("just allocated"));
@@ -139,7 +166,13 @@ impl WindowManager {
                     surface.commit();
 
                     let id = WindowId(xdg_surface.object_id().expect("just allocated"));
-                    window.init(surface, WindowKindHandles::Xdg { xdg_surface, toplevel });
+                    window.init(
+                        surface,
+                        WindowKindHandles::Xdg {
+                            xdg_surface,
+                            toplevel,
+                        },
+                    );
                     let surface_id = window.surface().object_id().expect("surface initialized");
                     self.wl_surfaces.insert(surface_id, id);
                     self.windows.insert(id, window);
@@ -171,13 +204,25 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
         .on(|wm: &mut WindowManager, _: &app::PrePoll| wm.pre_poll())
         .on(|wm: &mut WindowManager, _: &app::Poll| wm.poll())
         .on(|wm: &mut WindowManager, event: &wayland::WlRegistryEvent| {
-            if let wayland::WlRegistryEvent::Global { sender, name, interface, version } = event {
+            if let wayland::WlRegistryEvent::Global {
+                sender,
+                name,
+                interface,
+                version,
+            } = event
+            {
                 match interface.as_str() {
-                    WlCompositor::NAME => wm.globals.compositor = Some(sender.bind(*name, *version)),
-                    ZwlrLayerShellV1::NAME => wm.globals.layer_shell = Some(sender.bind(*name, *version)),
+                    WlCompositor::NAME => {
+                        wm.globals.compositor = Some(sender.bind(*name, *version))
+                    }
+                    ZwlrLayerShellV1::NAME => {
+                        wm.globals.layer_shell = Some(sender.bind(*name, *version))
+                    }
                     WlOutput::NAME => wm.globals.output = Some(sender.bind(*name, *version)),
                     XdgWmBase::NAME => wm.globals.xdg_wm_base = Some(sender.bind(*name, *version)),
-                    ZwpLinuxDmabufV1::NAME => wm.globals.dmabuf = Some(sender.bind(*name, *version)),
+                    ZwpLinuxDmabufV1::NAME => {
+                        wm.globals.dmabuf = Some(sender.bind(*name, *version))
+                    }
                     WlSeat::NAME => wm.globals.seat = Some(sender.bind(*name, *version)),
                     _ => {}
                 }
@@ -185,11 +230,18 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
         })
         .on(|wm: &mut WindowManager, event: &wayland::WlSeatEvent| {
             if let wayland::WlSeatEvent::Capabilities { capabilities, .. } = event {
-                let seat = wm.globals.seat.clone().expect("seat bound before capabilities");
-                if capabilities.contains(WlSeatCapability::Pointer) && wm.globals.pointer.is_none() {
+                let seat = wm
+                    .globals
+                    .seat
+                    .clone()
+                    .expect("seat bound before capabilities");
+                if capabilities.contains(WlSeatCapability::Pointer) && wm.globals.pointer.is_none()
+                {
                     wm.globals.pointer = Some(seat.get_pointer());
                 }
-                if capabilities.contains(WlSeatCapability::Keyboard) && wm.globals.keyboard.is_none() {
+                if capabilities.contains(WlSeatCapability::Keyboard)
+                    && wm.globals.keyboard.is_none()
+                {
                     wm.globals.keyboard = Some(seat.get_keyboard());
                 }
                 if capabilities.contains(WlSeatCapability::Touch) && wm.globals.touch.is_none() {
@@ -197,8 +249,8 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                 }
             }
         })
-        .on(|wm: &mut WindowManager, event: &wayland::WlPointerEvent| {
-            match event {
+        .on(
+            |wm: &mut WindowManager, event: &wayland::WlPointerEvent| match event {
                 WlPointerEvent::Enter { surface, .. } => {
                     let surface_id = surface.object_id().expect("live surface");
                     wm.current_pointer_window = wm.wl_surfaces.get(&surface_id).copied();
@@ -222,10 +274,10 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                         }
                     }
                 }
-            }
-        })
-        .on(|wm: &mut WindowManager, event: &wayland::WlKeyboardEvent| {
-            match event {
+            },
+        )
+        .on(
+            |wm: &mut WindowManager, event: &wayland::WlKeyboardEvent| match event {
                 WlKeyboardEvent::Enter { surface, .. } => {
                     let surface_id = surface.object_id().expect("live surface");
                     wm.current_keyboard_window = wm.wl_surfaces.get(&surface_id).copied();
@@ -249,10 +301,10 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                         }
                     }
                 }
-            }
-        })
-        .on(|wm: &mut WindowManager, event: &wayland::WlTouchEvent| {
-            match event {
+            },
+        )
+        .on(
+            |wm: &mut WindowManager, event: &wayland::WlTouchEvent| match event {
                 WlTouchEvent::Down { surface, id, .. } => {
                     if let Some(surface_id) = surface.object_id() {
                         if let Some(&window_id) = wm.wl_surfaces.get(&surface_id) {
@@ -278,8 +330,7 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                     }
                 }
                 WlTouchEvent::Cancel { .. } | WlTouchEvent::Frame { .. } => {
-                    let window_ids: Vec<WindowId> =
-                        wm.touch_window_map.values().copied().collect();
+                    let window_ids: Vec<WindowId> = wm.touch_window_map.values().copied().collect();
                     wm.touch_window_map.clear();
                     let mut seen = std::collections::HashSet::new();
                     for window_id in window_ids {
@@ -291,14 +342,18 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                     }
                 }
                 _ => {}
-            }
-        })
+            },
+        )
         .on(|wm: &mut WindowManager, event: &wayland::WlCallbackEvent| {
             let wayland::WlCallbackEvent::Done { sender, .. } = event;
             let obj_id = sender.object_id().expect("live callback");
 
             if let Some(window_id) = wm.frame_callbacks.remove(&obj_id) {
-                if wm.windows.get(&window_id).map_or(false, |w| w.is_back_released()) {
+                if wm
+                    .windows
+                    .get(&window_id)
+                    .map_or(false, |w| w.is_back_released())
+                {
                     wm.do_render_frame(window_id);
                 }
             } else {
@@ -312,23 +367,35 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                 window.on_buffer_release(obj_id);
             }
         })
-        .on(|wm: &mut WindowManager, event: &wayland::ZwlrLayerSurfaceV1Event| {
-            if let wayland::ZwlrLayerSurfaceV1Event::Configure { sender, serial, width, height } = event {
-                let id = WindowId(sender.object_id().expect("live handle"));
-                let (stored_w, stored_h) = wm.windows.get(&id)
-                    .expect("window exists for configure")
-                    .dimensions();
-                let w = if *width == 0 { stored_w } else { *width };
-                let h = if *height == 0 { stored_h } else { *height };
-                sender.ack_configure(*serial);
-                wm.configure_window(id, w, h);
-                wm.do_render_frame(id);
-            }
-        })
+        .on(
+            |wm: &mut WindowManager, event: &wayland::ZwlrLayerSurfaceV1Event| {
+                if let wayland::ZwlrLayerSurfaceV1Event::Configure {
+                    sender,
+                    serial,
+                    width,
+                    height,
+                } = event
+                {
+                    let id = WindowId(sender.object_id().expect("live handle"));
+                    let (stored_w, stored_h) = wm
+                        .windows
+                        .get(&id)
+                        .expect("window exists for configure")
+                        .dimensions();
+                    let w = if *width == 0 { stored_w } else { *width };
+                    let h = if *height == 0 { stored_h } else { *height };
+                    sender.ack_configure(*serial);
+                    wm.configure_window(id, w, h);
+                    wm.do_render_frame(id);
+                }
+            },
+        )
         .on(|wm: &mut WindowManager, event: &wayland::XdgSurfaceEvent| {
             let wayland::XdgSurfaceEvent::Configure { sender, serial } = event;
             let id = WindowId(sender.object_id().expect("live handle"));
-            let (w, h) = wm.windows.get(&id)
+            let (w, h) = wm
+                .windows
+                .get(&id)
                 .expect("window exists for configure")
                 .dimensions();
             sender.ack_configure(*serial);

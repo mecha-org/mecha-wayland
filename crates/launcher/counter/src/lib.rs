@@ -2,7 +2,7 @@
 
 mod button;
 
-use assets::{AtlasId, BakedFont};
+use assets::BakedFont;
 use button::Button;
 use interactivity::InteractivityState;
 use taffy::Style;
@@ -22,9 +22,9 @@ pub struct CounterUi {
 }
 
 impl CounterUi {
-    pub fn new(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> Self {
+    pub fn new(font_24: &'static BakedFont, font_100: &'static BakedFont) -> Self {
         Self {
-            root: make_root(atlas_id, font_24, font_100),
+            root: make_root(font_24, font_100),
             count: 0,
             minus_rect: utils::Rect::ZERO,
             plus_rect: utils::Rect::ZERO,
@@ -66,22 +66,34 @@ impl WidgetList for CounterUi {
         }
         false
     }
+
+    fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {
+        Some(interactivity::touch::TouchConfig {
+            tap_max_distance: 10.0,
+            tap_max_duration: std::time::Duration::from_millis(250),
+        })
+    }
+
+    fn gesture_config(&self) -> Option<interactivity::gesture::GestureConfig> {
+        Some(interactivity::gesture::GestureConfig {
+            swipe_min_distance: 30.0,
+            swipe_max_duration: std::time::Duration::from_millis(400),
+        })
+    }
 }
 
-fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {
+fn make_root(font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {
     let mut title = Text::new(Style::default());
     title.font = Some(font_24);
     title.text = "Counter".to_string();
     title.color = Color::WHITE;
     title.z = 0.95;
-    title.atlas_id = Some(atlas_id);
 
     let mut count_text = Text::new(Style::default());
     count_text.font = Some(font_100);
     count_text.text = "0".to_string();
     count_text.color = Color::WHITE;
     count_text.z = 0.95;
-    count_text.atlas_id = Some(atlas_id);
 
     let mut minus = Button::new("-");
     minus.div.color = Color::rgb(0.2, 0.4, 0.9);
@@ -92,7 +104,6 @@ fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static 
     minus.div.children.font = Some(font_24);
     minus.div.children.color = Color::WHITE;
     minus.div.children.z = 0.4;
-    minus.div.children.atlas_id = Some(atlas_id);
 
     let mut plus = Button::new("+");
     plus.div.color = Color::rgb(0.2, 0.7, 0.3);
@@ -103,7 +114,6 @@ fn make_root(atlas_id: AtlasId, font_24: &'static BakedFont, font_100: &'static 
     plus.div.children.font = Some(font_24);
     plus.div.children.color = Color::WHITE;
     plus.div.children.z = 0.5;
-    plus.div.children.atlas_id = Some(atlas_id);
 
     let row_style = Style {
         display: Display::Flex,

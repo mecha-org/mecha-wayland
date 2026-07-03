@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use animation::{Animated, AnimationConfig, Easing};
-use assets::{AtlasId, BakedFont};
+use assets::BakedFont;
 use taffy::prelude::*;
 use taffy::{Layout, Style};
 use ui::Point;
@@ -75,7 +75,6 @@ pub struct NotificationEntry<T: WidgetList> {
     pub phase: EntryPhase,
     pub bg_color: Color,
     pub font: Option<&'static BakedFont>,
-    pub atlas_id: Option<AtlasId>,
     bg_label: BgLabel,
     last_offset: f32,
     flash_frames: u8,
@@ -106,7 +105,6 @@ impl<T: WidgetList> NotificationEntry<T> {
             phase: EntryPhase::Idle,
             bg_color: Color::TRANSPARENT,
             font: None,
-            atlas_id: None,
             bg_label: BgLabel::None,
             last_offset: 0.0,
             flash_frames: 0,
@@ -342,7 +340,6 @@ impl<T: WidgetList> Render for NotificationEntry<T> {
                         origin: Point::new(ox, oy),
                         z: BG_Z + 0.1,
                         color: Color::rgba(1.0, 1.0, 1.0, alpha),
-                        atlas_id: self.atlas_id,
                     });
                 }
             }

@@ -40,7 +40,6 @@ pub enum RenderCommand {
         origin: Point,
         z: f32,
         color: Color,
-        atlas_id: Option<assets::AtlasId>,
     },
     DrawMonochromeSprite {
         atlas_id: assets::AtlasId,
@@ -80,6 +79,12 @@ pub trait WidgetList {
     fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand>;
     fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
         false
+    }
+    fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {
+        None
+    }
+    fn gesture_config(&self) -> Option<interactivity::gesture::GestureConfig> {
+        None
     }
 }
 

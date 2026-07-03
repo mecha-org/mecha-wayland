@@ -137,6 +137,20 @@ impl Point {
     pub fn as_tuple(self) -> (f32, f32) {
         (self.0.x, self.0.y)
     }
+
+    /// Returns the length/magnitude of the vector representing this point.
+    #[inline]
+    pub fn length(self) -> f32 {
+        self.0.length()
+    }
+}
+
+impl std::ops::Sub<Point> for Point {
+    type Output = Point;
+    #[inline]
+    fn sub(self, rhs: Point) -> Point {
+        Point(self.0 - rhs.0)
+    }
 }
 
 impl std::ops::Add<Size> for Point {
@@ -302,9 +316,13 @@ impl Rect {
 
     /// Returns `true` if the pixel coordinate `(px, py)` lies inside the rectangle.
     #[inline]
-    pub fn contains(self, px: f64, py: f64) -> bool {
-        let px = px as f32;
-        let py = py as f32;
+    pub fn contains(self, px: f32, py: f32) -> bool {
         px >= self.x() && px <= self.right() && py >= self.y() && py <= self.bottom()
+    }
+
+    /// Returns `true` if the point `p` lies inside the rectangle.
+    #[inline]
+    pub fn contains_point(self, p: Point) -> bool {
+        self.contains(p.x(), p.y())
     }
 }

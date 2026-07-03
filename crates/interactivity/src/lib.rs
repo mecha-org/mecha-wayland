@@ -1,17 +1,22 @@
+pub mod gesture;
 pub mod hit;
 pub mod keyboard;
 pub mod pointer;
 pub mod touch;
 
-pub use keyboard::{KeyEvent, KeyboardState, Modifiers};
-pub use pointer::{PointerEvent, PointerState};
-pub use touch::{DragState, SwipeDirection, TouchEvent, TouchState};
+pub use gesture::{DragState, GestureSingle, SwipeDirection};
+pub use keyboard::{KeyCode, KeyboardState, Modifiers};
+pub use pointer::PointerState;
+pub use touch::TouchState;
+
+use wayland::{WlKeyboardEvent, WlPointerEvent, WlTouchEvent};
 
 #[derive(Debug, Default)]
 pub struct InteractivityState {
     pub pointer: PointerState,
     pub keyboard: KeyboardState,
     pub touch: TouchState,
+    pub gesture: GestureSingle,
 }
 
 impl InteractivityState {
@@ -19,7 +24,43 @@ impl InteractivityState {
         Self::default()
     }
 
+    pub fn with_configs(
+        touch_config: Option<touch::TouchConfig>,
+        gesture_config: Option<gesture::GestureConfig>,
+    ) -> Self {
+        let mut state = Self::default();
+        if let Some(config) = touch_config {
+            state.touch = touch::TouchState::with_config(config);
+        }
+        if let Some(config) = gesture_config {
+            state.gesture = gesture::GestureSingle::with_config(config);
+        }
+        state
+    }
+
+    pub fn process_pointer(&mut self, ev: &WlPointerEvent) {
+        self.pointer.process(ev, &mut self.gesture);
+    }
+
+    pub fn process_keyboard(&mut self, ev: &WlKeyboardEvent) {
+        self.keyboard.process(ev);
+    }
+
+    pub fn process_touch(&mut self, ev: &WlTouchEvent) {
+        self.touch.process(ev, &mut self.gesture);
+    }
+
+    pub fn call_before_frame(&mut self) {
+        self.pointer.clear(&mut self.gesture);
+        self.keyboard.clear();
+        self.touch.clear(&mut self.gesture);
+    }
+
     pub fn is_clicked(&self, bounds: utils::Rect) -> bool {
-        self.pointer.is_clicked(bounds)
+        self.pointer
+            .just_pressed_buttons()
+            .values()
+            .any(|point| bounds.contains_point(*point))
+            || self.touch.tapped(bounds)
     }
 }

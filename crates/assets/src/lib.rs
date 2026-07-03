@@ -29,6 +29,7 @@ pub struct GlyphInfo {
 
 #[derive(Debug)]
 pub struct BakedFont {
+    pub atlas_id: AtlasId,
     pub size: f32,
     pub line_height: f32,
     /// Distance from the top of the text bounding box to the baseline, in pixels.

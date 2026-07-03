@@ -1,6 +1,8 @@
 use interactivity::InteractivityState;
 use interactivity::hit::{HitArea, HitAreaRegistry};
-use renderer::commands::{ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText, Rect, Size as RSize};
+use renderer::commands::{
+    ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText, Rect, Size as RSize,
+};
 use renderer::{DmaBuf, Renderer};
 use taffy::{AvailableSpace, NodeId, Size, Style};
 use ui::{Point, RenderCommand, WidgetList, WidgetTree};
@@ -8,7 +10,9 @@ use wayland::{
     Handle, ObjectId, WlBuffer, WlCallback, WlKeyboardEvent, WlPointerEvent, WlSurface,
     WlTouchEvent, XdgSurface, XdgToplevel, ZwlrLayerSurfaceV1, ZwpLinuxDmabufV1,
 };
-pub use wayland::{ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor};
+pub use wayland::{
+    ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
+};
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
 pub struct WindowId(pub(crate) ObjectId);
@@ -18,21 +22,31 @@ pub struct WindowSettings {
     pub height: u32,
     pub clear_color: Color,
     pub kind: WindowKind,
+    pub touch_config: Option<interactivity::touch::TouchConfig>,
+    pub gesture_config: Option<interactivity::gesture::GestureConfig>,
 }
 
 pub enum WindowKind {
-    Xdg { title: String },
+    Xdg {
+        title: String,
+    },
     LayerShell {
         layer: ZwlrLayerShellV1Layer,
         anchor: ZwlrLayerSurfaceV1Anchor,
         exclusive_zone: i32,
         namespace: String,
+        keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity,
     },
 }
 
 pub(crate) enum WindowKindHandles {
-    LayerShell { layer_surface: Handle<ZwlrLayerSurfaceV1> },
-    Xdg { xdg_surface: Handle<XdgSurface>, toplevel: Handle<XdgToplevel> },
+    LayerShell {
+        layer_surface: Handle<ZwlrLayerSurfaceV1>,
+    },
+    Xdg {
+        xdg_surface: Handle<XdgSurface>,
+        toplevel: Handle<XdgToplevel>,
+    },
 }
 
 pub struct Slot {
@@ -43,7 +57,13 @@ pub struct Slot {
 
 pub(crate) trait AnyWindow {
     fn init(&mut self, surface: Handle<WlSurface>, kind: WindowKindHandles);
-    fn configure(&mut self, renderer: &mut Renderer, dmabuf: &Handle<ZwpLinuxDmabufV1>, w: u32, h: u32);
+    fn configure(
+        &mut self,
+        renderer: &mut Renderer,
+        dmabuf: &Handle<ZwpLinuxDmabufV1>,
+        w: u32,
+        h: u32,
+    );
     fn is_configured(&self) -> bool;
     fn dimensions(&self) -> (u32, u32);
     fn request_frame(&self) -> Handle<WlCallback>;
@@ -73,7 +93,14 @@ pub struct Window<T> {
 }
 
 impl<T: WidgetList> Window<T> {
-    pub fn new(width: u32, height: u32, clear_color: Color, ui: T) -> Self {
+    pub fn new(
+        width: u32,
+        height: u32,
+        clear_color: Color,
+        ui: T,
+        touch_config: Option<interactivity::touch::TouchConfig>,
+        gesture_config: Option<interactivity::gesture::GestureConfig>,
+    ) -> Self {
         Self {
             surface: None,
             slots: None,
@@ -86,7 +113,7 @@ impl<T: WidgetList> Window<T> {
             tree: WidgetTree::new(),
             root_node: None,
             ui,
-            interactivity: InteractivityState::new(),
+            interactivity: InteractivityState::with_configs(touch_config, gesture_config),
             hit_areas: HitAreaRegistry::new(),
         }
     }
@@ -98,7 +125,13 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
         self.kind = Some(kind);
     }
 
-    fn configure(&mut self, renderer: &mut Renderer, dmabuf: &Handle<ZwpLinuxDmabufV1>, w: u32, h: u32) {
+    fn configure(
+        &mut self,
+        renderer: &mut Renderer,
+        dmabuf: &Handle<ZwpLinuxDmabufV1>,
+        w: u32,
+        h: u32,
+    ) {
         if self.slots.is_some() {
             return;
         }
@@ -161,12 +194,15 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
             },
         );
 
-        let commands = self.ui.render_children(&self.tree, Point::new(0.0, 0.0));
+        let commands = self.ui.render_children(&self.tree, Point::ZERO);
 
         self.hit_areas.clear();
         for cmd in &commands {
             if let RenderCommand::RegisterHitArea { id, rect } = cmd {
-                self.hit_areas.push(HitArea { id: *id, rect: *rect });
+                self.hit_areas.push(HitArea {
+                    id: *id,
+                    rect: *rect,
+                });
             }
         }
 
@@ -179,7 +215,15 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
 
         for cmd in commands {
             match cmd {
-                RenderCommand::DrawQuad { color, border_color, origin, z, size, border_radius, border_thickness } => {
+                RenderCommand::DrawQuad {
+                    color,
+                    border_color,
+                    origin,
+                    z,
+                    size,
+                    border_radius,
+                    border_thickness,
+                } => {
                     renderer.send_command(DrawQuad {
                         color,
                         border_color,
@@ -190,11 +234,31 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
                         border_thickness,
                     });
                 }
-                RenderCommand::DrawText { font, text, origin, z, color, atlas_id: Some(aid) } => {
-                    let texture_id = renderer.get_texture_id(aid);
-                    renderer.send_command(DrawText { font, texture_id, text, origin, z, color });
+                RenderCommand::DrawText {
+                    font,
+                    text,
+                    origin,
+                    z,
+                    color,
+                } => {
+                    let texture_id = renderer.get_texture_id(font.atlas_id);
+                    renderer.send_command(DrawText {
+                        font,
+                        texture_id,
+                        text,
+                        origin,
+                        z,
+                        color,
+                    });
                 }
-                RenderCommand::DrawMonochromeSprite { atlas_id, region, origin, z, size, color } => {
+                RenderCommand::DrawMonochromeSprite {
+                    atlas_id,
+                    region,
+                    origin,
+                    z,
+                    size,
+                    color,
+                } => {
                     let texture_id = renderer.get_texture_id(atlas_id);
                     renderer.send_command(DrawMonochromeSprite {
                         texture_id,
@@ -243,16 +307,20 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
     }
 
     fn on_pointer_event(&mut self, ev: &WlPointerEvent) {
-        self.interactivity.pointer.process(ev);
+        self.interactivity.call_before_frame();
+        self.interactivity.process_pointer(ev);
         self.ui.on_event(&self.interactivity, &mut self.tree);
-        self.interactivity.pointer.clear_press();
     }
 
     fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent) {
-        self.interactivity.keyboard.process(ev);
+        self.interactivity.call_before_frame();
+        self.interactivity.process_keyboard(ev);
+        self.ui.on_event(&self.interactivity, &mut self.tree);
     }
 
     fn on_touch_event(&mut self, ev: &WlTouchEvent) {
-        self.interactivity.touch.process(ev);
+        self.interactivity.call_before_frame();
+        self.interactivity.process_touch(ev);
+        self.ui.on_event(&self.interactivity, &mut self.tree);
     }
 }

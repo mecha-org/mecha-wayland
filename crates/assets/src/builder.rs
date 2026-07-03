@@ -267,6 +267,7 @@ fn pack_one_atlas(
 
             rs.push_str(&format!(
                 "pub const {const_name}: ::assets::BakedFont = ::assets::BakedFont {{\n    \
+                 atlas_id: ::assets::AtlasId({atlas_id}),\n    \
                  size: {px}.0,\n    \
                  line_height: {lh},\n    \
                  ascent: {asc},\n    \

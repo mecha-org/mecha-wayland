@@ -738,6 +738,7 @@ name = "launcher"
 version = "0.1.0"
 dependencies = [
  "app",
+ "interactivity",
  "io-ring",
  "launcher-counter",
  "launcher-navbar",

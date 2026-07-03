@@ -20,7 +20,7 @@ pub struct LockUi {
 impl LockUi {
     pub fn new(wl_surface_id: u32, lock_surface_id: u32) -> Self {
         // Clock row
-        let mut clock_text = ClockText::new(Style::default(), atlas::UI.id);
+        let mut clock_text = ClockText::new(Style::default());
         clock_text.inner.font = Some(&atlas::UI_FONT_MONO_100);
 
         // Circle row
@@ -50,7 +50,6 @@ impl LockUi {
             ..Default::default()
         });
         hint.text = "Swipe up to unlock".to_string();
-        hint.atlas_id = Some(atlas::UI.id);
         hint.color = Color::rgb(0.6, 0.6, 0.6);
         hint.z = 0.5;
         hint.font = Some(&atlas::UI_FONT_MONO_16);

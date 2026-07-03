@@ -389,15 +389,8 @@ fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
                     border_thickness,
                 });
             }
-            ui::RenderCommand::DrawText {
-                font,
-                text,
-                origin,
-                z,
-                color,
-                atlas_id: Some(aid),
-            } => {
-                let texture_id = renderer.get_texture_id(aid);
+            ui::RenderCommand::DrawText { font, text, origin, z, color } => {
+                let texture_id = renderer.get_texture_id(font.atlas_id);
                 renderer.send_command(::renderer::commands::DrawText {
                     font,
                     texture_id,
@@ -407,8 +400,8 @@ fn render_ui(renderer: &mut ::renderer::Renderer, ui: &UiState) {
                     color,
                 });
             }
-            ui::RenderCommand::DrawText { atlas_id: None, .. } => {}
             ui::RenderCommand::RegisterHitArea { .. } => {}
+            _ => {}
         }
     }
 
@@ -435,7 +428,6 @@ fn build_ui() -> (WidgetTree, RootDiv) {
     };
 
     let mut text1 = Text::new(Style::default());
-    text1.atlas_id = Some(atlas::UI.id);
     text1.text = "Page 1".to_string();
     text1.font = Some(&atlas::UI_FONT_MONO_24);
     text1.color = Color::rgb(1.0, 1.0, 1.0);

@@ -66,6 +66,20 @@ impl WidgetList for CounterUi {
         }
         false
     }
+
+    fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {
+        Some(interactivity::touch::TouchConfig {
+            tap_max_distance: 10.0,
+            tap_max_duration: std::time::Duration::from_millis(250),
+        })
+    }
+
+    fn gesture_config(&self) -> Option<interactivity::gesture::GestureConfig> {
+        Some(interactivity::gesture::GestureConfig {
+            swipe_min_distance: 30.0,
+            swipe_max_duration: std::time::Duration::from_millis(400),
+        })
+    }
 }
 
 fn make_root(font_24: &'static BakedFont, font_100: &'static BakedFont) -> RootDiv {

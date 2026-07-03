@@ -18,6 +18,7 @@ pub use renderer::commands::Color;
 pub use ui::WidgetList as WindowUi;
 pub use window::{
     WindowId, WindowKind, WindowSettings, ZwlrLayerShellV1Layer, ZwlrLayerSurfaceV1Anchor,
+    ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
 
 #[derive(State)]
@@ -79,11 +80,16 @@ impl WindowManager {
     }
 
     pub fn spawn_window<T: WidgetList + 'static>(&mut self, settings: WindowSettings, ui: T) {
+        let touch_config = settings.touch_config.or_else(|| ui.touch_config());
+        let gesture_config = settings.gesture_config.or_else(|| ui.gesture_config());
+
         let window = Box::new(Window::new(
             settings.width,
             settings.height,
             settings.clear_color,
             ui,
+            touch_config,
+            gesture_config,
         ));
         self.pending.push((settings, window));
     }
@@ -113,6 +119,7 @@ impl WindowManager {
                     anchor,
                     exclusive_zone,
                     namespace,
+                    keyboard_interactivity,
                 } => {
                     let compositor = self
                         .globals
@@ -131,6 +138,7 @@ impl WindowManager {
                     layer_surface.set_size(width, height);
                     layer_surface.set_anchor(anchor);
                     layer_surface.set_exclusive_zone(exclusive_zone);
+                    layer_surface.set_keyboard_interactivity(keyboard_interactivity);
                     surface.commit();
 
                     let id = WindowId(layer_surface.object_id().expect("just allocated"));

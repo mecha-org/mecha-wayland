@@ -2,10 +2,12 @@ use app::prelude::*;
 use io_ring::{Ring, RingSettings};
 use launcher_counter::CounterUi;
 use launcher_navbar::NavbarUi;
-use launcher_status_bar::{ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100};
+use launcher_status_bar::{
+    ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
+};
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
-    ZwlrLayerSurfaceV1Anchor,
+    ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
 
 #[derive(State)]
@@ -42,7 +44,13 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 36,
                 namespace: "status-bar".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::None,
             },
+            touch_config: Some(interactivity::touch::TouchConfig {
+                tap_max_distance: 20.0,
+                tap_max_duration: std::time::Duration::from_millis(400),
+            }),
+            gesture_config: None,
         },
         StatusBarUi::new(),
     );
@@ -60,7 +68,10 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 0,
                 namespace: "counter".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
+            touch_config: None,
+            gesture_config: None,
         },
         CounterUi::new(&UI_FONT_INTER_24, &UI_FONT_INTER_100),
     );
@@ -77,7 +88,10 @@ fn main() {
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 60,
                 namespace: "navbar".to_string(),
+                keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
             },
+            touch_config: None,
+            gesture_config: None,
         },
         NavbarUi::new(&UI_FONT_INTER_16),
     );

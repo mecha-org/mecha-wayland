@@ -25,23 +25,23 @@ impl HitAreaRegistry {
         self.areas.push(area);
     }
 
-    /// Return the `id` of the first area whose rect contains `(x, y)`, or
+    /// Return the `id` of the first area whose rect contains `point`, or
     /// `None` if the point is outside every registered area.
-    pub fn hit_test(&self, x: f64, y: f64) -> Option<u64> {
+    pub fn hit_test(&self, point: utils::Point) -> Option<u64> {
         self.areas
             .iter()
-            .find(|a| a.rect.contains(x, y))
+            .find(|a| a.rect.contains_point(point))
             .map(|a| a.id)
     }
 
-    /// Return an iterator over all areas whose rect contains `(x, y)`.
+    /// Return an iterator over all areas whose rect contains `point`.
     ///
     /// Useful when areas overlap and you need to handle all matches (e.g. for
     /// a layered UI where multiple elements share the same screen region).
-    pub fn hit_test_all<'a>(&'a self, x: f64, y: f64) -> impl Iterator<Item = u64> + 'a {
+    pub fn hit_test_all<'a>(&'a self, point: utils::Point) -> impl Iterator<Item = u64> + 'a {
         self.areas
             .iter()
-            .filter(move |a| a.rect.contains(x, y))
+            .filter(move |a| a.rect.contains_point(point))
             .map(|a| a.id)
     }
 }

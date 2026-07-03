@@ -72,6 +72,9 @@ pub trait Widget: Render {
     fn style(&self) -> &Style;
     fn build_tree(&mut self, tree: &mut WidgetTree) -> NodeId;
     fn render_node(&mut self, layout: &Layout, tree: &WidgetTree, offset: Point) -> Vec<RenderCommand>;
+    fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
+        false
+    }
 }
 
 pub trait WidgetList {
@@ -105,6 +108,10 @@ impl<W: Widget> WidgetList for W {
     fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand> {
         let layout = tree.layout(self.node_id()).unwrap();
         self.render_node(layout, tree, parent_abs)
+    }
+
+    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+        self.on_event(interactivity, tree)
     }
 }
 

@@ -1,11 +1,10 @@
 use app::prelude::*;
 use io_ring::{Ring, RingSettings};
-use launcher_counter::CounterUi;
 use launcher_navbar::NavbarUi;
+use launcher_pagination::PaginationUi;
 use launcher_status_bar::{
     ATLAS, StatusBarUi, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
 };
-use launcher_volume::VolumeUi;
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
@@ -59,22 +58,21 @@ fn main() {
     launcher.window_manager.spawn_window(
         WindowSettings {
             width: 0,
-            height: 0,
-            clear_color: Color::rgba(0.16, 0.16, 0.18, 1.0),
+            height: 584,
+            clear_color: Color::rgba(0.08, 0.08, 0.10, 1.0),
             kind: WindowKind::LayerShell {
-                layer: ZwlrLayerShellV1Layer::Bottom,
+                layer: ZwlrLayerShellV1Layer::Top,
                 anchor: ZwlrLayerSurfaceV1Anchor::Top
-                    | ZwlrLayerSurfaceV1Anchor::Bottom
                     | ZwlrLayerSurfaceV1Anchor::Left
                     | ZwlrLayerSurfaceV1Anchor::Right,
                 exclusive_zone: 0,
-                namespace: "volume".to_string(),
                 keyboard_interactivity: ZwlrLayerSurfaceV1KeyboardInteractivity::Exclusive,
+                namespace: "pagination".to_string(),
             },
             touch_config: None,
             gesture_config: None,
         },
-        VolumeUi::new(&UI_FONT_INTER_24, &UI_FONT_INTER_100),
+        PaginationUi::new(&UI_FONT_INTER_24, &UI_FONT_INTER_100),
     );
 
     launcher.window_manager.spawn_window(

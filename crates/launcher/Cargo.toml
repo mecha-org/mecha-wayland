@@ -12,4 +12,5 @@ interactivity = { path = "../interactivity" }
 launcher-navbar = { path = "navbar" }
 launcher-status-bar = { path = "status-bar" }
 launcher-counter = { path = "counter" }
+launcher-pagination = {path = "pagination"}
 launcher-volume = { path = "volume" }

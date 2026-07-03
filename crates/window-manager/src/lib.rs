@@ -329,7 +329,17 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                         }
                     }
                 }
-                WlTouchEvent::Cancel { .. } | WlTouchEvent::Frame { .. } => {
+                WlTouchEvent::Frame { .. } => {
+                    let mut seen = std::collections::HashSet::new();
+                    for &window_id in wm.touch_window_map.values() {
+                        if seen.insert(window_id) {
+                            if let Some(w) = wm.windows.get_mut(&window_id) {
+                                w.on_touch_event(event);
+                            }
+                        }
+                    }
+                }
+                WlTouchEvent::Cancel { .. } => {
                     let window_ids: Vec<WindowId> = wm.touch_window_map.values().copied().collect();
                     wm.touch_window_map.clear();
                     let mut seen = std::collections::HashSet::new();

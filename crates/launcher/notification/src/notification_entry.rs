@@ -173,7 +173,11 @@ impl<T: WidgetList> NotificationEntry<T> {
     }
 
     pub fn dismiss(&mut self, now: Duration, direction: f32) {
-        let out = if direction > 0.0 { FLING_OFFSCREEN_DISTANCE } else { -FLING_OFFSCREEN_DISTANCE };
+        let out = if direction > 0.0 {
+            FLING_OFFSCREEN_DISTANCE
+        } else {
+            -FLING_OFFSCREEN_DISTANCE
+        };
         self.swipe_offset.animate_to(
             now,
             out,

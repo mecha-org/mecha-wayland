@@ -5,7 +5,7 @@ pub use notification_entry::{CardContent, NotificationEntry, PlainNotificationCo
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use animation::{monotonic_now, Animated, AnimationConfig, Easing};
+use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 use assets::BakedFont;
 use interactivity::{DragState, InteractivityState, SwipeDirection};
 use taffy::prelude::*;
@@ -286,7 +286,10 @@ impl WidgetList for NotificationUi {
             let offset = entry.last_offset;
             let card_id = entry.card.node_id();
 
-            let entry_pos = Point::new(list_origin.x() + el.location.x, list_origin.y() + el.location.y);
+            let entry_pos = Point::new(
+                list_origin.x() + el.location.x,
+                list_origin.y() + el.location.y,
+            );
             cmds.extend(entry.render(el, entry_pos));
 
             let card_layout = tree.layout(card_id).unwrap();
@@ -311,7 +314,6 @@ impl WidgetList for NotificationUi {
         let cur_state = dd.map(|d| d.state);
 
         if drag_state_changed(&mut self.prev_drag_state, cur_state) {
-
             match cur_state {
                 Some(DragState::Start) => {
                     let d = dd.unwrap();
@@ -407,6 +409,10 @@ impl WidgetList for NotificationUi {
         }
 
         ch
+    }
+
+    fn wants_input(&self) -> bool {
+        self.open
     }
 }
 

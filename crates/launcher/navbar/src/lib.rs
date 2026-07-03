@@ -7,7 +7,7 @@ use notification::NotificationCmd;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use animation::{monotonic_now, Animated, AnimationConfig, Easing};
+use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 use assets::{AtlasId, SpriteRegion};
 use interactivity::{DragState, InteractivityState};
 use taffy::NodeId;
@@ -206,8 +206,7 @@ impl NavbarUi {
 
         self.drag.finger_x = x;
         self.drag.finger_y = y;
-        self.drag_offset
-            .set_target(self.now, (-total_dy).max(0.0));
+        self.drag_offset.set_target(self.now, (-total_dy).max(0.0));
         self.update_growth(sw, sh);
     }
 
@@ -272,10 +271,7 @@ impl NavbarUi {
                 .drag
                 .recents_entered_at
                 .map_or(Duration::ZERO, |t| self.now.saturating_sub(t));
-            if sel == 2
-                && extrapolated
-                && dwell < Duration::from_millis(RECENTS_DWELL_MS)
-            {
+            if sel == 2 && extrapolated && dwell < Duration::from_millis(RECENTS_DWELL_MS) {
                 self.drag.last_selected = None;
             } else {
                 self.drag.last_selected = Some(sel);
@@ -431,11 +427,12 @@ impl WidgetList for NavbarUi {
         let cur_state = dd.map(|d| d.state);
 
         if drag_state_changed(&mut self.prev_drag_state, cur_state) {
-
             match cur_state {
                 Some(DragState::Start) => {
                     let d = dd.unwrap();
-                    if !self.drag_active && self.in_swipe_zone(d.start_position.x(), d.start_position.y(), sw, sh) {
+                    if !self.drag_active
+                        && self.in_swipe_zone(d.start_position.x(), d.start_position.y(), sw, sh)
+                    {
                         self.drag_active = true;
                         self.drag_start(d.start_position.x(), d.start_position.y());
                         changed = true;
@@ -443,7 +440,13 @@ impl WidgetList for NavbarUi {
                 }
                 Some(DragState::Move) if self.drag_active => {
                     let d = dd.unwrap();
-                    self.drag_move(d.current_position.x(), d.current_position.y(), d.total.y(), sw, sh);
+                    self.drag_move(
+                        d.current_position.x(),
+                        d.current_position.y(),
+                        d.total.y(),
+                        sw,
+                        sh,
+                    );
                     changed = true;
                 }
                 Some(DragState::End) if self.drag_active => {
@@ -460,7 +463,13 @@ impl WidgetList for NavbarUi {
         } else if cur_state == Some(DragState::Move) && self.drag_active {
             let d = dd.unwrap();
             if d.delta.x().abs() > 0.01 || d.delta.y().abs() > 0.01 {
-                self.drag_move(d.current_position.x(), d.current_position.y(), d.total.y(), sw, sh);
+                self.drag_move(
+                    d.current_position.x(),
+                    d.current_position.y(),
+                    d.total.y(),
+                    sw,
+                    sh,
+                );
                 changed = true;
             }
         }

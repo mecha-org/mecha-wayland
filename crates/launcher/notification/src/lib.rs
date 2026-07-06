@@ -203,14 +203,14 @@ impl WidgetList for NotificationUi {
         let now = monotonic_now();
         self.drain_cmds(now);
 
-        self.entries.0.update(now);
-        self.entries.1.update(now);
-        self.entries.2.update(now);
-
         let slide = self.slide_y.get(now);
         if !self.open && !self.slide_y.is_animating(now) && slide >= PANEL_HEIGHT - 0.5 {
             return vec![];
         }
+
+        self.entries.0.update(now);
+        self.entries.1.update(now);
+        self.entries.2.update(now);
 
         let (surf_w, surf_h) = self
             .root_id

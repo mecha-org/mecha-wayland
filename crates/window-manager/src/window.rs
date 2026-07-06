@@ -75,6 +75,8 @@ pub(crate) trait AnyWindow {
     fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent);
     fn on_touch_event(&mut self, ev: &WlTouchEvent);
     fn wants_input(&self) -> bool;
+    fn set_input_enabled(&mut self, enabled: bool);
+    fn input_enabled(&self) -> bool;
 }
 
 pub struct Window<T> {
@@ -91,6 +93,7 @@ pub struct Window<T> {
     pub ui: T,
     pub interactivity: InteractivityState,
     pub hit_areas: HitAreaRegistry,
+    input_enabled: bool,
 }
 
 impl<T: WidgetList> Window<T> {
@@ -116,6 +119,7 @@ impl<T: WidgetList> Window<T> {
             ui,
             interactivity: InteractivityState::with_configs(touch_config, gesture_config),
             hit_areas: HitAreaRegistry::new(),
+            input_enabled: true,
         }
     }
 }
@@ -327,5 +331,13 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
 
     fn wants_input(&self) -> bool {
         self.ui.wants_input()
+    }
+
+    fn input_enabled(&self) -> bool {
+        self.input_enabled
+    }
+
+    fn set_input_enabled(&mut self, enabled: bool) {
+        self.input_enabled = enabled;
     }
 }

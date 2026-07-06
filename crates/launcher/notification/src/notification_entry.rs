@@ -12,6 +12,7 @@ use ui::{Render, RenderCommand, WidgetList};
 use utils::{Color, Rect};
 
 use animation::monotonic_now;
+use interactivity::pointer::MouseButton;
 use interactivity::{DragState, InteractivityState, SwipeDirection};
 
 pub type CardContent = (Div<()>, Div<(Text, Text)>);
@@ -50,8 +51,8 @@ pub const RECYCLE_MS: u64 = 300;
 pub const CARD_COLOR: Color = Color::rgb(0.22, 0.22, 0.27);
 pub const CARD_BORDER_COLOR: Color = Color::rgb(0.35, 0.35, 0.40);
 pub const CARD_BORDER_WIDTH: f32 = 1.5;
-pub const HOLD_BORDER_COLOR: Color = Color::rgb(1.0, 0.8, 0.2);
-pub const HOLD_BORDER_WIDTH: f32 = 3.0;
+pub const SELECTED_BORDER_COLOR: Color = Color::rgb(1.0, 0.8, 0.2);
+pub const SELECTED_BORDER_WIDTH: f32 = 3.0;
 pub const FLASH_COLOR: Color = Color::rgb(0.37, 0.37, 0.42);
 pub const BODY_COLOR: Color = Color::rgb(0.7, 0.7, 0.75);
 pub const OPTIONS_COLOR: Color = Color::rgb(0.18, 0.45, 0.75);
@@ -84,7 +85,7 @@ pub struct NotificationEntry<T: WidgetList> {
     pub last_offset: f32,
     flash_frames: u8,
     gesture_active: bool,
-    hold_triggered: bool,
+    selection_handled: bool,
     prev_drag_state: Option<DragState>,
 }
 
@@ -118,7 +119,7 @@ impl<T: WidgetList> NotificationEntry<T> {
             last_offset: 0.0,
             flash_frames: 0,
             gesture_active: false,
-            hold_triggered: false,
+            selection_handled: false,
             prev_drag_state: None,
         }
     }
@@ -212,13 +213,13 @@ impl<T: WidgetList> NotificationEntry<T> {
         self.flash_frames = 4;
     }
 
-    pub fn trigger_hold(&mut self, tree: &mut ui::WidgetTree) {
-        if self.card.border_color == HOLD_BORDER_COLOR {
+    pub fn toggle_selected(&mut self, tree: &mut ui::WidgetTree) {
+        if self.card.border_color == SELECTED_BORDER_COLOR {
             self.card.border_color = CARD_BORDER_COLOR;
             self.card.border_thickness = CARD_BORDER_WIDTH;
         } else {
-            self.card.border_color = HOLD_BORDER_COLOR;
-            self.card.border_thickness = HOLD_BORDER_WIDTH;
+            self.card.border_color = SELECTED_BORDER_COLOR;
+            self.card.border_thickness = SELECTED_BORDER_WIDTH;
         }
         self.card.set_style(tree, self.card.style().clone());
     }
@@ -261,9 +262,10 @@ impl<T: WidgetList> NotificationEntry<T> {
             match cur_state {
                 Some(DragState::Start) => {
                     let d = dd.unwrap();
+                    self.gesture_active = false;
+                    self.selection_handled = false;
                     if bounds.contains_point(d.start_position) {
                         self.gesture_active = true;
-                        self.hold_triggered = false;
                     }
                 }
                 Some(DragState::Move) if self.gesture_active => {
@@ -306,12 +308,12 @@ impl<T: WidgetList> NotificationEntry<T> {
                             self.spring_back(now);
                         }
                     }
-                    self.hold_triggered = false;
+                    self.selection_handled = false;
                     ch = true;
                 }
                 Some(DragState::Cancel) if self.gesture_active => {
                     self.gesture_active = false;
-                    self.hold_triggered = false;
+                    self.selection_handled = false;
                 }
                 _ => {}
             }
@@ -321,14 +323,21 @@ impl<T: WidgetList> NotificationEntry<T> {
             ch = true;
         }
 
+        if interactivity.pointer.just_pressed(MouseButton::Right)
+            && bounds.contains_point(interactivity.pointer.position())
+        {
+            self.toggle_selected(tree);
+            ch = true;
+        }
+
         if interactivity.touch.tapped(bounds) {
             self.tap_flash();
             self.spring_back(now);
             ch = true;
         }
-        if !self.hold_triggered && interactivity.touch.held(bounds) {
-            self.trigger_hold(tree);
-            self.hold_triggered = true;
+        if !self.selection_handled && interactivity.touch.held(bounds) {
+            self.toggle_selected(tree);
+            self.selection_handled = true;
             ch = true;
         }
 

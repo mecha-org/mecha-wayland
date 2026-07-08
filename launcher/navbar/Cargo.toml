@@ -1,0 +1,17 @@
+[package]
+name = "launcher-navbar"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "launcher_navbar"
+
+[dependencies]
+ui.workspace = true
+assets.workspace = true
+utils.workspace = true
+animation.workspace = true
+interactivity.workspace = true
+notification.workspace = true
+launcher-status-bar.workspace = true
+taffy.workspace = true

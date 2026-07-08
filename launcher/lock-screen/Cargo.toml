@@ -1,0 +1,21 @@
+[package]
+name = "lock-screen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app.workspace = true
+renderer.workspace = true
+assets.workspace = true
+utils.workspace = true
+io-ring.workspace = true
+timer.workspace = true
+wayland.workspace = true
+interactivity.workspace = true
+ui.workspace = true
+taffy.workspace = true
+libc.workspace = true
+
+[build-dependencies]
+anyhow.workspace = true
+assets = { workspace = true, features = ["builder"] }

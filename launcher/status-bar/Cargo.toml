@@ -1,0 +1,19 @@
+[package]
+name = "launcher-status-bar"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "launcher_status_bar"
+
+[dependencies]
+app.workspace = true
+assets.workspace = true
+utils.workspace = true
+ui.workspace = true
+timer.workspace = true
+libc.workspace = true
+taffy.workspace = true
+
+[build-dependencies]
+assets = { workspace = true, features = ["builder"] }

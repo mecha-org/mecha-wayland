@@ -112,7 +112,6 @@ impl WidgetList for VolumeUi {
                 self.update_value(self.count - STEP_SIZE);
             }
             self.update_ui(tree);
-            self.update_ui(tree);
             return true;
         }
         if let Some(drag_data) = &interactivity.gesture.drag_data() {

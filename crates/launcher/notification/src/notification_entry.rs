@@ -5,13 +5,12 @@ use assets::BakedFont;
 use taffy::prelude::*;
 use taffy::{Layout, Style};
 use ui::Point;
-use ui::Widget;
 
 use ui::widgets::{Div, Text};
 use ui::{Render, RenderCommand, WidgetList};
 use utils::{Color, Rect};
 
-use animation::monotonic_now;
+use interactivity::pointer::MouseButton;
 use interactivity::{DragState, InteractivityState, SwipeDirection};
 
 pub type CardContent = (Div<()>, Div<(Text, Text)>);
@@ -50,8 +49,8 @@ pub const RECYCLE_MS: u64 = 300;
 pub const CARD_COLOR: Color = Color::rgb(0.22, 0.22, 0.27);
 pub const CARD_BORDER_COLOR: Color = Color::rgb(0.35, 0.35, 0.40);
 pub const CARD_BORDER_WIDTH: f32 = 1.5;
-pub const HOLD_BORDER_COLOR: Color = Color::rgb(1.0, 0.8, 0.2);
-pub const HOLD_BORDER_WIDTH: f32 = 3.0;
+pub const SELECTED_BORDER_COLOR: Color = Color::rgb(1.0, 0.8, 0.2);
+pub const SELECTED_BORDER_WIDTH: f32 = 3.0;
 pub const FLASH_COLOR: Color = Color::rgb(0.37, 0.37, 0.42);
 pub const BODY_COLOR: Color = Color::rgb(0.7, 0.7, 0.75);
 pub const OPTIONS_COLOR: Color = Color::rgb(0.18, 0.45, 0.75);
@@ -84,7 +83,7 @@ pub struct NotificationEntry<T: WidgetList> {
     pub last_offset: f32,
     flash_frames: u8,
     gesture_active: bool,
-    hold_triggered: bool,
+    selection_handled: bool,
     prev_drag_state: Option<DragState>,
 }
 
@@ -118,7 +117,7 @@ impl<T: WidgetList> NotificationEntry<T> {
             last_offset: 0.0,
             flash_frames: 0,
             gesture_active: false,
-            hold_triggered: false,
+            selection_handled: false,
             prev_drag_state: None,
         }
     }
@@ -212,15 +211,14 @@ impl<T: WidgetList> NotificationEntry<T> {
         self.flash_frames = 4;
     }
 
-    pub fn trigger_hold(&mut self, tree: &mut ui::WidgetTree) {
-        if self.card.border_color == HOLD_BORDER_COLOR {
+    pub fn toggle_selected(&mut self) {
+        if self.card.border_color == SELECTED_BORDER_COLOR {
             self.card.border_color = CARD_BORDER_COLOR;
             self.card.border_thickness = CARD_BORDER_WIDTH;
         } else {
-            self.card.border_color = HOLD_BORDER_COLOR;
-            self.card.border_thickness = HOLD_BORDER_WIDTH;
+            self.card.border_color = SELECTED_BORDER_COLOR;
+            self.card.border_thickness = SELECTED_BORDER_WIDTH;
         }
-        self.card.set_style(tree, self.card.style().clone());
     }
 
     pub fn finish_drag(&mut self, now: Duration, dx: f32) {
@@ -238,40 +236,34 @@ impl<T: WidgetList> NotificationEntry<T> {
         self.last_offset
     }
 
-    pub fn handle_gesture(
-        &mut self,
-        interactivity: &InteractivityState,
-        tree: &mut ui::WidgetTree,
-    ) -> bool {
+    pub fn handle_gesture(&mut self, now: Duration, interactivity: &InteractivityState) -> bool {
         let bounds = match self.bounds {
             Some(b) => b,
             None => return false,
         };
 
-        let now = monotonic_now();
         let gesture = &interactivity.gesture;
         let mut ch = false;
 
-        let dd = gesture.drag_data();
-        let cur_state = dd.map(|d| d.state);
+        if let Some(d) = gesture.drag_data() {
+            let state_changed = Some(d.state) != self.prev_drag_state;
+            self.prev_drag_state = Some(d.state);
 
-        if cur_state != self.prev_drag_state {
-            self.prev_drag_state = cur_state;
-
-            match cur_state {
-                Some(DragState::Start) => {
-                    let d = dd.unwrap();
+            match d.state {
+                DragState::Start if state_changed => {
+                    self.gesture_active = false;
+                    self.selection_handled = false;
                     if bounds.contains_point(d.start_position) {
                         self.gesture_active = true;
-                        self.hold_triggered = false;
                     }
                 }
-                Some(DragState::Move) if self.gesture_active => {
-                    let d = dd.unwrap();
-                    self.set_drag_offset(d.total.x().clamp(-DRAG_CAP, DRAG_CAP));
-                    ch = true;
+                DragState::Move if self.gesture_active => {
+                    if state_changed || d.delta.x().abs() > f32::EPSILON {
+                        self.set_drag_offset(d.total.x().clamp(-DRAG_CAP, DRAG_CAP));
+                        ch = true;
+                    }
                 }
-                Some(DragState::End) if self.gesture_active => {
+                DragState::End if self.gesture_active => {
                     self.gesture_active = false;
 
                     if let Some(sd) = gesture.swipe_data() {
@@ -297,7 +289,6 @@ impl<T: WidgetList> NotificationEntry<T> {
                             }
                         }
                     } else {
-                        let d = dd.unwrap();
                         let o = self.current_offset();
                         let dx = d.total.x();
                         if o.abs() >= DRAG_THRESHOLD || dx.abs() >= DRAG_THRESHOLD {
@@ -306,18 +297,21 @@ impl<T: WidgetList> NotificationEntry<T> {
                             self.spring_back(now);
                         }
                     }
-                    self.hold_triggered = false;
+                    self.selection_handled = false;
                     ch = true;
                 }
-                Some(DragState::Cancel) if self.gesture_active => {
+                DragState::Cancel if self.gesture_active => {
                     self.gesture_active = false;
-                    self.hold_triggered = false;
+                    self.selection_handled = false;
                 }
                 _ => {}
             }
-        } else if cur_state == Some(DragState::Move) && self.gesture_active {
-            let d = dd.unwrap();
-            self.set_drag_offset(d.total.x().clamp(-DRAG_CAP, DRAG_CAP));
+        }
+
+        if interactivity.pointer.just_pressed(MouseButton::Right)
+            && bounds.contains_point(interactivity.pointer.position())
+        {
+            self.toggle_selected();
             ch = true;
         }
 
@@ -326,9 +320,9 @@ impl<T: WidgetList> NotificationEntry<T> {
             self.spring_back(now);
             ch = true;
         }
-        if !self.hold_triggered && interactivity.touch.held(bounds) {
-            self.trigger_hold(tree);
-            self.hold_triggered = true;
+        if !self.selection_handled && interactivity.touch.held(bounds) {
+            self.toggle_selected();
+            self.selection_handled = true;
             ch = true;
         }
 
@@ -407,7 +401,7 @@ impl PlainNotificationContent {
 
 impl<T: WidgetList> Render for NotificationEntry<T> {
     fn render(&self, layout: &Layout, abs_pos: Point) -> Vec<RenderCommand> {
-        let mut cmds = Vec::new();
+        let mut cmds = Vec::with_capacity(3);
 
         if let Some(font) = self.font {
             if self.bg_label != BgLabel::None {

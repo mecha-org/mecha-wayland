@@ -193,13 +193,16 @@ impl WindowManager {
             let cb = window.render_frame(&mut self.renderer);
 
             let wants = window.wants_input();
-            let surface = window.surface().clone();
-            if wants {
-                surface.set_input_region(None);
-            } else if let Some(comp) = self.globals.compositor.clone() {
-                let region = comp.create_region();
-                surface.set_input_region(Some(&region));
-                region.destroy();
+            if wants != window.input_enabled() {
+                window.set_input_enabled(wants);
+                let surface = window.surface().clone();
+                if wants {
+                    surface.set_input_region(None);
+                } else if let Some(comp) = self.globals.compositor.clone() {
+                    let region = comp.create_region();
+                    surface.set_input_region(Some(&region));
+                    region.destroy();
+                }
             }
 
             let cb_id = cb.object_id().expect("live callback");

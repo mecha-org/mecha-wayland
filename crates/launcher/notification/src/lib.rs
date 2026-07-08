@@ -33,6 +33,21 @@ fn set_entry_fonts(e: &mut E, title_font: &'static BakedFont, body_font: &'stati
     text_col.children.1.font = Some(body_font);
 }
 
+fn entry_bounds(
+    tree: &WidgetTree,
+    list_layout: &taffy::Layout,
+    entry: &E,
+    slide: f32,
+) -> Option<Rect> {
+    let el = tree.layout(entry.node_id()).ok()?;
+    Some(Rect::new(
+        list_layout.location.x + el.location.x,
+        list_layout.location.y + el.location.y + slide,
+        el.size.width,
+        el.size.height,
+    ))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum NotificationCmd {
     Toggle,
@@ -51,21 +66,6 @@ pub struct NotificationUi {
 }
 
 impl NotificationUi {
-    fn entry(&self, i: usize) -> &E {
-        match i {
-            0 => &self.entries.0,
-            1 => &self.entries.1,
-            _ => &self.entries.2,
-        }
-    }
-    fn entry_mut(&mut self, i: usize) -> &mut E {
-        match i {
-            0 => &mut self.entries.0,
-            1 => &mut self.entries.1,
-            _ => &mut self.entries.2,
-        }
-    }
-
     fn set_open(&mut self, open: bool, now: Duration) {
         if self.open == open {
             return;
@@ -89,40 +89,6 @@ impl NotificationUi {
                 NotificationCmd::Toggle => self.toggle_open(now),
                 NotificationCmd::Open => self.set_open(true, now),
                 NotificationCmd::Close => self.set_open(false, now),
-            }
-        }
-    }
-
-    fn entry_bounds_of(&self, entry: &E, tree: &WidgetTree, now: Duration) -> Option<Rect> {
-        let list_layout = tree.layout(self.list_id?).ok()?;
-        let lx = list_layout.location.x;
-        let ly = list_layout.location.y;
-        let slide = self.slide_y.get(now);
-
-        let el = tree.layout(entry.node_id()).ok()?;
-
-        Some(Rect::new(
-            lx + el.location.x,
-            ly + el.location.y + slide,
-            el.size.width,
-            el.size.height,
-        ))
-    }
-
-    fn offset_commands(cmds: &mut [RenderCommand], dy: f32) {
-        if dy.abs() < f32::EPSILON {
-            return;
-        }
-        for cmd in cmds.iter_mut() {
-            match cmd {
-                RenderCommand::DrawQuad { origin, .. }
-                | RenderCommand::DrawText { origin, .. }
-                | RenderCommand::DrawMonochromeSprite { origin, .. } => {
-                    *origin = Point::new(origin.x(), origin.y() + dy);
-                }
-                RenderCommand::RegisterHitArea { rect, .. } => {
-                    *rect = Rect::new(rect.x(), rect.y() + dy, rect.width(), rect.height());
-                }
             }
         }
     }
@@ -203,37 +169,37 @@ impl WidgetList for NotificationUi {
         let now = monotonic_now();
         self.drain_cmds(now);
 
-        self.entries.0.update(now);
-        self.entries.1.update(now);
-        self.entries.2.update(now);
-
         let slide = self.slide_y.get(now);
         if !self.open && !self.slide_y.is_animating(now) && slide >= PANEL_HEIGHT - 0.5 {
             return vec![];
         }
 
-        let (surf_w, surf_h) = self
-            .root_id
-            .and_then(|id| tree.layout(id).ok())
+        self.entries.0.update(now);
+        self.entries.1.update(now);
+        self.entries.2.update(now);
+
+        // Cache taffy layouts — avoid repeated HashMap lookups.
+        let root_layout = self.root_id.and_then(|id| tree.layout(id).ok());
+        let list_layout = self.list_id.and_then(|id| tree.layout(id).ok());
+
+        let (surf_w, surf_h) = root_layout
             .map(|l| (l.size.width.max(1.0), l.size.height.max(1.0)))
             .unwrap_or((PANEL_MAX_WIDTH, PANEL_HEIGHT));
 
-        let list_layout = self
-            .list_id
-            .and_then(|id| tree.layout(id).ok())
-            .map(|l| (l.location.x, l.location.y, l.size.width, l.size.height));
+        let (list_x, list_y, list_w) = list_layout
+            .map(|l| (l.location.x, l.location.y, l.size.width))
+            .unwrap_or((0.0, 0.0, PANEL_MAX_WIDTH));
 
-        let (list_x, list_y, list_w, _list_h) =
-            list_layout.unwrap_or((0.0, 0.0, PANEL_MAX_WIDTH, 0.0));
         let col_x = parent_abs.x() + list_x;
         let col_w = list_w.max(1.0);
+        let base_y = parent_abs.y() + slide;
 
-        let mut cmds = Vec::new();
+        let mut cmds = Vec::with_capacity(32);
 
         cmds.push(RenderCommand::DrawQuad {
             color: PANEL_BG,
             border_color: Color::TRANSPARENT,
-            origin: parent_abs,
+            origin: Point::new(parent_abs.x(), base_y),
             z: 0.01,
             size: Size::new(surf_w, surf_h),
             border_radius: 0.0,
@@ -243,7 +209,7 @@ impl WidgetList for NotificationUi {
         cmds.push(RenderCommand::DrawQuad {
             color: PANEL_BG,
             border_color: Color::TRANSPARENT,
-            origin: Point::new(col_x, parent_abs.y()),
+            origin: Point::new(col_x, base_y),
             z: 0.02,
             size: Size::new(col_w, PANEL_HEIGHT),
             border_radius: 16.0,
@@ -253,15 +219,12 @@ impl WidgetList for NotificationUi {
         cmds.push(RenderCommand::DrawText {
             font: self.font_header,
             text: "Notifications".to_string(),
-            origin: Point::new(
-                col_x + PAD_X,
-                parent_abs.y() + PAD_TOP + self.font_header.ascent,
-            ),
+            origin: Point::new(col_x + PAD_X, base_y + PAD_TOP + self.font_header.ascent),
             z: 0.95,
             color: Color::WHITE,
         });
 
-        let list_origin = Point::new(parent_abs.x() + list_x, parent_abs.y() + list_y);
+        let list_origin = Point::new(parent_abs.x() + list_x, base_y + list_y);
         for entry in [
             &mut self.entries.0,
             &mut self.entries.1,
@@ -284,7 +247,6 @@ impl WidgetList for NotificationUi {
             cmds.extend(entry.card.render_node(card_layout, tree, card_pos));
         }
 
-        Self::offset_commands(&mut cmds, slide);
         cmds
     }
 
@@ -295,14 +257,17 @@ impl WidgetList for NotificationUi {
             return false;
         }
 
-        self.entries.0.bounds = self.entry_bounds_of(&self.entries.0, tree, now);
-        self.entries.1.bounds = self.entry_bounds_of(&self.entries.1, tree, now);
-        self.entries.2.bounds = self.entry_bounds_of(&self.entries.2, tree, now);
+        let slide = self.slide_y.get(now);
+        if let Some(ll) = self.list_id.and_then(|id| tree.layout(id).ok()) {
+            self.entries.0.bounds = entry_bounds(tree, &ll, &self.entries.0, slide);
+            self.entries.1.bounds = entry_bounds(tree, &ll, &self.entries.1, slide);
+            self.entries.2.bounds = entry_bounds(tree, &ll, &self.entries.2, slide);
+        }
 
         let mut ch = self.slide_y.is_animating(now);
-        ch |= self.entries.0.handle_gesture(interactivity, tree);
-        ch |= self.entries.1.handle_gesture(interactivity, tree);
-        ch |= self.entries.2.handle_gesture(interactivity, tree);
+        ch |= self.entries.0.handle_gesture(now, interactivity);
+        ch |= self.entries.1.handle_gesture(now, interactivity);
+        ch |= self.entries.2.handle_gesture(now, interactivity);
         ch
     }
 

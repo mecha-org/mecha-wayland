@@ -73,16 +73,28 @@ pub struct NavbarUi {
     root: Option<NodeId>,
     atlas_id: AtlasId,
     notif_tx: Sender<NotificationCmd>,
+    /// Updated at the top of render_children and on_event;
+    /// all gesture methods read from this field.
     now: Duration,
     drag_active: bool,
     drag: NavDragState,
     drag_offset: Animated<f32>,
     icon_growth: [Animated<f32>; 5],
+    /// Precomputed atan2 angles for each icon sector (screen-size independent).
+    icon_angles: [f32; 5],
     prev_drag_state: Option<DragState>,
 }
 
 impl NavbarUi {
     pub fn new(notif_tx: Sender<NotificationCmd>) -> Self {
+        // Icon angles relative to bottom-center are screen-size independent.
+        let mut icon_angles = [0.0_f32; 5];
+        for i in 0..5 {
+            let dx = (i as f32 - 2.0) * ICON_SPACING;
+            let dy = ICON_Y_OFFSETS[i];
+            icon_angles[i] = dx.atan2(dy);
+        }
+
         Self {
             root: None,
             atlas_id: launcher_status_bar::ATLAS.id,
@@ -98,6 +110,7 @@ impl NavbarUi {
                 Animated::static_value(1.0_f32),
                 Animated::static_value(1.0_f32),
             ],
+            icon_angles,
             prev_drag_state: None,
         }
     }
@@ -155,9 +168,7 @@ impl NavbarUi {
         let mut closest: Option<usize> = None;
         let mut closest_dist = f32::MAX;
         for i in 0..5 {
-            let (icx, icy) = self.icon_center(i, 1.0, sw, sh);
-            let ia = (icx - cx).atan2(cy - icy);
-            let ad = (angle - ia).abs();
+            let ad = (angle - self.icon_angles[i]).abs();
             let ad = ad.min(std::f32::consts::TAU - ad);
             if ad < closest_dist {
                 closest_dist = ad;
@@ -340,7 +351,7 @@ impl WidgetList for NavbarUi {
         }
 
         let vis = self.visibility_at();
-        let mut cmds = Vec::new();
+        let mut cmds = Vec::with_capacity(11);
 
         if vis > 0.005 {
             let grad_h = NAV_BG_HEIGHT * vis;

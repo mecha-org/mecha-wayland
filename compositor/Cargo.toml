@@ -1,0 +1,17 @@
+[workspace]
+members = ["."]
+
+[workspace.dependencies]
+app = { path = "../crates/app" }
+io-ring = { path = "../crates/io-ring" }
+wayland = { path = "../crates/wayland" }
+
+[package]
+name = "compositor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app.workspace = true
+io-ring.workspace = true
+wayland = { workspace = true, features = ["server"] }

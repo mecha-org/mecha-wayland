@@ -3,7 +3,7 @@ name = "ui"
 
 [[atlas.font]]
 name = "inter"
-path = "../../../assets/Inter-Regular.ttf"
+path = "../../assets/Inter-Regular.ttf"
 sizes = [6, 14, 16, 24, 100]
 
 [[atlas.sprite]]

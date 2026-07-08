@@ -1,0 +1,17 @@
+[package]
+name = "launcher-pagination"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "launcher_pagination"
+
+[dependencies]
+assets.workspace = true
+interactivity.workspace = true
+ui.workspace = true
+utils.workspace = true
+animation.workspace = true
+taffy.workspace = true
+launcher-counter.workspace = true
+launcher-volume.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "notification"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ui.workspace = true
+assets.workspace = true
+utils.workspace = true
+animation.workspace = true
+interactivity.workspace = true
+taffy.workspace = true

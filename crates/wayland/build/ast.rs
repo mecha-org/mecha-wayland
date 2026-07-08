@@ -157,6 +157,13 @@ impl Protocol {
 }
 
 impl Interface {
+    pub fn description(&self) -> Option<&Description> {
+        self.items.iter().find_map(|i| match i {
+            InterfaceItem::Description(d) => Some(d),
+            _ => None,
+        })
+    }
+
     pub fn requests(&self) -> impl Iterator<Item = &Message> {
         self.items.iter().filter_map(|i| match i {
             InterfaceItem::Request(req) => Some(req),

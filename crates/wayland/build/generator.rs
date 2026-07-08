@@ -42,7 +42,9 @@ pub fn generate<P: AsRef<Path>>(paths: &[P], _: GenerationType) {
         #module
     };
 
-    std::fs::write(out_path, code.to_string()).expect("failed to write generated.rs");
+    let formatted =
+        prettyplease::unparse(&syn::parse2(code).expect("generated code is not valid Rust"));
+    std::fs::write(out_path, formatted).expect("failed to write generated.rs");
 }
 
 // ── name helpers ──────────────────────────────────────────────────────────────
@@ -61,7 +63,11 @@ fn to_pascal(s: &str) -> String {
 
 fn variant_name(s: &str) -> String {
     let p = to_pascal(s);
-    if p.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if p.chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         format!("N{p}")
     } else {
         p
@@ -88,8 +94,56 @@ fn resolve_enum_ident(iface_name: &str, enum_attr: &str) -> Ident {
     if let Some((i, e)) = enum_attr.split_once('.') {
         id(&format!("{}{}", to_pascal(i), to_pascal(e)))
     } else {
-        id(&format!("{}{}", to_pascal(iface_name), to_pascal(enum_attr)))
+        id(&format!(
+            "{}{}",
+            to_pascal(iface_name),
+            to_pascal(enum_attr)
+        ))
     }
+}
+
+// ── doc-comment helpers ─────────────────────────────────────────────────────
+
+/// Emit zero or more `#[doc = "..."]` attributes from an optional [`Description`].
+/// The `summary` attribute becomes the first line; the body text (if any and non-empty
+/// after trimming) is appended after a blank doc line.
+fn doc_comment(desc: Option<&Description>) -> TokenStream {
+    let Some(d) = desc else {
+        return quote! {};
+    };
+    let mut attrs = TokenStream::new();
+    if let Some(ref s) = d.summary {
+        let s = format!(" {}", s.trim());
+        if s.trim().is_empty() {
+            // skip empty
+        } else {
+            attrs.extend(quote! { #[doc = #s] });
+        }
+    }
+    let body = d.text.trim().to_string();
+    if !body.is_empty() {
+        attrs.extend(quote! { #[doc = ""] });
+        // Preserve individual lines so rustdoc renders them correctly.
+        for line in body.lines() {
+            let line = format!(" {}", line.trim());
+            attrs.extend(quote! { #[doc = #line] });
+        }
+    }
+    attrs
+}
+
+/// Emit a single `#[doc = "..."]` from a bare optional summary string.
+/// Used for enum entries and struct fields that only carry a `@summary` attribute.
+fn doc_summary(summary: Option<&str>) -> TokenStream {
+    let Some(s) = summary else {
+        return quote! {};
+    };
+    let s = s.trim();
+    if s.is_empty() {
+        return quote! {};
+    }
+    let s = format!(" {s}");
+    quote! { #[doc = #s] }
 }
 
 // ── read helpers (emitted once into the generated file) ───────────────────────
@@ -141,8 +195,12 @@ fn gen_interface(iface: &Interface) -> TokenStream {
     let tname = type_ident(&iface.name);
     let iface_name_str = &iface.name;
     let version = iface.version;
+    let iface_doc = doc_comment(iface.description());
 
-    let enum_defs: Vec<TokenStream> = iface.enums().map(|e| gen_enum_def(&iface.name, e)).collect();
+    let enum_defs: Vec<TokenStream> = iface
+        .enums()
+        .map(|e| gen_enum_def(&iface.name, e))
+        .collect();
 
     let requests: Vec<&Message> = iface.requests().collect();
     let events: Vec<&Message> = iface.events().collect();
@@ -166,6 +224,7 @@ fn gen_interface(iface: &Interface) -> TokenStream {
     };
 
     quote! {
+        #iface_doc
         #[derive(Debug)]
         pub struct #tname;
 
@@ -185,6 +244,7 @@ fn gen_interface(iface: &Interface) -> TokenStream {
 
 fn gen_enum_def(iface_name: &str, en: &EnumDef) -> TokenStream {
     let ename = resolve_enum_ident(iface_name, &en.name);
+    let enum_doc = doc_comment(en.description.as_ref());
     let mut seen = HashSet::new();
 
     if en.bitfield {
@@ -195,12 +255,17 @@ fn gen_enum_def(iface_name: &str, en: &EnumDef) -> TokenStream {
             .map(|e| {
                 let vname = id(&variant_name(&e.name));
                 let val: TokenStream = e.value.parse().unwrap();
-                quote! { const #vname = #val; }
+                let entry_doc = doc_summary(e.summary.as_deref());
+                quote! {
+                    #entry_doc
+                    const #vname = #val;
+                }
             })
             .collect();
 
         quote! {
             bitflags! {
+                #enum_doc
                 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
                 pub struct #ename: u32 {
                     #(#entries)*
@@ -228,7 +293,11 @@ fn gen_enum_def(iface_name: &str, en: &EnumDef) -> TokenStream {
             .iter()
             .map(|e| {
                 let vname = id(&variant_name(&e.name));
-                quote! { #vname, }
+                let entry_doc = doc_summary(e.summary.as_deref());
+                quote! {
+                    #entry_doc
+                    #vname,
+                }
             })
             .collect();
 
@@ -251,6 +320,7 @@ fn gen_enum_def(iface_name: &str, en: &EnumDef) -> TokenStream {
             .collect();
 
         quote! {
+            #enum_doc
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum #ename {
                 #(#variants)*
@@ -286,16 +356,21 @@ fn gen_request_enum(iface_name: &str, tname: &Ident, requests: &[&Message]) -> T
         .iter()
         .map(|req| {
             let vname = id(&variant_name(&req.name));
+            let variant_doc = doc_comment(req.description.as_ref());
             let fields: Vec<TokenStream> = req
                 .args
                 .iter()
                 .map(|a| {
                     let fname = id(&a.name);
                     let ftype = parsed_field_type(iface_name, a);
-                    quote! { #fname: #ftype }
+                    let field_doc = doc_summary(a.summary.as_deref());
+                    quote! { #field_doc #fname: #ftype }
                 })
                 .collect();
-            quote! { #vname { sender: Handle<#tname>, #(#fields),* }, }
+            quote! {
+                #variant_doc
+                #vname { sender: Handle<#tname>, #(#fields),* },
+            }
         })
         .collect();
 
@@ -351,16 +426,21 @@ fn gen_event_enum(iface_name: &str, tname: &Ident, events: &[&Message]) -> Token
         .iter()
         .map(|ev| {
             let vname = id(&variant_name(&ev.name));
+            let variant_doc = doc_comment(ev.description.as_ref());
             let fields: Vec<TokenStream> = ev
                 .args
                 .iter()
                 .map(|a| {
                     let fname = id(&a.name);
                     let ftype = parsed_field_type(iface_name, a);
-                    quote! { #fname: #ftype }
+                    let field_doc = doc_summary(a.summary.as_deref());
+                    quote! { #field_doc #fname: #ftype }
                 })
                 .collect();
-            quote! { #vname { sender: Handle<#tname>, #(#fields),* }, }
+            quote! {
+                #variant_doc
+                #vname { sender: Handle<#tname>, #(#fields),* },
+            }
         })
         .collect();
 
@@ -462,8 +542,16 @@ fn gen_request_method(iface_name: &str, opcode: u16, req: &Message) -> TokenStre
         let fds_init = has_fds.then(|| {
             quote! { let mut fds: Vec<::std::os::fd::BorrowedFd<'_>> = Vec::new(); }
         });
-        let body_ref = has_body.then(|| quote! { &body }).unwrap_or_else(|| quote! { &[] });
-        let fds_ref = has_fds.then(|| quote! { &fds }).unwrap_or_else(|| quote! { &[] });
+        let body_ref = if has_body {
+            quote! { &body }
+        } else {
+            quote! { &[] }
+        };
+        let fds_ref = if has_fds {
+            quote! { &fds }
+        } else {
+            quote! { &[] }
+        };
         quote! {
             #body_init
             #fds_init
@@ -484,7 +572,38 @@ fn gen_request_method(iface_name: &str, opcode: u16, req: &Message) -> TokenStre
         quote! { #fname }
     });
 
+    // Build "# Arguments" section for params that carry a @summary.
+    let arg_docs: Vec<TokenStream> = req
+        .args
+        .iter()
+        .filter(|a| a.arg_type != ArgType::NewId && a.summary.is_some())
+        .map(|a| {
+            let name = &a.name;
+            let summary = format!(
+                " * `{}` - {}",
+                name,
+                a.summary.as_deref().unwrap_or("").trim()
+            );
+            quote! { #[doc = #summary] #[doc = ""] }
+        })
+        .collect();
+
+    let args_section: TokenStream = if arg_docs.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            #[doc = ""]
+            #[doc = " # Arguments"]
+            #[doc = ""]
+            #(#arg_docs)*
+        }
+    };
+
+    let method_doc = doc_comment(req.description.as_ref());
+
     quote! {
+        #method_doc
+        #args_section
         pub fn #mname(&self, #(#params),*) #ret_type {
             #alloc
             let sender_id = self.object_id().expect("dead handle").0;

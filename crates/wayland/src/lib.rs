@@ -19,9 +19,7 @@ pub use client::module;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
-pub use server::{
-    ClientConnected, ClientId, ClientRawEvent, WaylandServer, server_module,
-};
+pub use server::{ClientConnected, ClientId, ClientRawEvent, WaylandServer, server_module};
 
 pub use proto::*;
 
@@ -32,6 +30,9 @@ pub trait Interface {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ObjectId(pub(crate) u32);
+
+/// The wl_display singleton always uses object ID 1.
+pub const DISPLAY_OBJECT_ID: ObjectId = ObjectId(1);
 
 #[derive(Debug)]
 pub struct RawWaylandEvent {

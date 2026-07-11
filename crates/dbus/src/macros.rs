@@ -48,11 +48,168 @@ macro_rules! dbus_signal {
         member: $member:expr,
         args: $args:ty $(,)?
     }) => {
+        #[derive(serde::Serialize)]
         $vis struct $name;
         impl $crate::DbusSignal for $name {
             const INTERFACE: &'static str = $iface;
             const MEMBER: &'static str = $member;
             type Args = $args;
         }
+    };
+}
+
+/// Declare a struct implementing [`DbusHandler`] — a method your service serves.
+///
+/// ```ignore
+/// dbus_handler!(GetValue {
+///     iface: "org.example.Widget",
+///     member: "GetValue",
+///     args: (), ret: u32,
+/// });
+/// ```
+#[macro_export]
+macro_rules! dbus_handler {
+    ($vis:vis $name:ident {
+        iface: $iface:expr,
+        member: $member:expr,
+        args: $args:ty,
+        ret: $ret:ty $(,)?
+    }) => {
+        $vis struct $name;
+        impl $crate::DbusHandler for $name {
+            const INTERFACE: &'static str = $iface;
+            const MEMBER: &'static str = $member;
+            type Args = $args;
+            type Ret = $ret;
+        }
+    };
+}
+
+/// Declare an interface: generates a `DbusHandler` per method, a
+/// `DbusSignal` per signal, and an `introspect()` method that builds the
+/// `<interface>` XML — with each arg's D-Bus signature derived from its Rust
+/// type via `zvariant::Type`, so the handlers and the XML can't drift.
+///
+/// ```ignore
+/// dbus_interface!(pub Widget = "org.example.Widget";
+///     method GetValue() -> (value: u32);
+///     method SetValue(value: u32) -> ();
+///     signal ValueChanged(value: u32);
+///     property Value: u32, readwrite;
+/// );
+/// ```
+#[macro_export]
+macro_rules! dbus_interface {
+    (
+        $ivis:vis $iname:ident = $iface:expr ;
+        $(
+            method $mname:ident ( $( $an:ident : $at:ty ),* $(,)? )
+                -> ( $( $rn:ident : $rt:ty ),* $(,)? ) ;
+        )*
+        $(
+            signal $sname:ident ( $( $sn:ident : $st:ty ),* $(,)? ) ;
+        )*
+        $(
+            property $pname:ident : $pty:ty , $paccess:ident ;
+        )*
+    ) => {
+        use zbus::zvariant;
+        use fdo::{machine_id};
+
+        $ivis struct $iname;
+        impl $iname {
+            pub const INTERFACE: &'static str = $iface;
+
+            /// The `<interface>` introspection node for this interface.
+            pub fn introspect() -> ::std::string::String {
+                let mut s = ::std::string::String::new();
+                s.push_str(&::std::format!("  <interface name=\"{}\">\n", $iface));
+                $(
+                    s.push_str(&::std::format!(
+                        "    <method name=\"{}\">\n", ::core::stringify!($mname)));
+                    $(
+                        s.push_str(&::std::format!(
+                            "      <arg name=\"{}\" type=\"{}\" direction=\"in\"/>\n",
+                            ::core::stringify!($an),
+                            <$at as zvariant::Type>::SIGNATURE));
+                    )*
+                    $(
+                        s.push_str(&::std::format!(
+                            "      <arg name=\"{}\" type=\"{}\" direction=\"out\"/>\n",
+                            ::core::stringify!($rn),
+                            <$rt as zvariant::Type>::SIGNATURE));
+                    )*
+                    s.push_str("    </method>\n");
+                )*
+                $(
+                    s.push_str(&::std::format!(
+                        "    <signal name=\"{}\">\n", ::core::stringify!($sname)));
+                    $(
+                        s.push_str(&::std::format!(
+                            "      <arg name=\"{}\" type=\"{}\"/>\n",
+                            ::core::stringify!($sn),
+                            <$st as zvariant::Type>::SIGNATURE));
+                    )*
+                    s.push_str("    </signal>\n");
+                )*
+                $(
+                    s.push_str(&::std::format!(
+                        "    <property name=\"{}\" type=\"{}\" access=\"{}\"/>\n",
+                        ::core::stringify!($pname),
+                        <$pty as zvariant::Type>::SIGNATURE,
+                        ::core::stringify!($paccess)));
+                )*
+                s.push_str("  </interface>\n");
+                s
+            }
+
+            /// Answer the standard object interfaces — `Peer.Ping`,
+            /// `Peer.GetMachineId`, and `Introspectable.Introspect`
+            pub fn handle_standard<B: $crate::Bus>(
+                proxy: &$crate::DbusProxy<B>,
+                msg: &$crate::DbusMessage,
+            ) -> bool {
+                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
+                    $crate::IncomingCall::<$crate::fdo::Ping>::try_from(msg)
+                {
+                    call.respond(proxy, &());
+                    return true;
+                }
+                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
+                    $crate::IncomingCall::<$crate::fdo::GetMachineId>::try_from(msg)
+                {
+                    call.respond(proxy, &$crate::fdo::machine_id());
+                    return true;
+                }
+                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
+                    $crate::IncomingCall::<$crate::fdo::Introspect>::try_from(msg)
+                {
+                    let xml = $crate::fdo::introspect_node(
+                        &[&Self::introspect(), $crate::fdo::STD_INTERFACES_XML]);
+                    call.respond(proxy, &xml);
+                    return true;
+                }
+                false
+            }
+        }
+
+        $(
+            $ivis struct $mname;
+            impl $crate::DbusHandler for $mname {
+                const INTERFACE: &'static str = $iface;
+                const MEMBER: &'static str = ::core::stringify!($mname);
+                type Args = ( $( $at, )* );
+                type Ret = ( $( $rt, )* );
+            }
+        )*
+        $(
+            #[derive(serde::Serialize)]
+            $ivis struct $sname;
+            impl $crate::DbusSignal for $sname {
+                const INTERFACE: &'static str = $iface;
+                const MEMBER: &'static str = ::core::stringify!($sname);
+                type Args = ( $( $st, )* );
+            }
+        )*
     };
 }

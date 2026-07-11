@@ -7,8 +7,7 @@ use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
 };
-
-use zbus::zvariant::OwnedValue;
+use zbus::zvariant::{OwnedValue, Value};
 
 /// Total on-wire length of the D-Bus message at the front of `buf`, or `None`
 /// if fewer than the fixed 16-byte prefix have arrived.
@@ -109,4 +108,13 @@ pub fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<Str
     props
         .get(key)
         .and_then(|v| String::try_from(v.clone()).ok())
+}
+
+/// Wrap a scalar/string/etc. into an `OwnedValue` (a D-Bus variant `v`), for use
+/// as a property value in `Properties.Get`/`GetAll`/`PropertiesChanged`.
+pub fn variant<'a, T>(v: T) -> OwnedValue
+where
+    T: Into<Value<'a>>,
+{
+    OwnedValue::try_from(v.into()).expect("value -> owned value")
 }

@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     env,
     marker::PhantomData,
     os::{
@@ -13,12 +13,17 @@ use std::{
 use app::{Event, Many, Module, RegisteredModule, prelude::State};
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
-use zbus::message::{Message, Type as MessageType};
-use zbus::zvariant::LE;
+use serde::Serialize;
 use zbus::zvariant::serialized::{Context, Data};
+use zbus::zvariant::{LE, OwnedValue};
+use zbus::{
+    message::{Message, Type as MessageType},
+    zvariant::DynamicType,
+};
 
 use crate::{
-    dbus::{DbusMethod, DbusSignal, MatchRule, Subscription, fdo},
+    dbus::{DbusMethod, DbusSignal, MatchRule, Subscription},
+    fdo,
     util::{dbus_message_len, parse_unix_path, sasl_handshake},
 };
 
@@ -57,6 +62,8 @@ pub enum DbusMessage {
     Signal(Rc<Message>),
     // Reply from a method
     Reply { serial: u32, message: Rc<Message> },
+    // A method call addressed to the service
+    Call(Rc<Message>),
 }
 
 fn method_message<M: DbusMethod>(path: &str, args: &M::Args) -> Message {
@@ -232,6 +239,57 @@ impl<B: Bus> DbusProxy<B> {
         self.call::<fdo::RemoveMatch>(&(sub.rule.clone(),))
     }
 
+    /// Send a `MethodReturn` reply to a received method call.
+    pub fn reply<Body: Serialize + DynamicType>(&self, call: &Message, body: &Body) -> u32 {
+        let hdr = call.header();
+        let msg = Message::method_return(&hdr)
+            .expect("build method return")
+            .build(body)
+            .expect("serialize method return");
+        self.inner.borrow_mut().send(&msg)
+    }
+
+    /// Send an error reply to a received method call.
+    pub fn reply_error(&self, call: &Message, name: &str, text: &str) -> u32 {
+        let hdr = call.header();
+        let msg = Message::error(&hdr, name)
+            .expect("valid error name")
+            .build(&(text,))
+            .expect("serialize error");
+        self.inner.borrow_mut().send(&msg)
+    }
+
+    /// Reply with unknown method when we don't identify the method
+    pub fn reply_unknown_method(&self, call: &Message) -> u32 {
+        self.reply_error(
+            call,
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "no such method",
+        )
+    }
+
+    /// Broadcast a typed signal from object `path`.
+    pub fn emit<S: DbusSignal + Serialize>(&self, path: &str, body: &S::Args) -> u32 {
+        let msg = Message::signal(path, S::INTERFACE, S::MEMBER)
+            .expect("valid signal coordinates")
+            .build(body)
+            .expect("serialize signal");
+        self.inner.borrow_mut().send(&msg)
+    }
+
+    /// Emit `org.freedesktop.DBus.Properties.PropertiesChanged` for `interface`
+    /// at `path`, with the changed name→value map and any invalidated names.
+    pub fn emit_properties_changed(
+        &self,
+        path: &str,
+        interface: &str,
+        changed: HashMap<String, OwnedValue>,
+        invalidated: &[&str],
+    ) -> u32 {
+        let inv: Vec<String> = invalidated.iter().map(|s| s.to_string()).collect();
+        self.emit::<fdo::PropertiesChanged>(path, &(interface.to_string(), changed, inv))
+    }
+
     /// Flush queued writes now (otherwise they flush lazily on the next ring
     /// poll)
     pub fn flush(&self) {
@@ -354,7 +412,9 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                                     message: m,
                                 }));
                             }
-                            _ => {} // ignore MethodCall (as we are a client), in future this implementation can be extended to make a service too
+                            MessageType::MethodCall => {
+                                events.push(DbusEvent::new(DbusMessage::Call(m)));
+                            }
                         }
                     }
                     events

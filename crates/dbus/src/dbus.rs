@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, marker::PhantomData};
+use std::{collections::HashMap, fmt, marker::PhantomData, rc::Rc};
 
 use serde::{Serialize, de::DeserializeOwned};
 use zbus::{
@@ -9,21 +9,11 @@ use zbus::{
 
 use crate::{Bus, DbusProxy, connection::DbusMessage};
 
-/// A D-Bus method, described at the type level.
-pub trait DbusMethod {
-    const DESTINATION: &'static str;
-    const PATH: &'static str;
-    const INTERFACE: &'static str;
-    const MEMBER: &'static str;
-    type Args: Serialize + DynamicType;
-    type Reply: Type + DeserializeOwned;
-}
-
 /// A D-Bus signal, described at the type level.
 pub trait DbusSignal {
     const INTERFACE: &'static str;
     const MEMBER: &'static str;
-    type Args: Type + DeserializeOwned;
+    type Args: Type + Serialize + DeserializeOwned;
 
     fn match_rule() -> MatchRule<Self>
     where
@@ -33,8 +23,7 @@ pub trait DbusSignal {
     }
 }
 
-/// A handle to an installed match rule. Keep it to `unsubscribe` later — the bus
-/// removes rules by their exact string, so the token carries that string for you.
+/// A handle to an installed match rule. Keep it to `unsubscribe` later
 #[derive(Clone, Debug)]
 pub struct Subscription {
     pub rule: String,
@@ -87,6 +76,51 @@ impl<S: DbusSignal> fmt::Display for MatchRule<S> {
         }
         Ok(())
     }
+}
+
+/// A typed, decoded signal plus the path/sender it came from.
+pub struct SignalMatch<S: DbusSignal> {
+    pub path: Option<String>,
+    pub sender: Option<String>,
+    pub args: S::Args,
+    _s: PhantomData<S>,
+}
+
+impl<S: DbusSignal> SignalMatch<S> {
+    pub fn try_from(msg: &DbusMessage) -> Option<Result<Self, CallError>> {
+        let DbusMessage::Signal(message) = msg else {
+            return None;
+        };
+        let hdr = message.header();
+        if hdr.interface().map(|i| i.as_str()) != Some(S::INTERFACE)
+            || hdr.member().map(|m| m.as_str()) != Some(S::MEMBER)
+        {
+            return None;
+        }
+        let path = hdr.path().map(|p| p.as_str().to_string());
+        let sender = hdr.sender().map(|s| s.as_str().to_string());
+        let decoded = message
+            .body()
+            .deserialize::<S::Args>()
+            .map(|args| SignalMatch {
+                path,
+                sender,
+                args,
+                _s: PhantomData,
+            })
+            .map_err(CallError::Deserialize);
+        Some(decoded)
+    }
+}
+
+/// A D-Bus method, described at the type level.
+pub trait DbusMethod {
+    const DESTINATION: &'static str;
+    const PATH: &'static str;
+    const INTERFACE: &'static str;
+    const MEMBER: &'static str;
+    type Args: Serialize + DynamicType;
+    type Reply: Type + DeserializeOwned;
 }
 
 #[derive(Debug)]
@@ -184,63 +218,63 @@ impl<M: DbusMethod, C> Pending<M, C> {
     }
 }
 
-/// A typed, decoded signal plus the path/sender it came from.
-pub struct SignalMatch<S: DbusSignal> {
-    pub path: Option<String>,
-    pub sender: Option<String>,
-    pub args: S::Args,
-    _s: PhantomData<S>,
+/// A D-Bus method you *implement* (serve), described at the type level. The
+/// mirror of `DbusMethod`: `Args` is what callers send you, `Ret` is what you
+/// return.
+pub trait DbusHandler {
+    const INTERFACE: &'static str;
+    const MEMBER: &'static str;
+    type Args: Type + DeserializeOwned;
+    type Ret: Serialize + DynamicType;
 }
 
-impl<S: DbusSignal> SignalMatch<S> {
+/// A decoded incoming method call for handler `M`, carrying the raw message so
+/// you can reply. Obtain one with `IncomingCall::<M>::try_from(&ev.msg)`.
+pub struct IncomingCall<M: DbusHandler> {
+    pub path: Option<String>,
+    pub sender: Option<String>,
+    pub args: M::Args,
+    raw: Rc<Message>,
+    _m: PhantomData<M>,
+}
+
+impl<M: DbusHandler> IncomingCall<M> {
+    /// `Some(Ok(_))` if `msg` is a call to `M`'s interface+member (and decodes);
+    /// `Some(Err(_))` if it matches but the body is malformed; `None` otherwise.
     pub fn try_from(msg: &DbusMessage) -> Option<Result<Self, CallError>> {
-        let DbusMessage::Signal(message) = msg else {
+        let DbusMessage::Call(message) = msg else {
             return None;
         };
         let hdr = message.header();
-        if hdr.interface().map(|i| i.as_str()) != Some(S::INTERFACE)
-            || hdr.member().map(|m| m.as_str()) != Some(S::MEMBER)
+        if hdr.interface().map(|i| i.as_str()) != Some(M::INTERFACE)
+            || hdr.member().map(|m| m.as_str()) != Some(M::MEMBER)
         {
             return None;
         }
         let path = hdr.path().map(|p| p.as_str().to_string());
         let sender = hdr.sender().map(|s| s.as_str().to_string());
+        let raw = message.clone();
         let decoded = message
             .body()
-            .deserialize::<S::Args>()
-            .map(|args| SignalMatch {
+            .deserialize::<M::Args>()
+            .map(|args| IncomingCall {
                 path,
                 sender,
                 args,
-                _s: PhantomData,
+                raw,
+                _m: PhantomData,
             })
             .map_err(CallError::Deserialize);
         Some(decoded)
     }
-}
 
-pub mod fdo {
-    use crate::dbus_method;
+    /// Send the successful reply for this call.
+    pub fn respond<B: Bus>(&self, proxy: &DbusProxy<B>, ret: &M::Ret) -> u32 {
+        proxy.reply(&self.raw, ret)
+    }
 
-    dbus_method!(pub Hello {
-        dest: "org.freedesktop.DBus",
-        path: "/org/freedesktop/DBus",
-        iface: "org.freedesktop.DBus",
-        member: "Hello",
-        args: (), reply: String,
-    });
-    dbus_method!(pub AddMatch {
-        dest: "org.freedesktop.DBus",
-        path: "/org/freedesktop/DBus",
-        iface: "org.freedesktop.DBus",
-        member: "AddMatch",
-        args: (String,), reply: (),
-    });
-    dbus_method!(pub RemoveMatch {
-        dest: "org.freedesktop.DBus",
-        path: "/org/freedesktop/DBus",
-        iface: "org.freedesktop.DBus",
-        member: "RemoveMatch",
-        args: (String,), reply: (),
-    });
+    /// Send an error reply for this call.
+    pub fn error<B: Bus>(&self, proxy: &DbusProxy<B>, name: &str, text: &str) -> u32 {
+        proxy.reply_error(&self.raw, name, text)
+    }
 }

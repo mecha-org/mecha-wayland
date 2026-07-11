@@ -11,3 +11,8 @@ libc = { workspace = true }
 serde.workspace = true
 zbus = { version = "5.16.0", features=["bus-impl"] }
 
+[[example]]
+name = "widget_service"
+
+[[example]]
+name = "network_manager"

@@ -1,0 +1,138 @@
+use std::collections::HashMap;
+
+use zbus::zvariant::OwnedValue;
+
+use crate::{dbus_handler, dbus_method, dbus_signal};
+
+dbus_method!(pub Hello {
+    dest: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    iface: "org.freedesktop.DBus",
+    member: "Hello",
+    args: (), reply: String,
+});
+dbus_method!(pub AddMatch {
+    dest: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    iface: "org.freedesktop.DBus",
+    member: "AddMatch",
+    args: (String,), reply: (),
+});
+dbus_method!(pub RemoveMatch {
+    dest: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    iface: "org.freedesktop.DBus",
+    member: "RemoveMatch",
+    args: (String,), reply: (),
+});
+
+dbus_method!(pub RequestName {
+    dest: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    iface: "org.freedesktop.DBus",
+    member: "RequestName",
+    args: (String, u32), reply: u32,
+});
+dbus_method!(pub ReleaseName {
+    dest: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    iface: "org.freedesktop.DBus",
+    member: "ReleaseName",
+    args: (String,), reply: u32,
+});
+
+/// `RequestName` flags.
+pub const NAME_ALLOW_REPLACEMENT: u32 = 0x1;
+pub const NAME_REPLACE_EXISTING: u32 = 0x2;
+pub const NAME_DO_NOT_QUEUE: u32 = 0x4;
+
+/// `RequestName` reply codes.
+pub const REQUEST_NAME_PRIMARY_OWNER: u32 = 1;
+pub const REQUEST_NAME_IN_QUEUE: u32 = 2;
+pub const REQUEST_NAME_EXISTS: u32 = 3;
+pub const REQUEST_NAME_ALREADY_OWNER: u32 = 4;
+
+// --- org.freedesktop.DBus.Properties (serve side) -------------------
+pub const PROPERTIES_IFACE: &str = "org.freedesktop.DBus.Properties";
+/// Standard error names for property access.
+pub const ERR_UNKNOWN_PROPERTY: &str = "org.freedesktop.DBus.Error.UnknownProperty";
+pub const ERR_UNKNOWN_INTERFACE: &str = "org.freedesktop.DBus.Error.UnknownInterface";
+
+// Get(interface s, prop s) -> value v
+dbus_handler!(pub PropertiesGet {
+    iface: "org.freedesktop.DBus.Properties",
+    member: "Get",
+    args: (String, String), ret: OwnedValue,
+
+});
+// GetAll(interface s) -> props a{sv}
+dbus_handler!(pub PropertiesGetAll {
+    iface: "org.freedesktop.DBus.Properties",
+    member: "GetAll",
+    args: (String,), ret: HashMap<String, OwnedValue>,
+});
+
+// Set(interface s, prop s, value v) -> ()
+dbus_handler!(pub PropertiesSet {
+    iface: "org.freedesktop.DBus.Properties",
+    member: "Set",
+    args: (String, String, OwnedValue), ret: (),
+});
+
+// PropertiesChanged(interface s, changed a{sv}, invalidated as)
+dbus_signal!(pub PropertiesChanged {
+    iface: "org.freedesktop.DBus.Properties",
+    member: "PropertiesChanged",
+    args: (String, HashMap<String, OwnedValue>, Vec<String>),
+});
+
+pub const STD_INTERFACES_XML: &str = concat!(
+    "  <interface name=\"org.freedesktop.DBus.Peer\">\n",
+    "    <method name=\"Ping\"/>\n",
+    "    <method name=\"GetMachineId\"><arg type=\"s\" direction=\"out\"/></method>\n",
+    "  </interface>\n",
+    "  <interface name=\"org.freedesktop.DBus.Introspectable\">\n",
+    "    <method name=\"Introspect\"><arg type=\"s\" direction=\"out\"/></method>\n",
+    "  </interface>\n",
+    "  <interface name=\"org.freedesktop.DBus.Properties\">\n",
+    "    <method name=\"Get\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"v\" direction=\"out\"/></method>\n",
+    "    <method name=\"GetAll\"><arg type=\"s\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"out\"/></method>\n",
+    "    <method name=\"Set\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"v\" direction=\"in\"/></method>\n",
+    "    <signal name=\"PropertiesChanged\"><arg type=\"s\"/><arg type=\"a{sv}\"/><arg type=\"as\"/></signal>\n",
+    "  </interface>\n",
+);
+
+// Standard Objects for Peer, Introspectable
+pub const PEER_IFACE: &str = "org.freedesktop.DBus.Peer";
+pub const INTROSPECTABLE_IFACE: &str = "org.freedesktop.DBus.Introspectable";
+
+dbus_handler!(pub Ping {
+    iface: "org.freedesktop.DBus.Peer", member: "Ping", args: (), ret: (),
+});
+dbus_handler!(pub GetMachineId {
+    iface: "org.freedesktop.DBus.Peer", member: "GetMachineId", args: (), ret: String,
+});
+dbus_handler!(pub Introspect {
+    iface: "org.freedesktop.DBus.Introspectable", member: "Introspect", args: (), ret: String,
+});
+
+/// Wrap one or more `<interface>` XML nodes into a full introspection document.
+pub fn introspect_node(interfaces: &[&str]) -> String {
+    let mut s = String::from(
+        "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\"\n \"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">\n<node>\n",
+    );
+    for i in interfaces {
+        s.push_str(i);
+    }
+    s.push_str("</node>\n");
+    s
+}
+
+/// The D-Bus machine id, for `org.freedesktop.DBus.Peer.GetMachineId`. Reads the
+/// standard files
+pub fn machine_id() -> String {
+    ::std::fs::read_to_string("/var/lib/dbus/machine-id")
+        .or_else(|_| ::std::fs::read_to_string("/etc/machine-id"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}

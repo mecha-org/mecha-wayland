@@ -1,7 +1,7 @@
 use app::{RegisteredModule, prelude::*};
 use dbus::{
     DbusConnection, DbusEvent, DbusProxy, DbusSignal, Pending, SignalMatch, Subscription,
-    SystemBus, dbus_method, dbus_signal, module as dbus_module, prop_string, prop_u32,
+    SystemBus, dbus_method, dbus_signal, module as dbus_module, prop,
 };
 use io_ring::{Ring, RingSettings};
 use std::collections::HashMap;
@@ -179,8 +179,8 @@ pub fn nm_module<S>() -> impl RegisteredModule<NetworkManager, S> {
                 // 2. GetAll replies gives per-device properties.
                 if let Some((path, result)) = nm.device_props.resolve(&ev.msg) {
                     if let Ok(props) = result {
-                        let iface = prop_string(&props, "Interface");
-                        let state = prop_u32(&props, "State")
+                        let iface = prop::<String>(&props, "Interface");
+                        let state = prop::<u32>(&props, "State")
                             .map(DeviceState::from_u32)
                             .unwrap_or(DeviceState::Unknown);
                         println!(

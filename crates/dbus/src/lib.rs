@@ -12,6 +12,6 @@ pub use dbus::{
     CallError, DbusHandler, DbusMethod, DbusSignal, IncomingCall, MatchRule, Pending, SignalMatch,
     Subscription,
 };
-pub use util::{prop, prop_string, prop_u32, try_variant, variant};
+pub use util::{prop, try_variant, variant};
 // reexport
 pub use zbus;

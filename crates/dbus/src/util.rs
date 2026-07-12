@@ -106,14 +106,6 @@ pub fn prop<T: TryFrom<OwnedValue>>(props: &HashMap<String, OwnedValue>, key: &s
     props.get(key).and_then(|v| T::try_from(v.clone()).ok())
 }
 
-pub fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
-    prop(props, key)
-}
-
-pub fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
-    prop(props, key)
-}
-
 /// Wrap a scalar/string/etc. into an `OwnedValue` (a D-Bus variant `v`)
 /// Use for every value kind except `Fd`
 pub fn variant<'a, T>(v: T) -> OwnedValue

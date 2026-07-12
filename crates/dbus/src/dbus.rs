@@ -214,6 +214,11 @@ impl<M: DbusMethod, C> Pending<M, C> {
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
+
+    /// Drop every recorded in-flight call, on `DbusMessage::Disconnected / Reconnected`
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
 }
 
 /// A D-Bus method you *implement* (serve), described at the type level. The

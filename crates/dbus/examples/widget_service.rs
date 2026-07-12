@@ -36,6 +36,10 @@ pub struct WidgetService {
     request: Pending<fdo::RequestName>,
     value: u32,
     owned: bool,
+    #[lens(skip)]
+    disconnected: bool,
+    #[lens(skip)]
+    retry_tick: u32,
 }
 
 impl WidgetService {
@@ -45,6 +49,8 @@ impl WidgetService {
             request: Pending::new(),
             value: 0,
             owned: false,
+            disconnected: false,
+            retry_tick: 0,
         }
     }
 
@@ -73,7 +79,42 @@ impl WidgetService {
 pub fn widget_module<S>() -> impl RegisteredModule<WidgetService, S> {
     Module::<WidgetService, _, _>::new()
         .on(|s: &mut WidgetService, _: &app::Start| s.bootstrap())
+        .on(|s: &mut WidgetService, _: &app::PrePoll| {
+            if !s.disconnected {
+                return;
+            }
+            s.retry_tick += 1;
+            if s.retry_tick % 240 != 0 {
+                return;
+            }
+            match s.proxy.reconnect() {
+                Ok(()) => {
+                    // Established; DbusMessage::Reconnected arrives once the
+                    // new Hello resolves — re-bootstrap happens there.
+                    s.disconnected = false;
+                    println!("reconnected to the session bus");
+                }
+                Err(e) => eprintln!("reconnect attempt failed: {e}"),
+            }
+        })
         .on(|s: &mut WidgetService, ev: &DbusEvent<SessionBus>| {
+            match &ev.msg {
+                DbusMessage::Disconnected => {
+                    // Replies to anything in flight can no longer arrive.
+                    s.request.clear();
+                    s.owned = false;
+                    s.disconnected = true;
+                    s.retry_tick = 0;
+                    return;
+                }
+                DbusMessage::Reconnected => {
+                    // Fresh connection: the bus forgot our name; request again.
+                    s.bootstrap();
+                    return;
+                }
+                _ => {}
+            }
+
             // 1. Reply to RequestName call.
             if let Some((_, res)) = s.request.resolve(&ev.msg) {
                 match res {

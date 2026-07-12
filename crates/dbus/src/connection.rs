@@ -13,6 +13,7 @@ use std::{
 use app::{Event, Many, Module, RegisteredModule, prelude::State};
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
+use log::{error, warn};
 use zbus::export::serde::Serialize;
 use zbus::zvariant::serialized::{Context, Data};
 use zbus::zvariant::{BE, LE, OwnedValue};
@@ -81,6 +82,9 @@ pub enum ConnectError {
     Io(std::io::Error),
     /// Building the mandatory `Hello()` message failed (should not happen).
     Build(zbus::Error),
+    /// The previous socket still has in-flight io_uring operations whose
+    /// completions must drain before its buffers can be re-used
+    Busy,
 }
 
 impl std::fmt::Display for ConnectError {
@@ -89,6 +93,7 @@ impl std::fmt::Display for ConnectError {
             ConnectError::Address(a) => write!(f, "unusable bus address: {a}"),
             ConnectError::Io(e) => write!(f, "bus connection failed: {e}"),
             ConnectError::Build(e) => write!(f, "could not build Hello message: {e}"),
+            ConnectError::Busy => write!(f, "previous socket ops still in flight; retry later"),
         }
     }
 }
@@ -104,6 +109,8 @@ pub enum DbusMessage {
     Call(Rc<Message>),
     // The connection is dead (no auto-reconnect).
     Disconnected,
+    // The connection was re-established and Hello has completed
+    Reconnected,
 }
 
 /// Whether the caller flagged this call `NO_REPLY_EXPECTED`
@@ -111,6 +118,30 @@ fn no_reply_expected(call: &Message) -> bool {
     call.primary_header()
         .flags()
         .contains(zbus::message::Flags::NoReplyExpected)
+}
+
+/// Socket + SASL, shared by `try_new` and `reconnect`: resolve the bus
+/// address, connect, handshake, set nonblocking. Returns the raw fd and
+/// whether the bus agreed to unix-fd passing.
+fn connect_socket<B: Bus>() -> Result<(RawFd, bool), ConnectError> {
+    let addr = B::address()
+        .ok_or_else(|| ConnectError::Address(format!("no {} bus address set", B::NAME)))?;
+    let path = parse_unix_path(&addr).ok_or(ConnectError::Address(addr))?;
+
+    let mut stream = UnixStream::connect(&path).map_err(ConnectError::Io)?;
+
+    // --- SASL EXTERNAL handshake (blocking, one-time) ------------------------
+    //   -> \0                       (mandatory leading nul byte)
+    //   -> AUTH EXTERNAL <hex uid>\r\n
+    //   <- OK <server guid>\r\n
+    //   -> NEGOTIATE_UNIX_FD\r\n     (optional; enables fd passing)
+    //   <- AGREE_UNIX_FD\r\n
+    //   -> BEGIN\r\n
+    // After BEGIN, the binary D-Bus protocol starts.
+    let unix_fd = sasl_handshake(&mut stream).map_err(ConnectError::Io)?;
+
+    stream.set_nonblocking(true).map_err(ConnectError::Io)?;
+    Ok((stream.into_raw_fd(), unix_fd))
 }
 
 /// Build a method-call message. Fails on an invalid runtime path (e.g. a
@@ -170,6 +201,7 @@ struct DbusInner {
     write_token: Option<IoToken>,
 
     unix_fd: bool,
+    reconnecting: bool,
 
     // Dbus standard - serial for hello, and unique_name returned in handshake
     hello_serial: Option<u32>,
@@ -252,7 +284,7 @@ impl DbusInner {
         // fewer fds than the UNIX_FDS header claims would get us disconnected.
         let msg_fds = msg.data().fds();
         if msg_fds.len() > MAX_SEND_FDS {
-            eprintln!(
+            error!(
                 "dbus: dropping message with {} fds (max {MAX_SEND_FDS})",
                 msg_fds.len()
             );
@@ -263,14 +295,14 @@ impl DbusInner {
             match dup_owned(fd.as_raw_fd()) {
                 Some(owned) => fds.push(owned),
                 None => {
-                    eprintln!("dbus: dropping message: dup failed (out of fds?)");
+                    error!("dbus: dropping message: dup failed (out of fds?)");
                     return 0;
                 }
             }
         }
 
         if !fds.is_empty() && !self.unix_fd {
-            eprintln!(
+            error!(
                 "dbus: dropping message with {} fd(s): bus did not AGREE_UNIX_FD",
                 fds.len()
             );
@@ -302,7 +334,7 @@ impl DbusInner {
                 match self.in_fds.pop_front() {
                     Some(fd) => fds.push(fd),
                     None => {
-                        eprintln!("dbus: message claims {want} fds but FIFO is short");
+                        error!("dbus: message claims {want} fds but FIFO is short");
                         break;
                     }
                 }
@@ -321,7 +353,7 @@ impl DbusInner {
             };
             match unsafe { Message::from_bytes(data) } {
                 Ok(msg) => out.push(Rc::new(msg)),
-                Err(e) => eprintln!("dbus: dropping undecodable message: {e}"),
+                Err(e) => warn!("dbus: dropping undecodable message: {e}"),
             }
         }
         out
@@ -345,7 +377,7 @@ impl<B: Bus> DbusProxy<B> {
         match method_message::<M>(path, args) {
             Ok(msg) => self.inner.borrow_mut().send(&msg),
             Err(e) => {
-                eprintln!(
+                error!(
                     "dbus: cannot build call {}.{}: {e}",
                     M::INTERFACE,
                     M::MEMBER
@@ -395,7 +427,7 @@ impl<B: Bus> DbusProxy<B> {
         match built {
             Ok(msg) => self.inner.borrow_mut().send(&msg),
             Err(e) => {
-                eprintln!("dbus: reply serialization failed: {e}");
+                error!("dbus: reply serialization failed: {e}");
                 self.reply_error(
                     call,
                     "org.freedesktop.DBus.Error.Failed",
@@ -416,7 +448,7 @@ impl<B: Bus> DbusProxy<B> {
         match built {
             Ok(msg) => self.inner.borrow_mut().send(&msg),
             Err(e) => {
-                eprintln!("dbus: cannot build error reply '{name}': {e}");
+                error!("dbus: cannot build error reply '{name}': {e}");
                 0
             }
         }
@@ -437,7 +469,7 @@ impl<B: Bus> DbusProxy<B> {
         match built {
             Ok(msg) => self.inner.borrow_mut().send(&msg),
             Err(e) => {
-                eprintln!("dbus: cannot emit {}.{}: {e}", S::INTERFACE, S::MEMBER);
+                error!("dbus: cannot emit {}.{}: {e}", S::INTERFACE, S::MEMBER);
                 0
             }
         }
@@ -460,6 +492,40 @@ impl<B: Bus> DbusProxy<B> {
     pub fn unique_name(&self) -> Option<String> {
         self.inner.borrow().unique_name.clone()
     }
+
+    /// Re-connect a dead connection, call it after observing `DbusMessage::Disconnected`
+    pub fn reconnect(&self) -> Result<(), ConnectError> {
+        let mut inner = self.inner.borrow_mut();
+
+        // The kernel may still hold pointers into read/write buffers for ops
+        // on the old fd; reusing them for a new connection would race. A dead
+        // socket's pending ops complete quickly, so callers just retry.
+        if inner.read_token.is_some() || inner.write_token.is_some() {
+            return Err(ConnectError::Busy);
+        }
+
+        let (fd, unix_fd) = connect_socket::<B>()?;
+
+        // Swap the socket and reset every piece of per-connection state. The
+        // old fd closes here; queued outgoing frames and unclaimed incoming
+        // fds belonged to the dead connection and are dropped (OwnedFd drop
+        // closes our dup'd copies).
+        unsafe { libc::close(inner.fd) };
+        inner.fd = fd;
+        inner.unix_fd = unix_fd;
+        inner.read_acc.clear();
+        inner.in_fds.clear();
+        inner.out.clear();
+        inner.in_flight = None;
+        inner.unique_name = None;
+        inner.reconnecting = true;
+
+        let hello =
+            method_message::<fdo::Hello>(fdo::Hello::PATH, &()).map_err(ConnectError::Build)?;
+        inner.hello_serial = Some(inner.send(&hello));
+        inner.submit_read();
+        Ok(())
+    }
 }
 
 // Dbus Connection should be created one per bus (Session and System)
@@ -479,24 +545,7 @@ impl<B: Bus> DbusConnection<B> {
     /// first read — all synchronously, up front. After this the connection is
     /// purely event-driven through the ring.
     pub fn try_new(ring: RingProxy) -> Result<Self, ConnectError> {
-        let addr = B::address()
-            .ok_or_else(|| ConnectError::Address(format!("no {} bus address set", B::NAME)))?;
-        let path = parse_unix_path(&addr).ok_or(ConnectError::Address(addr))?;
-
-        let mut stream = UnixStream::connect(&path).map_err(ConnectError::Io)?;
-
-        // --- SASL EXTERNAL handshake (blocking, one-time) --------------------
-        //   -> \0                       (mandatory leading nul byte)
-        //   -> AUTH EXTERNAL <hex uid>\r\n
-        //   <- OK <server guid>\r\n
-        //   -> NEGOTIATE_UNIX_FD\r\n     (optional; enables fd passing)
-        //   <- AGREE_UNIX_FD\r\n
-        //   -> BEGIN\r\n
-        // After BEGIN, the binary D-Bus protocol starts.
-        let unix_fd = sasl_handshake(&mut stream).map_err(ConnectError::Io)?;
-
-        stream.set_nonblocking(true).map_err(ConnectError::Io)?;
-        let fd = stream.into_raw_fd();
+        let (fd, unix_fd) = connect_socket::<B>()?;
 
         let inner = DbusInner {
             fd,
@@ -511,6 +560,7 @@ impl<B: Bus> DbusConnection<B> {
             write_buf: MsgBuffers::zeroed(),
             write_token: None,
             unix_fd,
+            reconnecting: false,
             hello_serial: None,
             unique_name: None,
         };
@@ -554,12 +604,12 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                 inner.read_token = None;
                 let n = *result;
                 if n <= 0 {
-                    eprintln!("dbus [{}] socket closed/error: {n}", B::NAME);
+                    warn!("dbus [{}] socket closed/error: {n}", B::NAME);
                     vec![DbusEvent::new(DbusMessage::Disconnected)]
                 } else {
                     // Harvest any passed fds from the control buffer first.
                     if (inner.read_buf.hdr.msg_flags & libc::MSG_CTRUNC) != 0 {
-                        eprintln!(
+                        error!(
                             "dbus [{}]: SCM_RIGHTS truncated (MSG_CTRUNC) - fds lost",
                             B::NAME
                         );
@@ -569,7 +619,7 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                     for fd in got {
                         if inner.in_fds.len() >= MAX_QUEUED_FDS {
                             // Drop fds than accumulate
-                            eprintln!(
+                            warn!(
                                 "dbus [{}]: unclaimed-fd queue full; closing excess fd",
                                 B::NAME
                             );
@@ -600,6 +650,12 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                                     if let Ok(name) = m.body().deserialize::<String>() {
                                         inner.unique_name = Some(name);
                                     }
+                                    // A Hello reply after `reconnect` means the
+                                    // new connection is fully established.
+                                    if inner.reconnecting {
+                                        inner.reconnecting = false;
+                                        events.push(DbusEvent::new(DbusMessage::Reconnected));
+                                    }
                                 }
                                 events.push(DbusEvent::new(DbusMessage::Reply {
                                     serial,
@@ -618,7 +674,7 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                 let n = *result;
                 if n < 0 {
                     // A failed send would desync the stream if we kept going.
-                    eprintln!("dbus [{}] write error: {n}", B::NAME);
+                    error!("dbus [{}] write error: {n}", B::NAME);
                     inner.in_flight = None;
                     inner.out.clear();
                 } else {

@@ -161,13 +161,22 @@ macro_rules! dbus_interface {
 
             /// Answer the standard object interfaces — `Peer.Ping`,
             /// `Peer.GetMachineId` (any path) and `Introspectable.Introspect`
-            /// (for `path` only) — using this interface's derived XML.
+            /// (for `path` only) — using this interface's derived XML. The
+            /// Properties interface is advertised iff the declaration has
+            /// `property` lines.
             pub fn handle_standard<B: $crate::Bus>(
                 proxy: &$crate::DbusProxy<B>,
                 path: &str,
                 msg: &$crate::DbusMessage,
             ) -> bool {
-                $crate::fdo::handle_standard(proxy, path, &Self::introspect(), msg)
+                let props: &[&str] = &[$(stringify!($pname)),*];
+                $crate::fdo::handle_standard(
+                    proxy,
+                    path,
+                    &Self::introspect(),
+                    !props.is_empty(),
+                    msg,
+                )
             }
         }
 

@@ -96,6 +96,9 @@ pub const STD_INTERFACES_XML: &str = concat!(
     "  <interface name=\"org.freedesktop.DBus.Introspectable\">\n",
     "    <method name=\"Introspect\"><arg type=\"s\" direction=\"out\"/></method>\n",
     "  </interface>\n",
+);
+
+pub const PROPERTIES_INTERFACE_XML: &str = concat!(
     "  <interface name=\"org.freedesktop.DBus.Properties\">\n",
     "    <method name=\"Get\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"v\" direction=\"out\"/></method>\n",
     "    <method name=\"GetAll\"><arg type=\"s\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"out\"/></method>\n",
@@ -142,13 +145,16 @@ pub fn machine_id() -> String {
 /// Answer the standard object interfaces for a service object: `Peer.Ping` and
 /// `Peer.GetMachineId` (connection-level, any path) and
 /// `Introspectable.Introspect` (per-object: only for `path`, with
-/// `interface_xml` as this object's `<interface>` node). Returns `true` if the
+/// `interface_xml` as this object's `<interface>` node). Pass
+/// `has_properties = true` for objects that serve `Properties`, so the
+/// introspection XML advertises that interface too. Returns `true` if the
 /// message was consumed. `dbus_interface!`'s generated `handle_standard`
-/// forwards here with its derived XML.
+/// forwards here, deriving both arguments from the declaration.
 pub fn handle_standard<B: Bus>(
     proxy: &DbusProxy<B>,
     path: &str,
     interface_xml: &str,
+    has_properties: bool,
     msg: &DbusMessage,
 ) -> bool {
     if let Some(Ok(call)) = IncomingCall::<Ping>::try_from(msg) {
@@ -161,7 +167,11 @@ pub fn handle_standard<B: Bus>(
     }
     if let Some(Ok(call)) = IncomingCall::<Introspect>::try_from(msg) {
         if call.path.as_deref() == Some(path) {
-            let xml = introspect_node(&[interface_xml, STD_INTERFACES_XML]);
+            let xml = if has_properties {
+                introspect_node(&[interface_xml, STD_INTERFACES_XML, PROPERTIES_INTERFACE_XML])
+            } else {
+                introspect_node(&[interface_xml, STD_INTERFACES_XML])
+            };
             call.respond(proxy, &xml);
             return true;
         }

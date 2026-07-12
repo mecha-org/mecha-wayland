@@ -19,7 +19,6 @@ dbus_method!(GetDevices {
     args: (), reply: Vec<OwnedObjectPath>,
 });
 
-// PATH is per-device
 dbus_method!(GetProps {
     dest: NM_SERVICE, path: "", iface: PROPS_IFACE, member: "GetAll",
     args: (&'static str,), reply: HashMap<String, OwnedValue>,
@@ -102,7 +101,6 @@ pub struct NetworkManager {
     devices: HashMap<String, DeviceInfo>,
     get_devices: Pending<GetDevices>,
     device_props: Pending<GetProps, String>,
-    // One StateChanged subscription per device
     watches: HashMap<String, Subscription>,
 }
 
@@ -117,10 +115,14 @@ impl NetworkManager {
         }
     }
 
+    /// Initialize the NetworkManager client
     fn bootstrap(&mut self) {
-        // Subscribes across lifetime-of-process
+        // Subscribe globally till this process is running
+        // i.e. no need to unsubscribe
         self.proxy.subscribe::<DeviceAdded>();
         self.proxy.subscribe::<DeviceRemoved>();
+
+        // Trigger GetDevices to fetch all active devices (interfaces)
         self.get_devices.call(&self.proxy, &(), ());
     }
 
@@ -130,6 +132,7 @@ impl NetworkManager {
     //         .call_at(&self.proxy, path, &(NM_DEVICE_IFACE,), path.to_string());
     // }
 
+    /// Track a device, configure its subscriptions and trigger all props
     fn track_device(&mut self, path: &str) {
         if self.watches.contains_key(path) {
             // already being tracked
@@ -138,12 +141,14 @@ impl NetworkManager {
 
         self.devices.entry(path.to_string()).or_default();
 
-        // Per-device StateChanged subscription, narrowed by object path.
+        // Listen to StateChanged for every device
         let sub = self
             .proxy
             .subscribe_rule(StateChanged::match_rule().path(path));
 
         self.watches.insert(path.to_string(), sub);
+
+        // Trigger get all properties for this device (interface)
         self.device_props
             .call_at(&self.proxy, path, &(NM_DEVICE_IFACE,), path.to_string());
     }
@@ -162,7 +167,7 @@ pub fn nm_module<S>() -> impl RegisteredModule<NetworkManager, S> {
         .on(|nm: &mut NetworkManager, _: &app::Start| nm.bootstrap())
         .on(
             |nm: &mut NetworkManager, ev: &DbusEvent<SystemBus>| -> Option<DeviceStateChanged> {
-                // 1. GetDevices reply gives the device paths.
+                // 1. GetDevices
                 if let Some((_, result)) = nm.get_devices.resolve(&ev.msg) {
                     match result {
                         Ok(paths) => {
@@ -176,7 +181,7 @@ pub fn nm_module<S>() -> impl RegisteredModule<NetworkManager, S> {
                     return None;
                 }
 
-                // 2. GetAll replies gives per-device properties.
+                // 2. GetAll properties (for each device)
                 if let Some((path, result)) = nm.device_props.resolve(&ev.msg) {
                     if let Ok(props) = result {
                         let iface = prop::<String>(&props, "Interface");

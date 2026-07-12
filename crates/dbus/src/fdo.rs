@@ -11,6 +11,7 @@ dbus_method!(pub Hello {
     member: "Hello",
     args: (), reply: String,
 });
+
 dbus_method!(pub AddMatch {
     dest: "org.freedesktop.DBus",
     path: "/org/freedesktop/DBus",
@@ -18,6 +19,7 @@ dbus_method!(pub AddMatch {
     member: "AddMatch",
     args: (String,), reply: (),
 });
+
 dbus_method!(pub RemoveMatch {
     dest: "org.freedesktop.DBus",
     path: "/org/freedesktop/DBus",
@@ -33,6 +35,7 @@ dbus_method!(pub RequestName {
     member: "RequestName",
     args: (String, u32), reply: u32,
 });
+
 dbus_method!(pub ReleaseName {
     dest: "org.freedesktop.DBus",
     path: "/org/freedesktop/DBus",
@@ -41,18 +44,18 @@ dbus_method!(pub ReleaseName {
     args: (String,), reply: u32,
 });
 
-/// `RequestName` flags.
+/// `RequestName` flags
 pub const NAME_ALLOW_REPLACEMENT: u32 = 0x1;
 pub const NAME_REPLACE_EXISTING: u32 = 0x2;
 pub const NAME_DO_NOT_QUEUE: u32 = 0x4;
 
-/// `RequestName` reply codes.
+/// `RequestName` reply codes
 pub const REQUEST_NAME_PRIMARY_OWNER: u32 = 1;
 pub const REQUEST_NAME_IN_QUEUE: u32 = 2;
 pub const REQUEST_NAME_EXISTS: u32 = 3;
 pub const REQUEST_NAME_ALREADY_OWNER: u32 = 4;
 
-// --- org.freedesktop.DBus.Properties (serve side) -------------------
+/// Property Interfaces
 pub const PROPERTIES_IFACE: &str = "org.freedesktop.DBus.Properties";
 /// Standard error names for property access.
 pub const ERR_UNKNOWN_PROPERTY: &str = "org.freedesktop.DBus.Error.UnknownProperty";
@@ -65,8 +68,8 @@ dbus_handler!(pub PropertiesGet {
     iface: "org.freedesktop.DBus.Properties",
     member: "Get",
     args: (String, String), ret: OwnedValue,
-
 });
+
 // GetAll(interface s) -> props a{sv}
 dbus_handler!(pub PropertiesGetAll {
     iface: "org.freedesktop.DBus.Properties",
@@ -133,8 +136,7 @@ pub fn introspect_node(interfaces: &[&str]) -> String {
     s
 }
 
-/// The D-Bus machine id, for `org.freedesktop.DBus.Peer.GetMachineId`. Reads the
-/// standard files
+/// The D-Bus machine id, for `org.freedesktop.DBus.Peer.GetMachineId`
 pub fn machine_id() -> String {
     ::std::fs::read_to_string("/var/lib/dbus/machine-id")
         .or_else(|_| ::std::fs::read_to_string("/etc/machine-id"))
@@ -144,12 +146,7 @@ pub fn machine_id() -> String {
 
 /// Answer the standard object interfaces for a service object: `Peer.Ping` and
 /// `Peer.GetMachineId` (connection-level, any path) and
-/// `Introspectable.Introspect` (per-object: only for `path`, with
-/// `interface_xml` as this object's `<interface>` node). Pass
-/// `has_properties = true` for objects that serve `Properties`, so the
-/// introspection XML advertises that interface too. Returns `true` if the
-/// message was consumed. `dbus_interface!`'s generated `handle_standard`
-/// forwards here, deriving both arguments from the declaration.
+/// `Introspectable.Introspect`
 pub fn handle_standard<B: Bus>(
     proxy: &DbusProxy<B>,
     path: &str,
@@ -175,7 +172,7 @@ pub fn handle_standard<B: Bus>(
             call.respond(proxy, &xml);
             return true;
         }
-        // Always answer Introspect — an unanswered call hangs the caller
+        // Always answer Introspect
         let req = call.path.as_deref().unwrap_or("/");
         let xml = if req == path {
             introspect_node(&[interface_xml, STD_INTERFACES_XML])
@@ -192,9 +189,7 @@ pub fn handle_standard<B: Bus>(
 }
 
 /// If `req` is a proper ancestor of object path `object`, return the next path
-/// segment from `req` toward `object` — what a caller introspecting `req`
-/// should see as a child `<node>`. `None` if `req` is not on the way to
-/// `object` (unrelated, partial segment, or at/below the object).
+/// segment from `req` toward `object`
 fn introspect_child(object: &str, req: &str) -> Option<String> {
     let rest = if req == "/" {
         object.strip_prefix('/')?
@@ -209,36 +204,25 @@ fn introspect_child(object: &str, req: &str) -> Option<String> {
     Some(rest.split('/').next()?.to_string())
 }
 
-/// One property access, handed to the closure of [`route_properties`].
+/// One property access, used by [`route_properties`].
 pub enum PropAccess<'a> {
-    /// `Properties.Get` for this property (also used per-name for `GetAll`).
+    /// `Properties.Get`
     Get(&'a str),
-    /// `Properties.Set` of this property to this value.
+    /// `Properties.Set`
     Set(&'a str, &'a OwnedValue),
 }
 
-/// The closure's verdict on a [`PropAccess`].
+/// Prop Reply
 pub enum PropReply {
-    /// Get: here is the value.
     Value(OwnedValue),
-    /// Set: accepted (and applied).
     Set,
-    /// Set: this property is read-only.
     ReadOnly,
-    /// No such property (Get or Set).
     Unknown,
-    /// Set: value rejected, with a reason for the InvalidArgs error.
     Invalid(String),
 }
 
-/// Serve `org.freedesktop.DBus.Properties` (`Get`/`GetAll`/`Set`) for one
-/// interface with a single closure, so module state is borrowed exactly once.
-/// `names` lists the properties (drives `GetAll`). Returns `true` if the
-/// message was one of the three calls and has been answered.
-///
-/// Since the closure usually needs `&mut` module state *and* the state owns the
-/// proxy, clone the proxy first (it's an `Rc` handle):
-/// `let proxy = s.proxy.clone();`
+/// Serve `org.freedesktop.DBus.Properties` (`Get`/`GetAll`/`Set`) for 
+/// an interface declaring the properties
 pub fn route_properties<B: Bus>(
     proxy: &DbusProxy<B>,
     msg: &DbusMessage,

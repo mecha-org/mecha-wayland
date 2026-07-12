@@ -8,7 +8,7 @@ use zbus::{
 
 use crate::{Bus, DbusProxy, connection::DbusMessage};
 
-/// A D-Bus signal, described at the type level.
+/// A D-Bus signal, described with types
 pub trait DbusSignal {
     const INTERFACE: &'static str;
     const MEMBER: &'static str;
@@ -72,7 +72,7 @@ impl fmt::Display for MatchRule {
     }
 }
 
-/// A typed, decoded signal plus the path/sender it came from.
+/// Decoded signal plus the path/sender it came from.
 pub struct SignalMatch<S: DbusSignal> {
     pub path: Option<String>,
     pub sender: Option<String>,
@@ -107,7 +107,7 @@ impl<S: DbusSignal> SignalMatch<S> {
     }
 }
 
-/// A D-Bus method, described at the type level.
+/// A Standard D-Bus method
 pub trait DbusMethod {
     const DESTINATION: &'static str;
     const PATH: &'static str;
@@ -156,7 +156,7 @@ fn decode_reply<M: DbusMethod>(message: &Message) -> Result<M::Reply, CallError>
         .map_err(CallError::Deserialize)
 }
 
-/// Outstanding calls of method `M`, each tagged with context `C`.
+/// Outstanding calls of method `M`, each tagged with context `C`
 pub struct Pending<M: DbusMethod, C = ()> {
     map: HashMap<u32, C>,
     _m: PhantomData<M>,
@@ -215,15 +215,13 @@ impl<M: DbusMethod, C> Pending<M, C> {
         self.map.is_empty()
     }
 
-    /// Drop every recorded in-flight call, on `DbusMessage::Disconnected / Reconnected`
+    /// Drop every recorded in-flight call (when Dbus is disconnected/re-connected)
     pub fn clear(&mut self) {
         self.map.clear();
     }
 }
 
-/// A D-Bus method you *implement* (serve), described at the type level. The
-/// mirror of `DbusMethod`: `Args` is what callers send you, `Ret` is what you
-/// return.
+/// A D-Bus method implemented by your service, described at the type level
 pub trait DbusHandler {
     const INTERFACE: &'static str;
     const MEMBER: &'static str;
@@ -243,7 +241,7 @@ where
 }
 
 /// A decoded incoming method call for handler `M`, carrying the raw message so
-/// you can reply. Obtain one with `IncomingCall::<M>::try_from(&ev.msg)`.
+/// you can reply. Use like `IncomingCall::<M>::try_from(&ev.msg)`.
 pub struct IncomingCall<M: DbusHandler> {
     pub path: Option<String>,
     pub sender: Option<String>,

@@ -116,7 +116,7 @@ macro_rules! dbus_interface {
         impl $iname {
             pub const INTERFACE: &'static str = $iface;
 
-            /// The `<interface>` introspection node for this interface.
+            /// The `<interface>` introspection node for this interface
             pub fn introspect() -> ::std::string::String {
                 let mut s = ::std::string::String::new();
                 s.push_str(&::std::format!("  <interface name=\"{}\">\n", $iface));
@@ -161,9 +161,7 @@ macro_rules! dbus_interface {
 
             /// Answer the standard object interfaces — `Peer.Ping`,
             /// `Peer.GetMachineId` (any path) and `Introspectable.Introspect`
-            /// (for `path` only) — using this interface's derived XML. The
-            /// Properties interface is advertised iff the declaration has
-            /// `property` lines.
+            /// (for `path` only)
             pub fn handle_standard<B: $crate::Bus>(
                 proxy: &$crate::DbusProxy<B>,
                 path: &str,

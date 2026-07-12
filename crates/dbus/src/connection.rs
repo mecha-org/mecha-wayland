@@ -37,8 +37,8 @@ const READ_CHUNK: usize = 8192;
 /// Cap on fds sitting in the received but unclaimed FIFO
 const MAX_QUEUED_FDS: usize = 64;
 
-/// One queued outgoing message: its bytes plus any fds to pass alongside it. The
-/// fds are our own dup'd copies, held open until the `SendMsg` completes.
+/// One queued outgoing message, its bytes plus any fds to pass alongside
+/// the fds are duped
 struct OutFrame {
     bytes: Vec<u8>,
     fds: Vec<OwnedFd>,
@@ -73,10 +73,10 @@ impl Bus for SystemBus {
     }
 }
 
-/// Why connecting to a bus failed. Returned by `DbusConnection::try_new`.
+/// Handling connection errors
 #[derive(Debug)]
 pub enum ConnectError {
-    /// No/unusable bus address (missing env var, or not a `unix:` transport).
+    /// No/unusable bus address (missing env?)
     Address(String),
     /// Socket connect, handshake, or fcntl failure.
     Io(std::io::Error),
@@ -107,22 +107,20 @@ pub enum DbusMessage {
     Reply { serial: u32, message: Rc<Message> },
     // A method call addressed to the service
     Call(Rc<Message>),
-    // The connection is dead (no auto-reconnect).
+    // The connection is dead (no auto-reconnect)
     Disconnected,
     // The connection was re-established and Hello has completed
     Reconnected,
 }
 
-/// Whether the caller flagged this call `NO_REPLY_EXPECTED`
+/// Check if caller flagged the message with `NO_REPLY_EXPECTED`
 fn no_reply_expected(call: &Message) -> bool {
     call.primary_header()
         .flags()
         .contains(zbus::message::Flags::NoReplyExpected)
 }
 
-/// Socket + SASL, shared by `try_new` and `reconnect`: resolve the bus
-/// address, connect, handshake, set nonblocking. Returns the raw fd and
-/// whether the bus agreed to unix-fd passing.
+/// Connects to the dbus socket and sasl_handshake
 fn connect_socket<B: Bus>() -> Result<(RawFd, bool), ConnectError> {
     let addr = B::address()
         .ok_or_else(|| ConnectError::Address(format!("no {} bus address set", B::NAME)))?;
@@ -144,10 +142,8 @@ fn connect_socket<B: Bus>() -> Result<(RawFd, bool), ConnectError> {
     Ok((stream.into_raw_fd(), unix_fd))
 }
 
-/// Build a method-call message. Fails on an invalid runtime path (e.g. a
-/// malformed string handed to `call_at`) or unserializable args (e.g. a string
-/// containing an interior NUL, which D-Bus forbids) — both can be user input,
-/// so this must not panic.
+/// Build a method-call message. Fails on an invalid runtime path i.e.
+/// if any components are missing (member, destination, interface)
 fn method_message<M: DbusMethod>(path: &str, args: &M::Args) -> Result<Message, zbus::Error> {
     Message::method_call(path, M::MEMBER)?
         .destination(M::DESTINATION)?
@@ -195,8 +191,10 @@ struct DbusInner {
     // outgoing frames (bytes+fds), one `SendMsg` per frame
     // so each message's fds are included with its bytes
     out: VecDeque<OutFrame>,
+
     // in flight bytes
     in_flight: Option<OutFrame>,
+
     write_buf: Box<MsgBuffers>,
     write_token: Option<IoToken>,
 
@@ -394,10 +392,6 @@ impl<B: Bus> DbusProxy<B> {
     }
 
     /// Subscribe with an explicit (e.g. path-narrowed) match rule.
-    /// Example
-    /// ```rust
-    ///     proxy.subscribe_rule(StateChanged::match_rule().path("/org/freedesktop/NetworkManager/Devices/3"));
-    /// ```
     pub fn subscribe_rule(&self, rule: MatchRule) -> Subscription {
         self.add_match_rule(&rule.to_string())
     }
@@ -476,7 +470,7 @@ impl<B: Bus> DbusProxy<B> {
     }
 
     /// Emit `org.freedesktop.DBus.Properties.PropertiesChanged` for `interface`
-    /// at `path`, with the changed name→value map and any invalidated names.
+    /// at `path`, with the properties that have been changed, invalidated
     pub fn emit_properties_changed(
         &self,
         path: &str,
@@ -488,28 +482,26 @@ impl<B: Bus> DbusProxy<B> {
         self.emit::<fdo::PropertiesChanged>(path, &(interface.to_string(), changed, inv))
     }
 
-    /// Our unique bus name once the Hello reply has arrived.
+    /// The unique bus name for this connection once the Hello reply has arrived.
     pub fn unique_name(&self) -> Option<String> {
         self.inner.borrow().unique_name.clone()
     }
 
-    /// Re-connect a dead connection, call it after observing `DbusMessage::Disconnected`
+    /// Re-connects a dead connection, should be triggered after receiving `DbusMessage::Disconnected`
+    /// replaces the fd by re-connecting the socket
     pub fn reconnect(&self) -> Result<(), ConnectError> {
         let mut inner = self.inner.borrow_mut();
 
         // The kernel may still hold pointers into read/write buffers for ops
-        // on the old fd; reusing them for a new connection would race. A dead
-        // socket's pending ops complete quickly, so callers just retry.
+        // on the old fd, the caller should retry
         if inner.read_token.is_some() || inner.write_token.is_some() {
             return Err(ConnectError::Busy);
         }
 
+        // Re-connect the unix socket
         let (fd, unix_fd) = connect_socket::<B>()?;
 
-        // Swap the socket and reset every piece of per-connection state. The
-        // old fd closes here; queued outgoing frames and unclaimed incoming
-        // fds belonged to the dead connection and are dropped (OwnedFd drop
-        // closes our dup'd copies).
+        // Reset every per-connection state
         unsafe { libc::close(inner.fd) };
         inner.fd = fd;
         inner.unix_fd = unix_fd;
@@ -520,6 +512,7 @@ impl<B: Bus> DbusProxy<B> {
         inner.unique_name = None;
         inner.reconnecting = true;
 
+        // Send the hello message again to get new hello_serial, unique name
         let hello =
             method_message::<fdo::Hello>(fdo::Hello::PATH, &()).map_err(ConnectError::Build)?;
         inner.hello_serial = Some(inner.send(&hello));
@@ -528,7 +521,7 @@ impl<B: Bus> DbusProxy<B> {
     }
 }
 
-// Dbus Connection should be created one per bus (Session and System)
+// Dbus Connection to be created one per bus (Session and System)
 #[derive(State)]
 pub struct DbusConnection<B: Bus> {
     data: Rc<RefCell<DbusInner>>,
@@ -537,13 +530,13 @@ pub struct DbusConnection<B: Bus> {
 }
 
 impl<B: Bus> DbusConnection<B> {
+    // Creates new connection, panics if it can't
     pub fn new(ring: RingProxy) -> Self {
         Self::try_new(ring).unwrap_or_else(|e| panic!("dbus [{}]: {e}", B::NAME))
     }
 
     /// Connect to bus `B`, perform the SASL handshake, send `Hello`, and arm the
-    /// first read — all synchronously, up front. After this the connection is
-    /// purely event-driven through the ring.
+    /// first read - blocking till this stage, and then io-uring takes over
     pub fn try_new(ring: RingProxy) -> Result<Self, ConnectError> {
         let (fd, unix_fd) = connect_socket::<B>()?;
 
@@ -564,10 +557,9 @@ impl<B: Bus> DbusConnection<B> {
             hello_serial: None,
             unique_name: None,
         };
-        let data = Rc::new(RefCell::new(inner));
 
-        // Mandatory first message: Hello() to obtain our unique name. Remember
-        // its serial so we can recognise the reply, then arm reads.
+        // Send the Hello() to obtain our unique name.
+        let data = Rc::new(RefCell::new(inner));
         {
             let mut i = data.borrow_mut();
             let hello =
@@ -590,16 +582,14 @@ impl<B: Bus> DbusConnection<B> {
     }
 }
 
-// // The app module: match ring completions by token, turn read bytes into
-// // `DbusEvent<B>`
+// The registered module for DbusConnection, receives IoEvents from the io-uring
 pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
     Module::<DbusConnection<B>, _, _>::new().on(|conn: &mut DbusConnection<B>, io: &IoEvent| {
         let IoEvent::Completed { token, result } = io;
         let events = {
             let inner = &mut *conn.data.borrow_mut();
 
-            // Token isolation: act only on tokens submmitted for dbus. Any other
-            // token (another bus, or Wayland) falls through to `else`.
+            // Match only the tokens we know (read_token, write_token)
             if Some(*token) == inner.read_token {
                 inner.read_token = None;
                 let n = *result;

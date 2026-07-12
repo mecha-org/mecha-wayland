@@ -8,7 +8,6 @@ app = { path = "../app" }
 io-ring = { path = "../io-ring" }
 io-uring = { workspace = true }
 libc = { workspace = true }
-serde.workspace = true
 zbus = { version = "5.16.0", features=["bus-impl"] }
 
 [[example]]

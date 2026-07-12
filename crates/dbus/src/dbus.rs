@@ -1,10 +1,9 @@
 use std::{collections::HashMap, fmt, marker::PhantomData, rc::Rc};
-
-use serde::{Serialize, de::DeserializeOwned};
+use zbus::export::serde::{Serialize, de::DeserializeOwned};
 use zbus::{
     Message,
     message::Type as MessageType,
-    zvariant::{DynamicType, Endian, Type},
+    zvariant::{DynamicType, Type},
 };
 
 use crate::{Bus, DbusProxy, connection::DbusMessage};
@@ -15,11 +14,11 @@ pub trait DbusSignal {
     const MEMBER: &'static str;
     type Args: Type + Serialize + DeserializeOwned;
 
-    fn match_rule() -> MatchRule<Self>
+    fn match_rule() -> MatchRule
     where
         Self: Sized,
     {
-        MatchRule::new()
+        MatchRule::signal(Self::INTERFACE, Self::MEMBER)
     }
 }
 
@@ -27,27 +26,23 @@ pub trait DbusSignal {
 #[derive(Clone, Debug)]
 pub struct Subscription {
     pub rule: String,
+    pub serial: u32,
 }
 
-impl Subscription {
-    /// The exact match-rule string that was installed.
-    pub fn rule(&self) -> &str {
-        &self.rule
-    }
-}
-
-pub struct MatchRule<S: DbusSignal> {
+pub struct MatchRule {
+    interface: &'static str,
+    member: &'static str,
     sender: Option<String>,
     path: Option<String>,
-    _s: PhantomData<S>,
 }
 
-impl<S: DbusSignal> MatchRule<S> {
-    fn new() -> Self {
+impl MatchRule {
+    pub(crate) fn signal(interface: &'static str, member: &'static str) -> Self {
         Self {
+            interface,
+            member,
             sender: None,
             path: None,
-            _s: PhantomData,
         }
     }
     pub fn sender(mut self, s: impl Into<String>) -> Self {
@@ -60,13 +55,12 @@ impl<S: DbusSignal> MatchRule<S> {
     }
 }
 
-impl<S: DbusSignal> fmt::Display for MatchRule<S> {
+impl fmt::Display for MatchRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "type='signal',interface='{}',member='{}'",
-            S::INTERFACE,
-            S::MEMBER
+            self.interface, self.member
         )?;
         if let Some(s) = &self.sender {
             write!(f, ",sender='{s}'")?;
@@ -185,7 +179,9 @@ impl<M: DbusMethod, C> Pending<M, C> {
     /// Send `M` at its declared path and record `ctx` against the reply.
     pub fn call<B: Bus>(&mut self, proxy: &DbusProxy<B>, args: &M::Args, ctx: C) -> u32 {
         let serial = proxy.call::<M>(args);
-        self.map.insert(serial, ctx);
+        if serial != 0 {
+            self.map.insert(serial, ctx);
+        }
         serial
     }
 
@@ -198,7 +194,9 @@ impl<M: DbusMethod, C> Pending<M, C> {
         ctx: C,
     ) -> u32 {
         let serial = proxy.call_at::<M>(path, args);
-        self.map.insert(serial, ctx);
+        if serial != 0 {
+            self.map.insert(serial, ctx);
+        }
         serial
     }
 
@@ -226,6 +224,17 @@ pub trait DbusHandler {
     const MEMBER: &'static str;
     type Args: Type + DeserializeOwned;
     type Ret: Serialize + DynamicType;
+}
+
+impl<M: DbusMethod> DbusHandler for M
+where
+    M::Args: Type + DeserializeOwned,
+    M::Reply: Serialize + DynamicType,
+{
+    const INTERFACE: &'static str = M::INTERFACE;
+    const MEMBER: &'static str = M::MEMBER;
+    type Args = M::Args;
+    type Ret = M::Reply;
 }
 
 /// A decoded incoming method call for handler `M`, carrying the raw message so

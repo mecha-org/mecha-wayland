@@ -509,7 +509,6 @@ dependencies = [
  "io-ring",
  "io-uring",
  "libc",
- "serde",
  "zbus",
 ]
 

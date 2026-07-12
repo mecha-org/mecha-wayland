@@ -4,11 +4,67 @@ use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 /// D-Bus per-message fd limit (default 16); `MSG_CTRUNC` guards overflow.
 pub(crate) const CMSG_BUF: usize = 512;
 
+/// Aligned control-message buffer
+#[repr(C, align(8))]
+pub(crate) struct CmsgBuf(pub(crate) [u8; CMSG_BUF]);
+
+impl CmsgBuf {
+    pub(crate) fn zeroed() -> Self {
+        CmsgBuf([0u8; CMSG_BUF])
+    }
+}
+
+/// The stable-address FFI trio driving one `RecvMsg`/`SendMsg` direction: the
+/// iovec, the aligned control buffer, and the msghdr tying them together. Boxed
+/// once per direction in the connection; the SAFETY story is simply "this box
+/// never moves while an op is in flight".
+pub(crate) struct MsgBuffers {
+    pub(crate) iov: libc::iovec,
+    pub(crate) cmsg: CmsgBuf,
+    pub(crate) hdr: libc::msghdr,
+}
+
+impl MsgBuffers {
+    pub(crate) fn zeroed() -> Box<Self> {
+        // SAFETY: zeroed iovec/msghdr are valid empty descriptors; every field
+        // is (re)filled before each submission.
+        Box::new(MsgBuffers {
+            iov: unsafe { std::mem::zeroed() },
+            cmsg: CmsgBuf::zeroed(),
+            hdr: unsafe { std::mem::zeroed() },
+        })
+    }
+
+    /// Point `hdr` at `iov`/`cmsg` for a payload of `len` bytes at `base`, with
+    /// `controllen` bytes of control data (0 = none).
+    pub(crate) fn wire(&mut self, base: *mut libc::c_void, len: usize, controllen: usize) {
+        self.iov.iov_base = base;
+        self.iov.iov_len = len;
+        self.hdr.msg_name = std::ptr::null_mut();
+        self.hdr.msg_namelen = 0;
+        self.hdr.msg_iov = &mut self.iov;
+        self.hdr.msg_iovlen = 1;
+        self.hdr.msg_control = if controllen > 0 {
+            self.cmsg.0.as_mut_ptr() as *mut libc::c_void
+        } else {
+            std::ptr::null_mut()
+        };
+        self.hdr.msg_controllen = controllen as _;
+        self.hdr.msg_flags = 0;
+    }
+}
+
+pub(crate) const MAX_SEND_FDS: usize = 64;
+
 /// dup(2) a raw fd into an owned copy we control for the duration of a send.
-pub(crate) fn dup_owned(raw: RawFd) -> OwnedFd {
+pub(crate) fn dup_owned(raw: RawFd) -> Option<OwnedFd> {
     // SAFETY: dup on a valid fd returns a fresh owned descriptor.
     let d = unsafe { libc::dup(raw) };
-    unsafe { OwnedFd::from_raw_fd(d) }
+    if d < 0 {
+        return None;
+    }
+    // SAFETY: dup succeeded, so `d` is a fresh owned descriptor.
+    Some(unsafe { OwnedFd::from_raw_fd(d) })
 }
 
 /// Write an `SCM_RIGHTS` control message for `fds` into `buf`; returns the used

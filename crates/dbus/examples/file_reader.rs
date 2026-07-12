@@ -19,7 +19,7 @@ use io_ring::{Ring, RingSettings};
 
 use dbus::{
     DbusConnection, DbusEvent, DbusMessage, DbusProxy, IncomingCall, Pending, SessionBus,
-    dbus_handler, dbus_method, fdo, module as dbus_module,
+    dbus_method, fdo, module as dbus_module,
 };
 // zvariant's fd type serializes/deserializes as the D-Bus `h` type; std's
 // OwnedFd has no serde impls and can't appear in a message body.
@@ -29,15 +29,6 @@ const READER_NAME: &str = "com.example.FileReader";
 const READER_PATH: &str = "/com/example/FileReader";
 const READER_IFACE: &str = "com.example.FileReader";
 
-// Service side: a method we serve. The `h` arg arrives as an OwnedFd.
-dbus_handler!(ServeReadFd {
-    iface: READER_IFACE,
-    member: "ReadFd",
-    args: (OwnedFd,),
-    ret: String,
-});
-
-// Client side: the same method, as something we call.
 dbus_method!(ReadFd {
     dest: READER_NAME,
     path: READER_PATH,
@@ -110,7 +101,7 @@ pub fn service_module<S>() -> impl RegisteredModule<ReaderService, S> {
                 }
 
                 // The fd-bearing call: read from the passed descriptor and reply.
-                if let Some(Ok(call)) = IncomingCall::<ServeReadFd>::try_from(&ev.msg) {
+                if let Some(Ok(call)) = IncomingCall::<ReadFd>::try_from(&ev.msg) {
                     let raw = call.args.0.as_fd().as_raw_fd();
                     match read_fd(raw) {
                         Ok(content) => {

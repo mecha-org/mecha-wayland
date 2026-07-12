@@ -13,9 +13,9 @@ use std::{
 use app::{Event, Many, Module, RegisteredModule, prelude::State};
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
-use serde::Serialize;
+use zbus::export::serde::Serialize;
 use zbus::zvariant::serialized::{Context, Data};
-use zbus::zvariant::{LE, OwnedValue};
+use zbus::zvariant::{BE, LE, OwnedValue};
 use zbus::{
     message::{Message, Type as MessageType},
     zvariant::DynamicType,
@@ -23,16 +23,22 @@ use zbus::{
 
 use crate::{
     dbus::{DbusMethod, DbusSignal, MatchRule, Subscription},
-    fd::{CMSG_BUF, build_scm_rights, dbus_unix_fd_count, dup_owned, parse_scm_rights},
+    fd::{
+        CMSG_BUF, MAX_SEND_FDS, MsgBuffers, build_scm_rights, dbus_unix_fd_count, dup_owned,
+        parse_scm_rights,
+    },
     fdo,
     util::{dbus_message_len, parse_unix_path, sasl_handshake},
 };
 
 const READ_CHUNK: usize = 8192;
 
+/// Cap on fds sitting in the received but unclaimed FIFO
+const MAX_QUEUED_FDS: usize = 64;
+
 /// One queued outgoing message: its bytes plus any fds to pass alongside it. The
 /// fds are our own dup'd copies, held open until the `SendMsg` completes.
-pub struct OutFrame {
+struct OutFrame {
     bytes: Vec<u8>,
     fds: Vec<OwnedFd>,
 }
@@ -40,7 +46,7 @@ pub struct OutFrame {
 pub trait Bus: 'static {
     const NAME: &'static str;
 
-    fn address() -> String;
+    fn address() -> Option<String>;
 }
 
 // DBUS_SESSION_BUS_ADDRESS
@@ -48,8 +54,8 @@ pub trait Bus: 'static {
 pub struct SessionBus;
 impl Bus for SessionBus {
     const NAME: &'static str = "session";
-    fn address() -> String {
-        env::var("DBUS_SESSION_BUS_ADDRESS").expect("DBUS_SESSION_BUS_ADDRESS not set")
+    fn address() -> Option<String> {
+        env::var("DBUS_SESSION_BUS_ADDRESS").ok()
     }
 }
 
@@ -58,11 +64,35 @@ impl Bus for SessionBus {
 pub struct SystemBus;
 impl Bus for SystemBus {
     const NAME: &'static str = "system";
-    fn address() -> String {
-        env::var("DBUS_SYSTEM_BUS_ADDRESS")
-            .unwrap_or_else(|_| "unix:path=/var/run/dbus/system_bus_socket".into())
+    fn address() -> Option<String> {
+        Some(
+            env::var("DBUS_SYSTEM_BUS_ADDRESS")
+                .unwrap_or_else(|_| "unix:path=/var/run/dbus/system_bus_socket".into()),
+        )
     }
 }
+
+/// Why connecting to a bus failed. Returned by `DbusConnection::try_new`.
+#[derive(Debug)]
+pub enum ConnectError {
+    /// No/unusable bus address (missing env var, or not a `unix:` transport).
+    Address(String),
+    /// Socket connect, handshake, or fcntl failure.
+    Io(std::io::Error),
+    /// Building the mandatory `Hello()` message failed (should not happen).
+    Build(zbus::Error),
+}
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectError::Address(a) => write!(f, "unusable bus address: {a}"),
+            ConnectError::Io(e) => write!(f, "bus connection failed: {e}"),
+            ConnectError::Build(e) => write!(f, "could not build Hello message: {e}"),
+        }
+    }
+}
+impl std::error::Error for ConnectError {}
 
 #[derive(Debug)]
 pub enum DbusMessage {
@@ -72,17 +102,26 @@ pub enum DbusMessage {
     Reply { serial: u32, message: Rc<Message> },
     // A method call addressed to the service
     Call(Rc<Message>),
+    // The connection is dead (no auto-reconnect).
+    Disconnected,
 }
 
-fn method_message<M: DbusMethod>(path: &str, args: &M::Args) -> Message {
-    Message::method_call(path, M::MEMBER)
-        .expect("valid path/member")
-        .destination(M::DESTINATION)
-        .expect("valid destination")
-        .interface(M::INTERFACE)
-        .expect("valid interface")
+/// Whether the caller flagged this call `NO_REPLY_EXPECTED`
+fn no_reply_expected(call: &Message) -> bool {
+    call.primary_header()
+        .flags()
+        .contains(zbus::message::Flags::NoReplyExpected)
+}
+
+/// Build a method-call message. Fails on an invalid runtime path (e.g. a
+/// malformed string handed to `call_at`) or unserializable args (e.g. a string
+/// containing an interior NUL, which D-Bus forbids) — both can be user input,
+/// so this must not panic.
+fn method_message<M: DbusMethod>(path: &str, args: &M::Args) -> Result<Message, zbus::Error> {
+    Message::method_call(path, M::MEMBER)?
+        .destination(M::DESTINATION)?
+        .interface(M::INTERFACE)?
         .build(args)
-        .expect("serialize method call")
 }
 
 pub struct DbusEvent<B: Bus> {
@@ -116,10 +155,7 @@ struct DbusInner {
 
     // scratch for kernel to write
     read_scratch: Box<[u8; READ_CHUNK]>,
-    // iov/cmsg/msghdr drive `RecvMsg`
-    read_iov: Box<libc::iovec>,
-    read_cmsg: Box<[u8; CMSG_BUF]>,
-    read_msghdr: Box<libc::msghdr>,
+    read_buf: Box<MsgBuffers>,
     // accumulator for full message bytes and a FIFO of fds received
     read_acc: Vec<u8>,
     in_fds: VecDeque<OwnedFd>,
@@ -130,14 +166,21 @@ struct DbusInner {
     out: VecDeque<OutFrame>,
     // in flight bytes
     in_flight: Option<OutFrame>,
-    write_iov: Box<libc::iovec>,
-    write_cmsg: Box<[u8; CMSG_BUF]>,
-    write_msghdr: Box<libc::msghdr>,
+    write_buf: Box<MsgBuffers>,
     write_token: Option<IoToken>,
+
+    unix_fd: bool,
 
     // Dbus standard - serial for hello, and unique_name returned in handshake
     hello_serial: Option<u32>,
     unique_name: Option<String>,
+}
+
+impl Drop for DbusInner {
+    fn drop(&mut self) {
+        // Drop the fd for UnixStream
+        unsafe { libc::close(self.fd) };
+    }
 }
 
 impl DbusInner {
@@ -147,26 +190,15 @@ impl DbusInner {
             return;
         }
         let scratch_ptr = self.read_scratch.as_mut_ptr() as *mut libc::c_void;
-        self.read_iov.iov_base = scratch_ptr;
-        self.read_iov.iov_len = READ_CHUNK;
-        let iov_ptr = self.read_iov.as_mut() as *mut libc::iovec;
-        let cmsg_ptr = self.read_cmsg.as_mut_ptr() as *mut libc::c_void;
-        let hdr = self.read_msghdr.as_mut();
-        hdr.msg_name = std::ptr::null_mut();
-        hdr.msg_namelen = 0;
-        hdr.msg_iov = iov_ptr;
-        hdr.msg_iovlen = 1;
-        hdr.msg_control = cmsg_ptr;
-        hdr.msg_controllen = CMSG_BUF as _;
-        hdr.msg_flags = 0;
+        self.read_buf.wire(scratch_ptr, READ_CHUNK, CMSG_BUF);
 
-        // SAFETY: scratch, iovec, cmsg buffer and msghdr all live behind
+        // SAFETY: scratch and the boxed MsgBuffers live behind
         // Rc<RefCell<DbusInner>> at stable heap addresses, untouched until the
         // CQE clears `read_token`. MSG_CMSG_CLOEXEC keeps received fds from
         // leaking across exec.
         let sqe = opcode::RecvMsg::new(
             types::Fd(self.fd),
-            self.read_msghdr.as_mut() as *mut libc::msghdr,
+            &mut self.read_buf.hdr as *mut libc::msghdr,
         )
         .flags(libc::MSG_CMSG_CLOEXEC as u32)
         .build();
@@ -176,46 +208,36 @@ impl DbusInner {
     /// Arm a `SendMsg` for the next queued frame, carrying its fds (if any) as
     /// `SCM_RIGHTS`. One message per send so fds stay associated with bytes.
     fn submit_write(&mut self) {
-        if self.write_token.is_some() || self.in_flight.is_some() {
+        if self.write_token.is_some() {
             return;
         }
-        let Some(frame) = self.out.pop_front() else {
+
+        // Retry the unsent remainder of a short write first; otherwise start
+        // the next queued frame
+        if self.in_flight.is_none() {
+            let Some(frame) = self.out.pop_front() else {
+                return;
+            };
+            self.in_flight = Some(frame);
+        }
+
+        let Some(f) = self.in_flight.as_ref() else {
             return;
         };
-        self.in_flight = Some(frame);
 
-        let (bytes_ptr, bytes_len, raw_fds) = {
-            let f = self.in_flight.as_ref().unwrap();
-            let raw: Vec<RawFd> = f.fds.iter().map(|fd| fd.as_raw_fd()).collect();
-            (f.bytes.as_ptr() as *mut libc::c_void, f.bytes.len(), raw)
-        };
-        self.write_iov.iov_base = bytes_ptr;
-        self.write_iov.iov_len = bytes_len;
-        let iov_ptr = self.write_iov.as_mut() as *mut libc::iovec;
+        let raw_fds: Vec<RawFd> = f.fds.iter().map(|fd| fd.as_raw_fd()).collect();
+        let (bytes_ptr, bytes_len) = (f.bytes.as_ptr() as *mut libc::c_void, f.bytes.len());
 
-        // SAFETY: write_cmsg is sized for CMSG_BUF; build_scm_rights asserts fit.
-        let controllen = unsafe { build_scm_rights(&mut self.write_cmsg[..], &raw_fds) };
-        let cmsg_ptr = if controllen > 0 {
-            self.write_cmsg.as_mut_ptr() as *mut libc::c_void
-        } else {
-            std::ptr::null_mut()
-        };
+        // SAFETY: cmsg buffer is sized for CMSG_BUF; build_scm_rights asserts fit.
+        let controllen = unsafe { build_scm_rights(&mut self.write_buf.cmsg.0[..], &raw_fds) };
+        self.write_buf.wire(bytes_ptr, bytes_len, controllen);
 
-        let hdr = self.write_msghdr.as_mut();
-        hdr.msg_name = std::ptr::null_mut();
-        hdr.msg_namelen = 0;
-        hdr.msg_iov = iov_ptr;
-        hdr.msg_iovlen = 1;
-        hdr.msg_control = cmsg_ptr;
-        hdr.msg_controllen = controllen as _;
-        hdr.msg_flags = 0;
-
-        // SAFETY: frame bytes/fds (in `in_flight`), iovec, cmsg and msghdr all
+        // SAFETY: frame bytes/fds (in `in_flight`) and the boxed MsgBuffers all
         // live behind Rc<RefCell> at stable addresses until the CQE clears
         // `write_token`; the fds are our dup'd copies, closed only on completion.
         let sqe = opcode::SendMsg::new(
             types::Fd(self.fd),
-            self.write_msghdr.as_ref() as *const libc::msghdr,
+            &self.write_buf.hdr as *const libc::msghdr,
         )
         .build();
         self.write_token = Some(self.ring.push(sqe));
@@ -225,15 +247,36 @@ impl DbusInner {
     /// message carries are dup'd into copies we own until the send completes.
     fn send(&mut self, msg: &Message) -> u32 {
         let serial = u32::from(msg.primary_header().serial_num());
+
+        // A failed dup (fd exhaustion) refuses the whole message: sending with
+        // fewer fds than the UNIX_FDS header claims would get us disconnected.
+        let msg_fds = msg.data().fds();
+        if msg_fds.len() > MAX_SEND_FDS {
+            eprintln!(
+                "dbus: dropping message with {} fds (max {MAX_SEND_FDS})",
+                msg_fds.len()
+            );
+            return 0;
+        }
+        let mut fds: Vec<OwnedFd> = Vec::with_capacity(msg_fds.len());
+        for fd in msg_fds {
+            match dup_owned(fd.as_raw_fd()) {
+                Some(owned) => fds.push(owned),
+                None => {
+                    eprintln!("dbus: dropping message: dup failed (out of fds?)");
+                    return 0;
+                }
+            }
+        }
+
+        if !fds.is_empty() && !self.unix_fd {
+            eprintln!(
+                "dbus: dropping message with {} fd(s): bus did not AGREE_UNIX_FD",
+                fds.len()
+            );
+            return 0;
+        }
         let bytes: Vec<u8> = msg.data().iter().copied().collect();
-        // NOTE (verify against your zbus pin): `data().fds()` yields the message's
-        // fds; we dup each so the OutFrame owns them independent of the message.
-        let fds: Vec<OwnedFd> = msg
-            .data()
-            .fds()
-            .iter()
-            .map(|fd| dup_owned(fd.as_raw_fd()))
-            .collect();
         self.out.push_back(OutFrame { bytes, fds });
         self.submit_write();
         serial
@@ -265,7 +308,10 @@ impl DbusInner {
                 }
             }
 
-            let ctx = Context::new_dbus(LE, 0);
+            // Check byte 0 for endianness
+            let endian = if frame[0] == b'B' { BE } else { LE };
+            let ctx = Context::new_dbus(endian, 0);
+
             // NOTE (verify against your zbus pin): `Data::new_fds` attaches fds so
             // the body's `h` indices resolve.
             let data = if fds.is_empty() {
@@ -296,8 +342,17 @@ impl<B: Bus> DbusProxy<B> {
 
     /// Call the same method at a runtime-chosen object path.
     pub fn call_at<M: DbusMethod>(&self, path: &str, args: &M::Args) -> u32 {
-        let msg = method_message::<M>(path, args);
-        self.inner.borrow_mut().send(&msg)
+        match method_message::<M>(path, args) {
+            Ok(msg) => self.inner.borrow_mut().send(&msg),
+            Err(e) => {
+                eprintln!(
+                    "dbus: cannot build call {}.{}: {e}",
+                    M::INTERFACE,
+                    M::MEMBER
+                );
+                0
+            }
+        }
     }
 
     /// Subscribe to a typed signal (installs its generated match rule). Returns
@@ -311,15 +366,16 @@ impl<B: Bus> DbusProxy<B> {
     /// ```rust
     ///     proxy.subscribe_rule(StateChanged::match_rule().path("/org/freedesktop/NetworkManager/Devices/3"));
     /// ```
-    pub fn subscribe_rule<S: DbusSignal>(&self, rule: MatchRule<S>) -> Subscription {
+    pub fn subscribe_rule(&self, rule: MatchRule) -> Subscription {
         self.add_match_rule(&rule.to_string())
     }
 
     /// Escape hatch: raw match-rule string.
     pub fn add_match_rule(&self, rule: &str) -> Subscription {
-        self.call::<fdo::AddMatch>(&(rule.to_string(),));
+        let serial = self.call::<fdo::AddMatch>(&(rule.to_string(),));
         Subscription {
             rule: rule.to_string(),
+            serial,
         }
     }
 
@@ -329,24 +385,41 @@ impl<B: Bus> DbusProxy<B> {
         self.call::<fdo::RemoveMatch>(&(sub.rule.clone(),))
     }
 
-    /// Send a `MethodReturn` reply to a received method call.
+    /// Send a `MethodReturn` reply to a received method call
     pub fn reply<Body: Serialize + DynamicType>(&self, call: &Message, body: &Body) -> u32 {
-        let hdr = call.header();
-        let msg = Message::method_return(&hdr)
-            .expect("build method return")
-            .build(body)
-            .expect("serialize method return");
-        self.inner.borrow_mut().send(&msg)
+        if no_reply_expected(call) {
+            return 0;
+        }
+
+        let built = Message::method_return(&call.header()).and_then(|b| b.build(body));
+        match built {
+            Ok(msg) => self.inner.borrow_mut().send(&msg),
+            Err(e) => {
+                eprintln!("dbus: reply serialization failed: {e}");
+                self.reply_error(
+                    call,
+                    "org.freedesktop.DBus.Error.Failed",
+                    "reply serialization failed",
+                )
+            }
+        }
     }
 
     /// Send an error reply to a received method call.
     pub fn reply_error(&self, call: &Message, name: &str, text: &str) -> u32 {
-        let hdr = call.header();
-        let msg = Message::error(&hdr, name)
-            .expect("valid error name")
-            .build(&(text,))
-            .expect("serialize error");
-        self.inner.borrow_mut().send(&msg)
+        if no_reply_expected(call) {
+            return 0;
+        }
+
+        let text = text.replace('\0', " ");
+        let built = Message::error(&call.header(), name).and_then(|b| b.build(&(text,)));
+        match built {
+            Ok(msg) => self.inner.borrow_mut().send(&msg),
+            Err(e) => {
+                eprintln!("dbus: cannot build error reply '{name}': {e}");
+                0
+            }
+        }
     }
 
     /// Reply with unknown method when we don't identify the method
@@ -359,12 +432,15 @@ impl<B: Bus> DbusProxy<B> {
     }
 
     /// Broadcast a typed signal from object `path`.
-    pub fn emit<S: DbusSignal + Serialize>(&self, path: &str, body: &S::Args) -> u32 {
-        let msg = Message::signal(path, S::INTERFACE, S::MEMBER)
-            .expect("valid signal coordinates")
-            .build(body)
-            .expect("serialize signal");
-        self.inner.borrow_mut().send(&msg)
+    pub fn emit<S: DbusSignal>(&self, path: &str, body: &S::Args) -> u32 {
+        let built = Message::signal(path, S::INTERFACE, S::MEMBER).and_then(|b| b.build(body));
+        match built {
+            Ok(msg) => self.inner.borrow_mut().send(&msg),
+            Err(e) => {
+                eprintln!("dbus: cannot emit {}.{}: {e}", S::INTERFACE, S::MEMBER);
+                0
+            }
+        }
     }
 
     /// Emit `org.freedesktop.DBus.Properties.PropertiesChanged` for `interface`
@@ -378,12 +454,6 @@ impl<B: Bus> DbusProxy<B> {
     ) -> u32 {
         let inv: Vec<String> = invalidated.iter().map(|s| s.to_string()).collect();
         self.emit::<fdo::PropertiesChanged>(path, &(interface.to_string(), changed, inv))
-    }
-
-    /// Flush queued writes now (otherwise they flush lazily on the next ring
-    /// poll)
-    pub fn flush(&self) {
-        self.inner.borrow_mut().submit_write();
     }
 
     /// Our unique bus name once the Hello reply has arrived.
@@ -401,13 +471,19 @@ pub struct DbusConnection<B: Bus> {
 }
 
 impl<B: Bus> DbusConnection<B> {
+    pub fn new(ring: RingProxy) -> Self {
+        Self::try_new(ring).unwrap_or_else(|e| panic!("dbus [{}]: {e}", B::NAME))
+    }
+
     /// Connect to bus `B`, perform the SASL handshake, send `Hello`, and arm the
     /// first read — all synchronously, up front. After this the connection is
     /// purely event-driven through the ring.
-    pub fn new(ring: RingProxy) -> Self {
-        let path = parse_unix_path(&B::address()).expect("unsupported/malformed bus address");
+    pub fn try_new(ring: RingProxy) -> Result<Self, ConnectError> {
+        let addr = B::address()
+            .ok_or_else(|| ConnectError::Address(format!("no {} bus address set", B::NAME)))?;
+        let path = parse_unix_path(&addr).ok_or(ConnectError::Address(addr))?;
 
-        let mut stream = UnixStream::connect(&path).expect("failed to connect to dbus socket");
+        let mut stream = UnixStream::connect(&path).map_err(ConnectError::Io)?;
 
         // --- SASL EXTERNAL handshake (blocking, one-time) --------------------
         //   -> \0                       (mandatory leading nul byte)
@@ -417,29 +493,24 @@ impl<B: Bus> DbusConnection<B> {
         //   <- AGREE_UNIX_FD\r\n
         //   -> BEGIN\r\n
         // After BEGIN, the binary D-Bus protocol starts.
-        sasl_handshake(&mut stream).expect("dbus SASL handshake failed");
+        let unix_fd = sasl_handshake(&mut stream).map_err(ConnectError::Io)?;
 
-        stream.set_nonblocking(true).unwrap();
+        stream.set_nonblocking(true).map_err(ConnectError::Io)?;
         let fd = stream.into_raw_fd();
 
         let inner = DbusInner {
             fd,
             ring,
             read_scratch: Box::new([0u8; READ_CHUNK]),
-            // SAFETY: zeroed iovec/msghdr are valid empty descriptors; fields are
-            // filled in before each submit.
-            read_iov: Box::new(unsafe { std::mem::zeroed() }),
-            read_cmsg: Box::new([0u8; CMSG_BUF]),
-            read_msghdr: Box::new(unsafe { std::mem::zeroed() }),
+            read_buf: MsgBuffers::zeroed(),
             read_acc: Vec::with_capacity(READ_CHUNK),
             in_fds: VecDeque::new(),
             read_token: None,
             out: VecDeque::new(),
             in_flight: None,
-            write_iov: Box::new(unsafe { std::mem::zeroed() }),
-            write_cmsg: Box::new([0u8; CMSG_BUF]),
-            write_msghdr: Box::new(unsafe { std::mem::zeroed() }),
+            write_buf: MsgBuffers::zeroed(),
             write_token: None,
+            unix_fd,
             hello_serial: None,
             unique_name: None,
         };
@@ -449,15 +520,16 @@ impl<B: Bus> DbusConnection<B> {
         // its serial so we can recognise the reply, then arm reads.
         {
             let mut i = data.borrow_mut();
-            let hello = method_message::<fdo::Hello>(fdo::Hello::PATH, &());
+            let hello =
+                method_message::<fdo::Hello>(fdo::Hello::PATH, &()).map_err(ConnectError::Build)?;
             i.hello_serial = Some(i.send(&hello));
             i.submit_read();
         }
 
-        Self {
+        Ok(Self {
             data,
             _bus: PhantomData,
-        }
+        })
     }
 
     pub fn proxy(&self) -> DbusProxy<B> {
@@ -474,7 +546,7 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
     Module::<DbusConnection<B>, _, _>::new().on(|conn: &mut DbusConnection<B>, io: &IoEvent| {
         let IoEvent::Completed { token, result } = io;
         let events = {
-            let mut inner = conn.data.borrow_mut();
+            let inner = &mut *conn.data.borrow_mut();
 
             // Token isolation: act only on tokens submmitted for dbus. Any other
             // token (another bus, or Wayland) falls through to `else`.
@@ -483,24 +555,34 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                 let n = *result;
                 if n <= 0 {
                     eprintln!("dbus [{}] socket closed/error: {n}", B::NAME);
-                    Vec::new()
+                    vec![DbusEvent::new(DbusMessage::Disconnected)]
                 } else {
                     // Harvest any passed fds from the control buffer first.
-                    if (inner.read_msghdr.msg_flags & libc::MSG_CTRUNC) != 0 {
+                    if (inner.read_buf.hdr.msg_flags & libc::MSG_CTRUNC) != 0 {
                         eprintln!(
                             "dbus [{}]: SCM_RIGHTS truncated (MSG_CTRUNC) - fds lost",
                             B::NAME
                         );
                     }
                     // SAFETY: read_msghdr was populated by the completed RecvMsg.
-                    let got = unsafe { parse_scm_rights(&inner.read_msghdr) };
+                    let got = unsafe { parse_scm_rights(&inner.read_buf.hdr) };
                     for fd in got {
-                        inner.in_fds.push_back(fd);
+                        if inner.in_fds.len() >= MAX_QUEUED_FDS {
+                            // Drop fds than accumulate
+                            eprintln!(
+                                "dbus [{}]: unclaimed-fd queue full; closing excess fd",
+                                B::NAME
+                            );
+                            drop(fd);
+                        } else {
+                            inner.in_fds.push_back(fd);
+                        }
                     }
 
                     let n = n as usize;
-                    let chunk = inner.read_scratch[..n].to_vec();
-                    inner.read_acc.extend_from_slice(&chunk);
+                    let (scratch, acc) = (&inner.read_scratch, &mut inner.read_acc);
+                    acc.extend_from_slice(&scratch[..n]);
+
                     let messages = inner.drain_complete_messages();
                     inner.submit_read(); // re-arm immediately
 
@@ -533,9 +615,33 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                 }
             } else if Some(*token) == inner.write_token {
                 inner.write_token = None;
-                // Dropping the frame closes our dup'd fd copies (kernel keeps its own).
-                inner.in_flight = None;
-                inner.submit_write(); // kick off next queued frame, if any
+                let n = *result;
+                if n < 0 {
+                    // A failed send would desync the stream if we kept going.
+                    eprintln!("dbus [{}] write error: {n}", B::NAME);
+                    inner.in_flight = None;
+                    inner.out.clear();
+                } else {
+                    let n = n as usize;
+                    let done = inner
+                        .in_flight
+                        .as_ref()
+                        .map(|f| n >= f.bytes.len())
+                        .unwrap_or(true);
+                    if done {
+                        // Dropping the frame closes our dup'd fd copies (the
+                        // kernel installed its own on send).
+                        inner.in_flight = None;
+                    } else if let Some(f) = inner.in_flight.as_mut() {
+                        // Short write: keep the unsent tail for retry. The fds
+                        // travelled with the first byte — clear them so the
+                        // retry sends no control data (and closes our dups).
+                        f.bytes.drain(..n);
+                        f.fds.clear();
+                    }
+                }
+                inner.submit_write(); // retry remainder or start next frame
+
                 Vec::new()
             } else {
                 Vec::new() // it is not dbus token

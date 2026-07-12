@@ -60,7 +60,7 @@ pub fn parse_unix_path(addr: &str) -> Option<String> {
 }
 
 /// Blocking SASL EXTERNAL handshake on a new stream.
-pub fn sasl_handshake(stream: &mut UnixStream) -> std::io::Result<()> {
+pub fn sasl_handshake(stream: &mut UnixStream) -> std::io::Result<bool> {
     stream.write_all(&[0u8])?; // mandatory leading null
 
     let uid = unsafe { libc::getuid() };
@@ -73,10 +73,10 @@ pub fn sasl_handshake(stream: &mut UnixStream) -> std::io::Result<()> {
     read_sasl_line(stream)?; // expect: OK <guid>
 
     stream.write_all(b"NEGOTIATE_UNIX_FD\r\n")?;
-    read_sasl_line(stream)?; // AGREE_UNIX_FD or ERROR — not required
+    let unix_fd = read_sasl_line(stream)?.starts_with("AGREE_UNIX_FD");
 
     stream.write_all(b"BEGIN\r\n")?;
-    Ok(())
+    Ok(unix_fd)
 }
 
 /// Read one CRLF-terminated SASL line (blocking, byte-at-a-time; runs once).
@@ -100,21 +100,33 @@ fn read_sasl_line(stream: &mut UnixStream) -> std::io::Result<String> {
 // zvariant helpers
 // -----------------------------------------------------------------------
 
+/// Extract a typed property from an `a{sv}` map (any `T: TryFrom<OwnedValue>`:
+/// u32, u64, bool, String, object paths, …).
+pub fn prop<T: TryFrom<OwnedValue>>(props: &HashMap<String, OwnedValue>, key: &str) -> Option<T> {
+    props.get(key).and_then(|v| T::try_from(v.clone()).ok())
+}
+
 pub fn prop_u32(props: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
-    props.get(key).and_then(|v| u32::try_from(v.clone()).ok())
+    prop(props, key)
 }
 
 pub fn prop_string(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
-    props
-        .get(key)
-        .and_then(|v| String::try_from(v.clone()).ok())
+    prop(props, key)
 }
 
-/// Wrap a scalar/string/etc. into an `OwnedValue` (a D-Bus variant `v`), for use
-/// as a property value in `Properties.Get`/`GetAll`/`PropertiesChanged`.
+/// Wrap a scalar/string/etc. into an `OwnedValue` (a D-Bus variant `v`)
+/// Use for every value kind except `Fd`
 pub fn variant<'a, T>(v: T) -> OwnedValue
 where
     T: Into<Value<'a>>,
 {
     OwnedValue::try_from(v.into()).expect("value -> owned value")
+}
+
+/// Non-panicking [`variant`], use when wrapping an `Fd` value
+pub fn try_variant<'a, T>(v: T) -> Option<OwnedValue>
+where
+    T: Into<Value<'a>>,
+{
+    OwnedValue::try_from(v.into()).ok()
 }

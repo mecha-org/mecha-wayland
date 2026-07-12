@@ -48,7 +48,6 @@ macro_rules! dbus_signal {
         member: $member:expr,
         args: $args:ty $(,)?
     }) => {
-        #[derive(serde::Serialize)]
         $vis struct $name;
         impl $crate::DbusSignal for $name {
             const INTERFACE: &'static str = $iface;
@@ -88,7 +87,7 @@ macro_rules! dbus_handler {
 /// Declare an interface: generates a `DbusHandler` per method, a
 /// `DbusSignal` per signal, and an `introspect()` method that builds the
 /// `<interface>` XML — with each arg's D-Bus signature derived from its Rust
-/// type via `zvariant::Type`, so the handlers and the XML can't drift.
+/// type via `zbus::zvariant::Type`, so the handlers and the XML can't drift.
 ///
 /// ```ignore
 /// dbus_interface!(pub Widget = "org.example.Widget";
@@ -113,9 +112,6 @@ macro_rules! dbus_interface {
             property $pname:ident : $pty:ty , $paccess:ident ;
         )*
     ) => {
-        use zbus::zvariant;
-        use fdo::{machine_id};
-
         $ivis struct $iname;
         impl $iname {
             pub const INTERFACE: &'static str = $iface;
@@ -131,13 +127,13 @@ macro_rules! dbus_interface {
                         s.push_str(&::std::format!(
                             "      <arg name=\"{}\" type=\"{}\" direction=\"in\"/>\n",
                             ::core::stringify!($an),
-                            <$at as zvariant::Type>::SIGNATURE));
+                            <$at as $crate::zbus::zvariant::Type>::SIGNATURE));
                     )*
                     $(
                         s.push_str(&::std::format!(
                             "      <arg name=\"{}\" type=\"{}\" direction=\"out\"/>\n",
                             ::core::stringify!($rn),
-                            <$rt as zvariant::Type>::SIGNATURE));
+                            <$rt as $crate::zbus::zvariant::Type>::SIGNATURE));
                     )*
                     s.push_str("    </method>\n");
                 )*
@@ -148,7 +144,7 @@ macro_rules! dbus_interface {
                         s.push_str(&::std::format!(
                             "      <arg name=\"{}\" type=\"{}\"/>\n",
                             ::core::stringify!($sn),
-                            <$st as zvariant::Type>::SIGNATURE));
+                            <$st as $crate::zbus::zvariant::Type>::SIGNATURE));
                     )*
                     s.push_str("    </signal>\n");
                 )*
@@ -156,7 +152,7 @@ macro_rules! dbus_interface {
                     s.push_str(&::std::format!(
                         "    <property name=\"{}\" type=\"{}\" access=\"{}\"/>\n",
                         ::core::stringify!($pname),
-                        <$pty as zvariant::Type>::SIGNATURE,
+                        <$pty as $crate::zbus::zvariant::Type>::SIGNATURE,
                         ::core::stringify!($paccess)));
                 )*
                 s.push_str("  </interface>\n");
@@ -164,32 +160,14 @@ macro_rules! dbus_interface {
             }
 
             /// Answer the standard object interfaces — `Peer.Ping`,
-            /// `Peer.GetMachineId`, and `Introspectable.Introspect`
+            /// `Peer.GetMachineId` (any path) and `Introspectable.Introspect`
+            /// (for `path` only) — using this interface's derived XML.
             pub fn handle_standard<B: $crate::Bus>(
                 proxy: &$crate::DbusProxy<B>,
+                path: &str,
                 msg: &$crate::DbusMessage,
             ) -> bool {
-                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
-                    $crate::IncomingCall::<$crate::fdo::Ping>::try_from(msg)
-                {
-                    call.respond(proxy, &());
-                    return true;
-                }
-                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
-                    $crate::IncomingCall::<$crate::fdo::GetMachineId>::try_from(msg)
-                {
-                    call.respond(proxy, &$crate::fdo::machine_id());
-                    return true;
-                }
-                if let ::core::option::Option::Some(::core::result::Result::Ok(call)) =
-                    $crate::IncomingCall::<$crate::fdo::Introspect>::try_from(msg)
-                {
-                    let xml = $crate::fdo::introspect_node(
-                        &[&Self::introspect(), $crate::fdo::STD_INTERFACES_XML]);
-                    call.respond(proxy, &xml);
-                    return true;
-                }
-                false
+                $crate::fdo::handle_standard(proxy, path, &Self::introspect(), msg)
             }
         }
 
@@ -203,7 +181,6 @@ macro_rules! dbus_interface {
             }
         )*
         $(
-            #[derive(serde::Serialize)]
             $ivis struct $sname;
             impl $crate::DbusSignal for $sname {
                 const INTERFACE: &'static str = $iface;

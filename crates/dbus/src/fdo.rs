@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use zbus::zvariant::OwnedValue;
 
-use crate::{dbus_handler, dbus_method, dbus_signal};
+use crate::{Bus, DbusMessage, DbusProxy, IncomingCall, dbus_handler, dbus_method, dbus_signal};
 
 dbus_method!(pub Hello {
     dest: "org.freedesktop.DBus",
@@ -57,6 +57,8 @@ pub const PROPERTIES_IFACE: &str = "org.freedesktop.DBus.Properties";
 /// Standard error names for property access.
 pub const ERR_UNKNOWN_PROPERTY: &str = "org.freedesktop.DBus.Error.UnknownProperty";
 pub const ERR_UNKNOWN_INTERFACE: &str = "org.freedesktop.DBus.Error.UnknownInterface";
+pub const ERR_PROPERTY_READ_ONLY: &str = "org.freedesktop.DBus.Error.PropertyReadOnly";
+pub const ERR_INVALID_ARGS: &str = "org.freedesktop.DBus.Error.InvalidArgs";
 
 // Get(interface s, prop s) -> value v
 dbus_handler!(pub PropertiesGet {
@@ -135,4 +137,128 @@ pub fn machine_id() -> String {
         .or_else(|_| ::std::fs::read_to_string("/etc/machine-id"))
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// Answer the standard object interfaces for a service object: `Peer.Ping` and
+/// `Peer.GetMachineId` (connection-level, any path) and
+/// `Introspectable.Introspect` (per-object: only for `path`, with
+/// `interface_xml` as this object's `<interface>` node). Returns `true` if the
+/// message was consumed. `dbus_interface!`'s generated `handle_standard`
+/// forwards here with its derived XML.
+pub fn handle_standard<B: Bus>(
+    proxy: &DbusProxy<B>,
+    path: &str,
+    interface_xml: &str,
+    msg: &DbusMessage,
+) -> bool {
+    if let Some(Ok(call)) = IncomingCall::<Ping>::try_from(msg) {
+        call.respond(proxy, &());
+        return true;
+    }
+    if let Some(Ok(call)) = IncomingCall::<GetMachineId>::try_from(msg) {
+        call.respond(proxy, &machine_id());
+        return true;
+    }
+    if let Some(Ok(call)) = IncomingCall::<Introspect>::try_from(msg) {
+        if call.path.as_deref() == Some(path) {
+            let xml = introspect_node(&[interface_xml, STD_INTERFACES_XML]);
+            call.respond(proxy, &xml);
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
+/// One property access, handed to the closure of [`route_properties`].
+pub enum PropAccess<'a> {
+    /// `Properties.Get` for this property (also used per-name for `GetAll`).
+    Get(&'a str),
+    /// `Properties.Set` of this property to this value.
+    Set(&'a str, &'a OwnedValue),
+}
+
+/// The closure's verdict on a [`PropAccess`].
+pub enum PropReply {
+    /// Get: here is the value.
+    Value(OwnedValue),
+    /// Set: accepted (and applied).
+    Set,
+    /// Set: this property is read-only.
+    ReadOnly,
+    /// No such property (Get or Set).
+    Unknown,
+    /// Set: value rejected, with a reason for the InvalidArgs error.
+    Invalid(String),
+}
+
+/// Serve `org.freedesktop.DBus.Properties` (`Get`/`GetAll`/`Set`) for one
+/// interface with a single closure, so module state is borrowed exactly once.
+/// `names` lists the properties (drives `GetAll`). Returns `true` if the
+/// message was one of the three calls and has been answered.
+///
+/// Since the closure usually needs `&mut` module state *and* the state owns the
+/// proxy, clone the proxy first (it's an `Rc` handle):
+/// `let proxy = s.proxy.clone();`
+pub fn route_properties<B: Bus>(
+    proxy: &DbusProxy<B>,
+    msg: &DbusMessage,
+    iface: &str,
+    names: &[&str],
+    mut f: impl FnMut(PropAccess<'_>) -> PropReply,
+) -> bool {
+    if let Some(Ok(call)) = IncomingCall::<PropertiesGet>::try_from(msg) {
+        let (req_iface, prop) = &call.args;
+        if req_iface != iface {
+            call.error(proxy, ERR_UNKNOWN_INTERFACE, "no such interface");
+        } else {
+            match f(PropAccess::Get(prop)) {
+                PropReply::Value(v) => {
+                    call.respond(proxy, &v);
+                }
+                _ => {
+                    call.error(proxy, ERR_UNKNOWN_PROPERTY, "no such property");
+                }
+            }
+        }
+        return true;
+    }
+    if let Some(Ok(call)) = IncomingCall::<PropertiesGetAll>::try_from(msg) {
+        let (req_iface,) = &call.args;
+        if req_iface != iface {
+            call.error(proxy, ERR_UNKNOWN_INTERFACE, "no such interface");
+        } else {
+            let mut all = std::collections::HashMap::new();
+            for name in names {
+                if let PropReply::Value(v) = f(PropAccess::Get(name)) {
+                    all.insert(name.to_string(), v);
+                }
+            }
+            call.respond(proxy, &all);
+        }
+        return true;
+    }
+    if let Some(Ok(call)) = IncomingCall::<PropertiesSet>::try_from(msg) {
+        let (req_iface, prop, value) = &call.args;
+        if req_iface != iface {
+            call.error(proxy, ERR_UNKNOWN_INTERFACE, "no such interface");
+        } else {
+            match f(PropAccess::Set(prop, value)) {
+                PropReply::Set => {
+                    call.respond(proxy, &());
+                }
+                PropReply::ReadOnly => {
+                    call.error(proxy, ERR_PROPERTY_READ_ONLY, "property is read-only");
+                }
+                PropReply::Invalid(reason) => {
+                    call.error(proxy, ERR_INVALID_ARGS, &reason);
+                }
+                _ => {
+                    call.error(proxy, ERR_UNKNOWN_PROPERTY, "no such property");
+                }
+            }
+        }
+        return true;
+    }
+    false
 }

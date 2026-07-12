@@ -104,54 +104,25 @@ pub fn widget_module<S>() -> impl RegisteredModule<WidgetService, S> {
                 return;
             }
 
-            // 4a. Properties.Get(interface, "Value") -> variant.
-            if let Some(Ok(call)) = IncomingCall::<fdo::PropertiesGet>::try_from(&ev.msg) {
-                let (iface, prop) = &call.args;
-                if iface != WIDGET_IFACE {
-                    call.error(&s.proxy, fdo::ERR_UNKNOWN_INTERFACE, "no such interface");
-                } else if prop == "Value" {
-                    call.respond(&s.proxy, &variant(s.value));
-                } else {
-                    call.error(&s.proxy, fdo::ERR_UNKNOWN_PROPERTY, "no such property");
-                }
-                return;
-            }
-
-            // 4b. Properties.GetAll(interface) -> a{sv}.
-            if let Some(Ok(call)) = IncomingCall::<fdo::PropertiesGetAll>::try_from(&ev.msg) {
-                let (iface,) = &call.args;
-                if iface != WIDGET_IFACE {
-                    call.error(&s.proxy, fdo::ERR_UNKNOWN_INTERFACE, "no such interface");
-                } else {
-                    let mut all = HashMap::new();
-                    all.insert("Value".to_string(), variant(s.value));
-                    call.respond(&s.proxy, &all);
-                }
-                return;
-            }
-
-            // 4c. Properties.Set(interface, "Value", v).
-            if let Some(Ok(call)) = IncomingCall::<fdo::PropertiesSet>::try_from(&ev.msg) {
-                let (iface, prop, value) = &call.args;
-                if iface != WIDGET_IFACE {
-                    call.error(&s.proxy, fdo::ERR_UNKNOWN_INTERFACE, "no such interface");
-                } else if prop != "Value" {
-                    call.error(&s.proxy, fdo::ERR_UNKNOWN_PROPERTY, "no such property");
-                } else if let Ok(v) = u32::try_from(value.clone()) {
-                    call.respond(&s.proxy, &());
-                    s.set_value(v);
-                } else {
-                    call.error(
-                        &s.proxy,
-                        "org.freedesktop.DBus.Error.InvalidArgs",
-                        "Value must be u32",
-                    );
-                }
+            // 4. Properties Get/GetAll/Set for "Value", one closure over state.
+            // (Clone the proxy first: the closure borrows `s` mutably.)
+            let proxy = s.proxy.clone();
+            if fdo::route_properties(&proxy, &ev.msg, WIDGET_IFACE, &["Value"], |op| match op {
+                fdo::PropAccess::Get("Value") => fdo::PropReply::Value(variant(s.value)),
+                fdo::PropAccess::Set("Value", v) => match u32::try_from(v.clone()) {
+                    Ok(v) => {
+                        s.set_value(v);
+                        fdo::PropReply::Set
+                    }
+                    Err(_) => fdo::PropReply::Invalid("Value must be u32".to_string()),
+                },
+                _ => fdo::PropReply::Unknown,
+            }) {
                 return;
             }
 
             // 5. Standard interfaces: Peer.Ping / GetMachineId, Introspect
-            if Widget::handle_standard(&s.proxy, &ev.msg) {
+            if Widget::handle_standard(&s.proxy, WIDGET_PATH, &ev.msg) {
                 return;
             }
 

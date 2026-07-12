@@ -16,3 +16,6 @@ name = "widget_service"
 
 [[example]]
 name = "network_manager"
+
+[[example]]
+name = "file_reader"

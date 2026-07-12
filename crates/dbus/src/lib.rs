@@ -1,5 +1,6 @@
 mod connection;
 mod dbus;
+mod fd;
 pub mod fdo;
 mod macros;
 mod util;

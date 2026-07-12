@@ -4,7 +4,7 @@ use std::{
     env,
     marker::PhantomData,
     os::{
-        fd::{IntoRawFd, RawFd},
+        fd::{AsRawFd, IntoRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     },
     rc::Rc,
@@ -23,11 +23,19 @@ use zbus::{
 
 use crate::{
     dbus::{DbusMethod, DbusSignal, MatchRule, Subscription},
+    fd::{CMSG_BUF, build_scm_rights, dbus_unix_fd_count, dup_owned, parse_scm_rights},
     fdo,
     util::{dbus_message_len, parse_unix_path, sasl_handshake},
 };
 
 const READ_CHUNK: usize = 8192;
+
+/// One queued outgoing message: its bytes plus any fds to pass alongside it. The
+/// fds are our own dup'd copies, held open until the `SendMsg` completes.
+pub struct OutFrame {
+    bytes: Vec<u8>,
+    fds: Vec<OwnedFd>,
+}
 
 pub trait Bus: 'static {
     const NAME: &'static str;
@@ -108,14 +116,23 @@ struct DbusInner {
 
     // scratch for kernel to write
     read_scratch: Box<[u8; READ_CHUNK]>,
-    // accumulator for full message
+    // iov/cmsg/msghdr drive `RecvMsg`
+    read_iov: Box<libc::iovec>,
+    read_cmsg: Box<[u8; CMSG_BUF]>,
+    read_msghdr: Box<libc::msghdr>,
+    // accumulator for full message bytes and a FIFO of fds received
     read_acc: Vec<u8>,
+    in_fds: VecDeque<OwnedFd>,
     read_token: Option<IoToken>,
 
-    // outgoing bytes
-    out: VecDeque<u8>,
+    // outgoing frames (bytes+fds), one `SendMsg` per frame
+    // so each message's fds are included with its bytes
+    out: VecDeque<OutFrame>,
     // in flight bytes
-    in_flight: Vec<u8>,
+    in_flight: Option<OutFrame>,
+    write_iov: Box<libc::iovec>,
+    write_cmsg: Box<[u8; CMSG_BUF]>,
+    write_msghdr: Box<libc::msghdr>,
     write_token: Option<IoToken>,
 
     // Dbus standard - serial for hello, and unique_name returned in handshake
@@ -129,43 +146,95 @@ impl DbusInner {
         if self.read_token.is_some() {
             return;
         }
-        // SAFETY: `read_scratch` lives behind `Rc<RefCell<DbusInner>>` at a
-        // stable heap address and is never reallocated; its pointer stays valid
-        // until the matching CQE clears `read_token`.
-        let sqe = opcode::Recv::new(
+        let scratch_ptr = self.read_scratch.as_mut_ptr() as *mut libc::c_void;
+        self.read_iov.iov_base = scratch_ptr;
+        self.read_iov.iov_len = READ_CHUNK;
+        let iov_ptr = self.read_iov.as_mut() as *mut libc::iovec;
+        let cmsg_ptr = self.read_cmsg.as_mut_ptr() as *mut libc::c_void;
+        let hdr = self.read_msghdr.as_mut();
+        hdr.msg_name = std::ptr::null_mut();
+        hdr.msg_namelen = 0;
+        hdr.msg_iov = iov_ptr;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = cmsg_ptr;
+        hdr.msg_controllen = CMSG_BUF as _;
+        hdr.msg_flags = 0;
+
+        // SAFETY: scratch, iovec, cmsg buffer and msghdr all live behind
+        // Rc<RefCell<DbusInner>> at stable heap addresses, untouched until the
+        // CQE clears `read_token`. MSG_CMSG_CLOEXEC keeps received fds from
+        // leaking across exec.
+        let sqe = opcode::RecvMsg::new(
             types::Fd(self.fd),
-            self.read_scratch.as_mut_ptr(),
-            READ_CHUNK as u32,
+            self.read_msghdr.as_mut() as *mut libc::msghdr,
         )
+        .flags(libc::MSG_CMSG_CLOEXEC as u32)
         .build();
         self.read_token = Some(self.ring.push(sqe));
     }
 
-    /// Arm a `Send` for queued outgoing bytes, if any and none in flight.
+    /// Arm a `SendMsg` for the next queued frame, carrying its fds (if any) as
+    /// `SCM_RIGHTS`. One message per send so fds stay associated with bytes.
     fn submit_write(&mut self) {
-        if self.write_token.is_some() || !self.in_flight.is_empty() {
+        if self.write_token.is_some() || self.in_flight.is_some() {
             return;
         }
-        if self.out.is_empty() {
+        let Some(frame) = self.out.pop_front() else {
             return;
-        }
-        self.in_flight = self.out.drain(..).collect();
+        };
+        self.in_flight = Some(frame);
 
-        // SAFETY: `in_flight` is owned by `self` (stable heap address behind
-        // Rc<RefCell>) and left untouched until the CQE clears `write_token`.
-        let sqe = opcode::Send::new(
+        let (bytes_ptr, bytes_len, raw_fds) = {
+            let f = self.in_flight.as_ref().unwrap();
+            let raw: Vec<RawFd> = f.fds.iter().map(|fd| fd.as_raw_fd()).collect();
+            (f.bytes.as_ptr() as *mut libc::c_void, f.bytes.len(), raw)
+        };
+        self.write_iov.iov_base = bytes_ptr;
+        self.write_iov.iov_len = bytes_len;
+        let iov_ptr = self.write_iov.as_mut() as *mut libc::iovec;
+
+        // SAFETY: write_cmsg is sized for CMSG_BUF; build_scm_rights asserts fit.
+        let controllen = unsafe { build_scm_rights(&mut self.write_cmsg[..], &raw_fds) };
+        let cmsg_ptr = if controllen > 0 {
+            self.write_cmsg.as_mut_ptr() as *mut libc::c_void
+        } else {
+            std::ptr::null_mut()
+        };
+
+        let hdr = self.write_msghdr.as_mut();
+        hdr.msg_name = std::ptr::null_mut();
+        hdr.msg_namelen = 0;
+        hdr.msg_iov = iov_ptr;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = cmsg_ptr;
+        hdr.msg_controllen = controllen as _;
+        hdr.msg_flags = 0;
+
+        // SAFETY: frame bytes/fds (in `in_flight`), iovec, cmsg and msghdr all
+        // live behind Rc<RefCell> at stable addresses until the CQE clears
+        // `write_token`; the fds are our dup'd copies, closed only on completion.
+        let sqe = opcode::SendMsg::new(
             types::Fd(self.fd),
-            self.in_flight.as_ptr(),
-            self.in_flight.len() as u32,
+            self.write_msghdr.as_ref() as *const libc::msghdr,
         )
         .build();
         self.write_token = Some(self.ring.push(sqe));
     }
 
-    /// Queue a built message and return its zbus-assigned serial.
+    /// Queue a built message and return its zbus-assigned serial. Any fds the
+    /// message carries are dup'd into copies we own until the send completes.
     fn send(&mut self, msg: &Message) -> u32 {
         let serial = u32::from(msg.primary_header().serial_num());
-        self.out.extend(msg.data().iter().copied());
+        let bytes: Vec<u8> = msg.data().iter().copied().collect();
+        // NOTE (verify against your zbus pin): `data().fds()` yields the message's
+        // fds; we dup each so the OutFrame owns them independent of the message.
+        let fds: Vec<OwnedFd> = msg
+            .data()
+            .fds()
+            .iter()
+            .map(|fd| dup_owned(fd.as_raw_fd()))
+            .collect();
+        self.out.push_back(OutFrame { bytes, fds });
         self.submit_write();
         serial
     }
@@ -182,7 +251,28 @@ impl DbusInner {
                 break; // header known, body not fully arrived yet
             }
             let frame: Vec<u8> = self.read_acc.drain(..total).collect();
-            let data = Data::new(frame, Context::new_dbus(LE, 0));
+            // Hand this message exactly the fds it claims (UNIX_FDS header field),
+            // pulled in order from the received-fd FIFO.
+            let want = dbus_unix_fd_count(&frame) as usize;
+            let mut fds: Vec<OwnedFd> = Vec::with_capacity(want);
+            for _ in 0..want {
+                match self.in_fds.pop_front() {
+                    Some(fd) => fds.push(fd),
+                    None => {
+                        eprintln!("dbus: message claims {want} fds but FIFO is short");
+                        break;
+                    }
+                }
+            }
+
+            let ctx = Context::new_dbus(LE, 0);
+            // NOTE (verify against your zbus pin): `Data::new_fds` attaches fds so
+            // the body's `h` indices resolve.
+            let data = if fds.is_empty() {
+                Data::new(frame, ctx)
+            } else {
+                Data::new_fds(frame, ctx, fds)
+            };
             match unsafe { Message::from_bytes(data) } {
                 Ok(msg) => out.push(Rc::new(msg)),
                 Err(e) => eprintln!("dbus: dropping undecodable message: {e}"),
@@ -336,10 +426,19 @@ impl<B: Bus> DbusConnection<B> {
             fd,
             ring,
             read_scratch: Box::new([0u8; READ_CHUNK]),
+            // SAFETY: zeroed iovec/msghdr are valid empty descriptors; fields are
+            // filled in before each submit.
+            read_iov: Box::new(unsafe { std::mem::zeroed() }),
+            read_cmsg: Box::new([0u8; CMSG_BUF]),
+            read_msghdr: Box::new(unsafe { std::mem::zeroed() }),
             read_acc: Vec::with_capacity(READ_CHUNK),
+            in_fds: VecDeque::new(),
             read_token: None,
             out: VecDeque::new(),
-            in_flight: Vec::new(),
+            in_flight: None,
+            write_iov: Box::new(unsafe { std::mem::zeroed() }),
+            write_cmsg: Box::new([0u8; CMSG_BUF]),
+            write_msghdr: Box::new(unsafe { std::mem::zeroed() }),
             write_token: None,
             hello_serial: None,
             unique_name: None,
@@ -386,6 +485,19 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                     eprintln!("dbus [{}] socket closed/error: {n}", B::NAME);
                     Vec::new()
                 } else {
+                    // Harvest any passed fds from the control buffer first.
+                    if (inner.read_msghdr.msg_flags & libc::MSG_CTRUNC) != 0 {
+                        eprintln!(
+                            "dbus [{}]: SCM_RIGHTS truncated (MSG_CTRUNC) - fds lost",
+                            B::NAME
+                        );
+                    }
+                    // SAFETY: read_msghdr was populated by the completed RecvMsg.
+                    let got = unsafe { parse_scm_rights(&inner.read_msghdr) };
+                    for fd in got {
+                        inner.in_fds.push_back(fd);
+                    }
+
                     let n = n as usize;
                     let chunk = inner.read_scratch[..n].to_vec();
                     inner.read_acc.extend_from_slice(&chunk);
@@ -421,8 +533,9 @@ pub fn module<B: Bus, S>() -> impl RegisteredModule<DbusConnection<B>, S> {
                 }
             } else if Some(*token) == inner.write_token {
                 inner.write_token = None;
-                inner.in_flight.clear();
-                inner.submit_write(); // kick off next queued batch, if any
+                // Dropping the frame closes our dup'd fd copies (kernel keeps its own).
+                inner.in_flight = None;
+                inner.submit_write(); // kick off next queued frame, if any
                 Vec::new()
             } else {
                 Vec::new() // it is not dbus token

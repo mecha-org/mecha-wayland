@@ -175,9 +175,38 @@ pub fn handle_standard<B: Bus>(
             call.respond(proxy, &xml);
             return true;
         }
-        return false;
+        // Always answer Introspect — an unanswered call hangs the caller
+        let req = call.path.as_deref().unwrap_or("/");
+        let xml = if req == path {
+            introspect_node(&[interface_xml, STD_INTERFACES_XML])
+        } else if let Some(child) = introspect_child(path, req) {
+            introspect_node(&[&format!("  <node name=\"{child}\"/>\n")])
+        } else {
+            // Unrelated path: a valid, empty node (no interfaces, no children).
+            introspect_node(&[])
+        };
+        call.respond(proxy, &xml);
+        return true;
     }
     false
+}
+
+/// If `req` is a proper ancestor of object path `object`, return the next path
+/// segment from `req` toward `object` — what a caller introspecting `req`
+/// should see as a child `<node>`. `None` if `req` is not on the way to
+/// `object` (unrelated, partial segment, or at/below the object).
+fn introspect_child(object: &str, req: &str) -> Option<String> {
+    let rest = if req == "/" {
+        object.strip_prefix('/')?
+    } else {
+        // require a path-separator boundary so "/org/exa" isn't an ancestor of
+        // "/org/example/..."
+        object.strip_prefix(req)?.strip_prefix('/')?
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.split('/').next()?.to_string())
 }
 
 /// One property access, handed to the closure of [`route_properties`].

@@ -169,11 +169,7 @@ pub fn widget_module<S>() -> impl RegisteredModule<WidgetService, S> {
 
             // 6. Fallback: Reply unknown method
             if let DbusMessage::Call(m) = &ev.msg {
-                let on_our_object = m.header().path().map(|p| p.as_str().to_string()).as_deref()
-                    == Some(WIDGET_PATH);
-                if on_our_object {
-                    s.proxy.reply_unknown_method(m);
-                }
+                s.proxy.reply_unknown_method(m);
             }
         })
 }

@@ -15,5 +15,6 @@ edition = "2024"
 [dependencies]
 app.workspace = true
 io-ring.workspace = true
+libc = "0.2"
 wayland = { workspace = true, features = ["server", "client"] }
 renderer.workspace = true

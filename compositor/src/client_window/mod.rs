@@ -1,6 +1,7 @@
 mod render;
 
 use std::collections::HashSet;
+use std::os::fd::AsRawFd;
 
 use app::{RegisteredModule, prelude::*};
 use io_ring::RingProxy;
@@ -39,6 +40,7 @@ pub struct ClientWindow {
     buffer_ids: [Option<ObjectId>; 2],
     back: usize,
     frame_callbacks: HashSet<ObjectId>,
+    blitting: bool,
 }
 
 impl ClientWindow {
@@ -59,6 +61,7 @@ impl ClientWindow {
             buffer_ids: [None, None],
             back: 0,
             frame_callbacks: HashSet::new(),
+            blitting: false,
         }
     }
 
@@ -161,6 +164,33 @@ impl ClientWindow {
         self.slots.as_ref().map_or(false, |s| s[self.back].released)
     }
 
+    pub fn commit_blitted_frame(&mut self) {
+        let back = self.back;
+        let width = self.width;
+        let height = self.height;
+        let surface = self.surface.as_ref().expect("surface created");
+        let slots = self.slots.as_mut().expect("slots allocated");
+        let next_frame = surface.frame();
+        surface.attach(Some(&slots[back].buffer), 0, 0);
+        surface.damage(0, 0, width as i32, height as i32);
+        surface.commit();
+        slots[back].released = false;
+        self.frame_callbacks.insert(next_frame.object_id().expect("live callback"));
+        self.back ^= 1;
+        self.blitting = true;
+    }
+
+    pub fn back_buffer_info(&self) -> (std::os::fd::RawFd, u32, u32, u32) {
+        let slots = self.slots.as_ref().expect("slots allocated");
+        let slot = &slots[self.back];
+        (
+            slot.surface.backend.prime_fd.as_raw_fd(),
+            slot.surface.backend.stride,
+            slot.surface.width,
+            slot.surface.height,
+        )
+    }
+
     fn on_buffer_release(&mut self, buffer_id: ObjectId) {
         for (i, id) in self.buffer_ids.iter().enumerate() {
             if *id == Some(buffer_id) {
@@ -187,7 +217,7 @@ pub fn module<S>() -> impl app::RegisteredModule<ClientWindow, S> {
             let wayland::WlCallbackEvent::Done { sender, .. } = event;
             let obj_id = sender.object_id().expect("live callback");
             if cw.frame_callbacks.remove(&obj_id) {
-                if cw.is_back_released() {
+                if !cw.blitting && cw.is_back_released() {
                     cw.render_frame();
                 }
             } else {

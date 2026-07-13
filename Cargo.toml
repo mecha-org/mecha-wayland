@@ -13,18 +13,9 @@ members = [
     "crates/ui",
     "crates/ui-macro",
     "crates/animation",
-    "crates/launcher",
-    "crates/launcher/counter",
-    "crates/launcher/status-bar",
-    "crates/launcher/lock-screen",
-    "crates/launcher/pagination",
-    "crates/launcher/volume",
     "crates/interactivity",
     "crates/window-manager",
-    "crates/launcher/notification",
-    "crates/launcher/navbar",
 ]
-default-members = ["crates/launcher"]
 resolver = "2"
 
 [workspace.dependencies]

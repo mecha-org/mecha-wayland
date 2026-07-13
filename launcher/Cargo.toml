@@ -1,0 +1,55 @@
+[workspace]
+members = [
+    ".",
+    "counter",
+    "status-bar",
+    "lock-screen",
+    "pagination",
+    "volume",
+    "notification",
+    "navbar",
+]
+
+[workspace.dependencies]
+# crates from the core
+app = { path = "../crates/app" }
+renderer = { path = "../crates/renderer" }
+assets = { path = "../crates/assets" }
+io-ring = { path = "../crates/io-ring" }
+timer = { path = "../crates/timer" }
+wayland = { path = "../crates/wayland" }
+utils = { path = "../crates/utils" }
+ui = { path = "../crates/ui" }
+animation = { path = "../crates/animation" }
+interactivity = { path = "../crates/interactivity" }
+window-manager = { path = "../crates/window-manager" }
+
+# launcher sub-crates
+notification = { path = "notification" }
+launcher-counter = { path = "counter" }
+launcher-volume = { path = "volume" }
+launcher-status-bar = { path = "status-bar" }
+launcher-navbar = { path = "navbar" }
+launcher-pagination = { path = "pagination" }
+
+# third-party
+taffy = "0.10.1"
+libc = "0.2"
+anyhow = "1"
+
+[package]
+name = "launcher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app.workspace = true
+io-ring.workspace = true
+window-manager.workspace = true
+interactivity.workspace = true
+launcher-navbar.workspace = true
+launcher-status-bar.workspace = true
+launcher-counter.workspace = true
+notification.workspace = true
+launcher-pagination.workspace = true
+launcher-volume.workspace = true

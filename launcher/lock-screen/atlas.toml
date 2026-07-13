@@ -1,0 +1,7 @@
+[[atlas]]
+name = "ui"
+
+[[atlas.font]]
+name = "mono"
+path = "../../assets/RobotoMono-Regular.ttf"
+sizes = [14, 16, 24, 32, 48, 56, 64, 100]

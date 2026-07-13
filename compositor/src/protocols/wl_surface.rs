@@ -22,8 +22,10 @@ pub struct DamageRect {
     pub height: i32,
 }
 
+// ── Current state ───────────────────────────────────────────────────────────────
+
 #[derive(Debug)]
-pub struct SurfaceData {
+pub struct CurrentState {
     pub buffer: Option<ObjectId>,
     pub offset_x: i32,
     pub offset_y: i32,
@@ -32,29 +34,79 @@ pub struct SurfaceData {
     pub opaque_region: Option<Rc<Region>>,
     pub input_region: Option<Rc<Region>>,
 
+    pub damage_full: bool,
+    pub surface_damage: SmallVec<[DamageRect; 4]>,
+    pub buffer_damage: SmallVec<[DamageRect; 4]>,
+
+    pub frame_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
+    pub release_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
+}
+
+impl CurrentState {
+    fn new() -> Self {
+        Self {
+            buffer: None,
+            offset_x: 0,
+            offset_y: 0,
+            scale: 1,
+            transform: 0,
+            opaque_region: None,
+            input_region: None,
+            damage_full: false,
+            surface_damage: SmallVec::new(),
+            buffer_damage: SmallVec::new(),
+            frame_callbacks: SmallVec::new(),
+            release_callbacks: SmallVec::new(),
+        }
+    }
+}
+
+// ── Pending state ───────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct PendingState {
+    pub buffer: Option<Option<ObjectId>>,
+    pub offset_x: i32,
+    pub offset_y: i32,
+    pub scale: i32,
+    pub transform: i32,
+    pub opaque_region: Option<Option<Rc<Region>>>,
+    pub input_region: Option<Option<Rc<Region>>>,
+    pub damage_full: bool,
+    pub surface_damage: SmallVec<[DamageRect; 4]>,
+    pub buffer_damage: SmallVec<[DamageRect; 4]>,
+    pub frame_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
+    pub release_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
+}
+
+impl PendingState {
+    fn new() -> Self {
+        Self {
+            buffer: None,
+            offset_x: 0,
+            offset_y: 0,
+            scale: 1,
+            transform: 0,
+            opaque_region: None,
+            input_region: None,
+            damage_full: false,
+            surface_damage: SmallVec::new(),
+            buffer_damage: SmallVec::new(),
+            frame_callbacks: SmallVec::new(),
+            release_callbacks: SmallVec::new(),
+        }
+    }
+}
+
+// ── Surface data ────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct SurfaceData {
+    pub current: CurrentState,
+    pub pending: PendingState,
+
     pub handle: Handle<WlSurface>,
     pub output: Option<ObjectId>,
-
-    pub pending_buffer: Option<Option<ObjectId>>,
-    pub pending_offset_x: i32,
-    pub pending_offset_y: i32,
-    pub pending_scale: i32,
-    pub pending_transform: i32,
-    pub pending_opaque_region: Option<Option<Rc<Region>>>,
-    pub pending_input_region: Option<Option<Rc<Region>>>,
-    pub pending_damage_full: bool,
-    pub pending_surface_damage: SmallVec<[DamageRect; 4]>,
-    pub pending_buffer_damage: SmallVec<[DamageRect; 4]>,
-
-    pub pending_frame_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
-    pub pending_release_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
-
-    pub committed_frame_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
-    pub committed_release_callbacks: SmallVec<[Handle<WlCallback>; 1]>,
-
-    pub committed_damage_full: bool,
-    pub committed_surface_damage: SmallVec<[DamageRect; 4]>,
-    pub committed_buffer_damage: SmallVec<[DamageRect; 4]>,
 
     pub previous_buffer: Option<ObjectId>,
 
@@ -64,32 +116,10 @@ pub struct SurfaceData {
 impl SurfaceData {
     fn new(handle: Handle<WlSurface>) -> Self {
         Self {
+            current: CurrentState::new(),
+            pending: PendingState::new(),
             handle,
             output: None,
-            buffer: None,
-            offset_x: 0,
-            offset_y: 0,
-            scale: 1,
-            transform: 0,
-            opaque_region: None,
-            input_region: None,
-            pending_buffer: None,
-            pending_offset_x: 0,
-            pending_offset_y: 0,
-            pending_scale: 1,
-            pending_transform: 0,
-            pending_opaque_region: None,
-            pending_input_region: None,
-            pending_damage_full: false,
-            pending_surface_damage: SmallVec::new(),
-            pending_buffer_damage: SmallVec::new(),
-            pending_frame_callbacks: SmallVec::new(),
-            pending_release_callbacks: SmallVec::new(),
-            committed_frame_callbacks: SmallVec::new(),
-            committed_release_callbacks: SmallVec::new(),
-            committed_damage_full: false,
-            committed_surface_damage: SmallVec::new(),
-            committed_buffer_damage: SmallVec::new(),
             previous_buffer: None,
             role: None,
         }
@@ -107,29 +137,78 @@ impl SurfaceData {
     }
 
     pub fn is_opaque_at(&self, x: i32, y: i32) -> bool {
-        self.opaque_region
+        self.current
+            .opaque_region
             .as_ref()
             .map(|r| r.contains(x, y))
             .unwrap_or(false)
     }
 
     pub fn accepts_input_at(&self, x: i32, y: i32) -> bool {
-        match &self.input_region {
+        match &self.current.input_region {
             None => true,
             Some(r) => r.contains(x, y),
         }
     }
 
     pub fn fire_frame_callbacks(&mut self, now: u32) {
-        for cb in self.committed_frame_callbacks.drain(..) {
+        for cb in self.current.frame_callbacks.drain(..) {
             cb.done(now);
         }
     }
 
     pub fn fire_release_callbacks(&mut self) {
-        for cb in self.committed_release_callbacks.drain(..) {
+        for cb in self.current.release_callbacks.drain(..) {
             cb.done(0);
         }
+    }
+
+    pub fn commit(&mut self) {
+        if !self.pending.release_callbacks.is_empty()
+            && !matches!(self.pending.buffer, Some(Some(_)))
+        {
+            self.pending.release_callbacks.clear();
+        }
+
+        self.previous_buffer = self.current.buffer;
+
+        if let Some(new_buf) = self.pending.buffer.take() {
+            self.current.buffer = new_buf;
+        }
+        self.current.offset_x = self
+            .current
+            .offset_x
+            .saturating_add(self.pending.offset_x);
+        self.current.offset_y = self
+            .current
+            .offset_y
+            .saturating_add(self.pending.offset_y);
+        self.pending.offset_x = 0;
+        self.pending.offset_y = 0;
+        self.current.scale = self.pending.scale;
+        self.current.transform = self.pending.transform;
+        if let Some(r) = self.pending.opaque_region.take() {
+            self.current.opaque_region = r;
+        }
+        if let Some(r) = self.pending.input_region.take() {
+            self.current.input_region = r;
+        }
+
+        self.current.damage_full = self.pending.damage_full;
+        self.pending.damage_full = false;
+        if self.current.damage_full {
+            self.pending.surface_damage.clear();
+            self.pending.buffer_damage.clear();
+        }
+        self.current.surface_damage = std::mem::take(&mut self.pending.surface_damage);
+        self.current.buffer_damage = std::mem::take(&mut self.pending.buffer_damage);
+
+        self.current
+            .frame_callbacks
+            .append(&mut self.pending.frame_callbacks);
+        self.current
+            .release_callbacks
+            .append(&mut self.pending.release_callbacks);
     }
 }
 
@@ -152,6 +231,8 @@ impl SurfaceRole {
     }
 }
 
+// ── Module state ────────────────────────────────────────────────────────────────
+
 #[derive(Debug, State)]
 pub struct SurfaceState {
     pub surfaces: HashMap<ObjectId, SurfaceData>,
@@ -172,6 +253,8 @@ pub struct SurfaceCommitted {
     pub surface_id: ObjectId,
 }
 impl Event for SurfaceCommitted {}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────────
 
 fn now_msec() -> u32 {
     static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
@@ -224,6 +307,8 @@ fn add_damage(full: &mut bool, tgt: &mut SmallVec<[DamageRect; 4]>, r: DamageRec
     tgt.push(r);
 }
 
+// ── Module ──────────────────────────────────────────────────────────────────────
+
 pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
     Module::<SurfaceState, _, _>::new()
         .on(|s: &mut SurfaceState, ev: &WlCompositorRequest| {
@@ -238,10 +323,10 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
             match ev {
                 WlSurfaceRequest::Destroy { sender, .. } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_frame_callbacks.clear();
-                        surf.pending_release_callbacks.clear();
-                        surf.committed_frame_callbacks.clear();
-                        surf.committed_release_callbacks.clear();
+                        surf.pending.frame_callbacks.clear();
+                        surf.pending.release_callbacks.clear();
+                        surf.current.frame_callbacks.clear();
+                        surf.current.release_callbacks.clear();
                     }
                     if let Some(sid) = sender.object_id() {
                         s.surfaces.remove(&sid);
@@ -259,9 +344,9 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                             post_error(sender, sid, 3, "non-zero attach x/y at v5+");
                         }
                         let id = buffer.as_ref().and_then(|b| b.object_id());
-                        surf.pending_buffer = Some(id);
-                        surf.pending_offset_x = *x;
-                        surf.pending_offset_y = *y;
+                        surf.pending.buffer = Some(id);
+                        surf.pending.offset_x = *x;
+                        surf.pending.offset_y = *y;
                     }
                     None
                 }
@@ -274,8 +359,8 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                 } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
                         add_damage(
-                            &mut surf.pending_damage_full,
-                            &mut surf.pending_surface_damage,
+                            &mut surf.pending.damage_full,
+                            &mut surf.pending.surface_damage,
                             DamageRect {
                                 x: *x,
                                 y: *y,
@@ -295,8 +380,8 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                 } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
                         add_damage(
-                            &mut surf.pending_damage_full,
-                            &mut surf.pending_buffer_damage,
+                            &mut surf.pending.damage_full,
+                            &mut surf.pending.buffer_damage,
                             DamageRect {
                                 x: *x,
                                 y: *y,
@@ -309,13 +394,13 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                 }
                 WlSurfaceRequest::Frame { sender, callback } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_frame_callbacks.push(callback.clone());
+                        surf.pending.frame_callbacks.push(callback.clone());
                     }
                     None
                 }
                 WlSurfaceRequest::GetRelease { sender, callback } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_release_callbacks.push(callback.clone());
+                        surf.pending.release_callbacks.push(callback.clone());
                     }
                     None
                 }
@@ -326,7 +411,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         normalize_opaque(resolve_region(&mut s.regions, region))
                     };
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_opaque_region = Some(resolved);
+                        surf.pending.opaque_region = Some(resolved);
                     }
                     None
                 }
@@ -337,7 +422,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         Some(resolve_region(&mut s.regions, region))
                     };
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_input_region = Some(resolved);
+                        surf.pending.input_region = Some(resolved);
                     }
                     None
                 }
@@ -346,7 +431,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         if *scale <= 0 {
                             post_error(sender, sid, 0, "buffer scale must be > 0");
                         } else {
-                            surf.pending_scale = *scale;
+                            surf.pending.scale = *scale;
                         }
                     }
                     None
@@ -356,62 +441,27 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         if !(0..=7).contains(transform) {
                             post_error(sender, sid, 1, "invalid buffer transform");
                         } else {
-                            surf.pending_transform = *transform;
+                            surf.pending.transform = *transform;
                         }
                     }
                     None
                 }
                 WlSurfaceRequest::Offset { sender, x, y } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending_offset_x = *x;
-                        surf.pending_offset_y = *y;
+                        surf.pending.offset_x = *x;
+                        surf.pending.offset_y = *y;
                     }
                     None
                 }
                 WlSurfaceRequest::Commit { sender } => {
                     let mut emitted = None;
                     if let Some((sid, surf)) = with_surface(s, sender) {
-                        if !surf.pending_release_callbacks.is_empty()
-                            && !matches!(surf.pending_buffer, Some(Some(_)))
-                        {
+                        let has_release = !surf.pending.release_callbacks.is_empty();
+                        let has_buffer = matches!(surf.pending.buffer, Some(Some(_)));
+                        if has_release && !has_buffer {
                             post_error(sender, sid, 5, "get_release without buffer attached");
-                            surf.pending_release_callbacks.clear();
                         }
-
-                        surf.previous_buffer = surf.buffer;
-
-                        if let Some(new_buf) = surf.pending_buffer.take() {
-                            surf.buffer = new_buf;
-                        }
-                        surf.offset_x = surf.offset_x.saturating_add(surf.pending_offset_x);
-                        surf.offset_y = surf.offset_y.saturating_add(surf.pending_offset_y);
-                        surf.pending_offset_x = 0;
-                        surf.pending_offset_y = 0;
-                        surf.scale = surf.pending_scale;
-                        surf.transform = surf.pending_transform;
-                        if let Some(r) = surf.pending_opaque_region.take() {
-                            surf.opaque_region = r;
-                        }
-                        if let Some(r) = surf.pending_input_region.take() {
-                            surf.input_region = r;
-                        }
-
-                        surf.committed_damage_full = surf.pending_damage_full;
-                        surf.pending_damage_full = false;
-                        if surf.committed_damage_full {
-                            surf.pending_surface_damage.clear();
-                            surf.pending_buffer_damage.clear();
-                        }
-                        surf.committed_surface_damage =
-                            std::mem::take(&mut surf.pending_surface_damage);
-                        surf.committed_buffer_damage =
-                            std::mem::take(&mut surf.pending_buffer_damage);
-
-                        surf.committed_frame_callbacks
-                            .append(&mut surf.pending_frame_callbacks);
-                        surf.committed_release_callbacks
-                            .append(&mut surf.pending_release_callbacks);
-
+                        surf.commit();
                         emitted = Some(SurfaceCommitted { surface_id: sid });
                     }
                     emitted

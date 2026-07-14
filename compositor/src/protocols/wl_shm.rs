@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 
-use app::{RegisteredModule, Start, prelude::*};
+use app::{prelude::*, RegisteredModule, Start};
 use wayland::{
-    Handle, Interface, ObjectId, WlBuffer, WlBufferRequest, WlShm, WlShmFormat,
-    WlShmPoolRequest, WlShmRequest,
+    Handle, Interface, ObjectId, WlBuffer, WlBufferRequest, WlShm, WlShmFormat, WlShmPoolRequest,
+    WlShmRequest,
 };
 
 use crate::protocols::wl_registry::RegisterGlobal;
@@ -14,6 +14,7 @@ pub struct ShmPool {
     pub ptr: NonNull<u8>,
     pub size: usize,
     pub fd: OwnedFd,
+    pub pending_destroy: bool,
 }
 
 unsafe impl Send for ShmPool {}
@@ -50,10 +51,7 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
         })
         .on(|state: &mut WlShmState, ev: &WlShmRequest| {
             match ev {
-                WlShmRequest::CreatePool { sender, id, fd, size } => {
-                    sender.format(WlShmFormat::Argb8888);
-                    sender.format(WlShmFormat::Xrgb8888);
-
+                WlShmRequest::CreatePool { sender: _, id, fd, size, } => {
                     let size = *size as usize;
                     let ptr = unsafe {
                         libc::mmap(
@@ -70,7 +68,7 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
                     let owned_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(fd.as_raw_fd())) };
 
                     let pool_id = id.object_id().expect("live pool");
-                    state.pools.insert(pool_id, ShmPool { ptr, size, fd: owned_fd });
+                    state.pools.insert(pool_id, ShmPool { ptr, size, fd: owned_fd, pending_destroy: false });
                 }
                 WlShmRequest::Release { .. } => {}
             }
@@ -98,7 +96,12 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
                 }
                 WlShmPoolRequest::Destroy { sender } => {
                     let pool_id = sender.object_id().expect("live pool");
-                    if let Some(pool) = state.pools.remove(&pool_id) {
+                    let has_buffers = state.buffers.values().any(|b| b.pool_id == pool_id);
+                    if has_buffers {
+                        if let Some(pool) = state.pools.get_mut(&pool_id) {
+                            pool.pending_destroy = true;
+                        }
+                    } else if let Some(pool) = state.pools.remove(&pool_id) {
                         unsafe { libc::munmap(pool.ptr.as_ptr() as *mut _, pool.size) };
                     }
                 }
@@ -132,7 +135,19 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
         .on(|state: &mut WlShmState, ev: &WlBufferRequest| {
             let WlBufferRequest::Destroy { sender } = ev;
             let buf_id = sender.object_id().expect("live buffer");
-            state.buffers.remove(&buf_id);
+            if let Some(buf) = state.buffers.remove(&buf_id) {
+                let pool_id = buf.pool_id;
+                let should_destroy = state
+                    .pools
+                    .get(&pool_id)
+                    .map_or(false, |p| p.pending_destroy)
+                    && !state.buffers.values().any(|b| b.pool_id == pool_id);
+                if should_destroy {
+                    if let Some(pool) = state.pools.remove(&pool_id) {
+                        unsafe { libc::munmap(pool.ptr.as_ptr() as *mut _, pool.size) };
+                    }
+                }
+            }
             hlist![]
         })
 }

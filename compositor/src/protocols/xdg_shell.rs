@@ -1,8 +1,7 @@
 use app::{prelude::*, RegisteredModule, Start};
 use wayland::{
-    Interface,
-    XdgPositionerRequest, XdgSurfaceRequest,
-    XdgToplevelRequest, XdgWmBase, XdgWmBaseRequest,
+    Interface, XdgPositionerRequest, XdgSurfaceRequest, XdgToplevelRequest, XdgWmBase,
+    XdgWmBaseRequest,
 };
 
 use crate::protocols::wl_registry::RegisterGlobal;
@@ -21,12 +20,28 @@ impl XdgShellState {
 
 pub fn module<S>() -> impl RegisteredModule<XdgShellState, S> {
     Module::<XdgShellState, _, _>::new()
-        .on(|_: &mut XdgShellState, _: &Start| -> Option<RegisterGlobal> {
-            Some(RegisterGlobal {
-                interface: XdgWmBase::NAME,
-                version: XdgWmBase::VERSION,
-            })
+        .on(|state: &mut XdgShellState, ev: &WlRegistryRequest| {
+            let WlRegistryRequest::Bind {
+                sender, name, id, ..
+            } = ev;
+            if let Some((_, interface, _)) = state.globals.iter().find(|(n, _, _)| n == name) {
+                match *interface {
+                    XdgWmBase::NAME => {
+                        sender.proxy.new_handle::<XdgWmBase>(*id);
+                    }
+                    _ => {}
+                }
+            }
+            hlist![]
         })
+        .on(
+            |_: &mut XdgShellState, _: &Start| -> Option<RegisterGlobal> {
+                Some(RegisterGlobal {
+                    interface: XdgWmBase::NAME,
+                    version: XdgWmBase::VERSION,
+                })
+            },
+        )
         .on(|_: &mut XdgShellState, ev: &XdgWmBaseRequest| {
             match ev {
                 XdgWmBaseRequest::Destroy { .. } => {}
@@ -50,10 +65,6 @@ pub fn module<S>() -> impl RegisteredModule<XdgShellState, S> {
             }
             hlist![]
         })
-        .on(|_: &mut XdgShellState, _: &XdgToplevelRequest| {
-            hlist![]
-        })
-        .on(|_: &mut XdgShellState, _: &XdgPositionerRequest| {
-            hlist![]
-        })
+        .on(|_: &mut XdgShellState, _: &XdgToplevelRequest| hlist![])
+        .on(|_: &mut XdgShellState, _: &XdgPositionerRequest| hlist![])
 }

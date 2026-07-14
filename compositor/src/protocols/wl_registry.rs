@@ -1,5 +1,7 @@
-use app::{RegisteredModule, prelude::*};
-use wayland::{Interface, WlCompositor, WlDisplayRequest, WlRegistryRequest, WlShm, WlShmFormat, XdgWmBase};
+use app::{prelude::*, RegisteredModule};
+use wayland::{
+    Interface, WlCompositor, WlDisplayRequest, WlRegistryRequest, WlShm, WlShmFormat, XdgWmBase,
+};
 
 #[derive(Debug, State)]
 pub struct WlRegistryState {
@@ -39,28 +41,6 @@ pub fn module<S>() -> impl RegisteredModule<WlRegistryState, S> {
             if let WlDisplayRequest::GetRegistry { registry, .. } = ev {
                 for &(name, interface, version) in state.globals.iter() {
                     registry.global(name, interface, version);
-                }
-            }
-            hlist![]
-        })
-        .on(|state: &mut WlRegistryState, ev: &WlRegistryRequest| {
-            let WlRegistryRequest::Bind { sender, name, id, .. } = ev;
-            if let Some((_, interface, _)) =
-                state.globals.iter().find(|(n, _, _)| n == name)
-            {
-                match *interface {
-                    WlShm::NAME => {
-                        let handle = sender.proxy.new_handle::<WlShm>(*id);
-                        handle.format(WlShmFormat::Argb8888);
-                        handle.format(WlShmFormat::Xrgb8888);
-                    }
-                    WlCompositor::NAME => {
-                        sender.proxy.new_handle::<WlCompositor>(*id);
-                    }
-                    XdgWmBase::NAME => {
-                        sender.proxy.new_handle::<XdgWmBase>(*id);
-                    }
-                    _ => {}
                 }
             }
             hlist![]

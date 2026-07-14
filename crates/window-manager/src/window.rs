@@ -15,7 +15,7 @@ pub use wayland::{
 };
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
-pub struct WindowId(pub(crate) ObjectId);
+pub struct WindowId(pub(crate) u32);
 
 pub struct WindowSettings {
     pub width: u32,
@@ -64,6 +64,7 @@ pub(crate) trait AnyWindow {
         w: u32,
         h: u32,
     );
+    fn id(&self) -> WindowId;
     fn is_configured(&self) -> bool;
     fn dimensions(&self) -> (u32, u32);
     fn request_frame(&self) -> Handle<WlCallback>;
@@ -77,9 +78,11 @@ pub(crate) trait AnyWindow {
     fn wants_input(&self) -> bool;
     fn set_input_enabled(&mut self, enabled: bool);
     fn input_enabled(&self) -> bool;
+    fn destroy(&mut self);
 }
 
 pub struct Window<T> {
+    id: WindowId,
     surface: Option<Handle<WlSurface>>,
     slots: Option<[Slot; 2]>,
     buffer_ids: [Option<ObjectId>; 2],
@@ -98,6 +101,7 @@ pub struct Window<T> {
 
 impl<T: WidgetList> Window<T> {
     pub fn new(
+        id: WindowId,
         width: u32,
         height: u32,
         clear_color: Color,
@@ -106,6 +110,7 @@ impl<T: WidgetList> Window<T> {
         gesture_config: Option<interactivity::gesture::GestureConfig>,
     ) -> Self {
         Self {
+            id,
             surface: None,
             slots: None,
             buffer_ids: [None, None],
@@ -122,12 +127,20 @@ impl<T: WidgetList> Window<T> {
             input_enabled: true,
         }
     }
+
+    pub fn id(&self) -> WindowId {
+        self.id
+    }
 }
 
 impl<T: WidgetList + 'static> AnyWindow for Window<T> {
     fn init(&mut self, surface: Handle<WlSurface>, kind: WindowKindHandles) {
         self.surface = Some(surface);
         self.kind = Some(kind);
+    }
+
+    fn id(&self) -> WindowId {
+        self.id()
     }
 
     fn configure(
@@ -339,5 +352,23 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
 
     fn set_input_enabled(&mut self, enabled: bool) {
         self.input_enabled = enabled;
+    }
+
+    fn destroy(&mut self) {
+        if let Some(kind) = &self.kind {
+            match kind {
+                WindowKindHandles::LayerShell { layer_surface } => layer_surface.destroy(),
+                WindowKindHandles::Xdg {
+                    xdg_surface,
+                    toplevel,
+                } => {
+                    xdg_surface.destroy();
+                    toplevel.destroy()
+                }
+            }
+        }
+        if let Some(surface) = &self.surface {
+            surface.destroy()
+        }
     }
 }

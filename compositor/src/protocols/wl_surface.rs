@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use app::{prelude::*, RegisteredModule};
 use smallvec::SmallVec;
@@ -170,6 +169,11 @@ impl SurfaceData {
             self.pending.release_callbacks.clear();
         }
 
+        // Fire release callbacks for the buffer being replaced.
+        if self.current.buffer.is_some() && self.pending.buffer.is_some() {
+            self.fire_release_callbacks();
+        }
+
         self.previous_buffer = self.current.buffer;
 
         if let Some(new_buf) = self.pending.buffer.take() {
@@ -256,11 +260,6 @@ impl Event for SurfaceCommitted {}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
-fn now_msec() -> u32 {
-    static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    START.elapsed().as_millis() as u32
-}
-
 fn post_error(sender: &Handle<impl wayland::Interface>, object_id: ObjectId, code: u32, msg: &str) {
     if let Some(d) = sender.proxy.get_handle::<WlDisplay>(DISPLAY_OBJECT_ID) {
         d.error(object_id, code, msg);
@@ -323,10 +322,12 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
             match ev {
                 WlSurfaceRequest::Destroy { sender, .. } => {
                     if let Some((_, surf)) = with_surface(s, sender) {
+                        if surf.current.buffer.is_some() {
+                            surf.fire_release_callbacks();
+                        }
                         surf.pending.frame_callbacks.clear();
                         surf.pending.release_callbacks.clear();
                         surf.current.frame_callbacks.clear();
-                        surf.current.release_callbacks.clear();
                     }
                     if let Some(sid) = sender.object_id() {
                         s.surfaces.remove(&sid);

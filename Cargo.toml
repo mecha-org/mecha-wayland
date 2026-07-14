@@ -14,6 +14,7 @@ members = [
     "crates/animation",
     "crates/interactivity",
     "crates/window-manager",
+    "compositor",
 ]
 resolver = "2"
 

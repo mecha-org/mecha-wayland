@@ -10,6 +10,7 @@ use client_window::ClientWindow;
 use protocols::wl_registry::WlRegistryState;
 use protocols::wl_shm::WlShmState;
 use protocols::wl_surface::{SurfaceCommitted, SurfaceState};
+use protocols::xdg_shell::XdgShellState;
 
 #[derive(State)]
 struct Compositor {
@@ -18,30 +19,23 @@ struct Compositor {
     registry: WlRegistryState,
     shm: WlShmState,
     surfaces: SurfaceState,
+    xdg_shell: XdgShellState,
     client_window: ClientWindow,
 }
 
-fn now_msec() -> u32 {
-    static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    START.elapsed().as_millis() as u32
-}
-
-use std::time::Instant;
-
 fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
-    let (buf_id, prev_buf_id, frame_callbacks, release_callbacks) = {
+    let (buf_id, prev_buf_id, _frame_callbacks) = {
         let surface = match compositor.surfaces.surfaces.get_mut(&ev.surface_id) {
             Some(s) => s,
             None => return,
         };
-        let buf_id = match surface.buffer {
+        let buf_id = match surface.current.buffer {
             Some(id) => id,
             None => return,
         };
         let prev_id = surface.previous_buffer.take();
-        let frames: Vec<_> = surface.committed_frame_callbacks.drain(..).collect();
-        let releases: Vec<_> = surface.committed_release_callbacks.drain(..).collect();
-        (buf_id, prev_id, frames, releases)
+        let frames: Vec<_> = surface.current.frame_callbacks.drain(..).collect();
+        (buf_id, prev_id, frames)
     };
 
     let (src_ptr, src_stride, src_width_bytes, src_height) = {
@@ -65,7 +59,7 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
         libc::mmap(
             std::ptr::null_mut(),
             dst_size,
-            libc::PROT_WRITE,
+            libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_SHARED,
             prime_fd,
             0,
@@ -97,14 +91,6 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
         }
     }
 
-    let now = now_msec();
-    for cb in frame_callbacks {
-        cb.done(now);
-    }
-    for cb in release_callbacks {
-        cb.done(0);
-    }
-
     compositor.client_window.commit_blitted_frame();
 }
 
@@ -119,6 +105,7 @@ fn main() {
         registry: WlRegistryState::new(),
         shm: WlShmState::new(),
         surfaces: SurfaceState::new(),
+        xdg_shell: XdgShellState::default(),
         client_window,
     })
     .mount(wayland::server_module())
@@ -131,6 +118,7 @@ fn main() {
     .mount(protocols::wl_shm::module())
     .mount(protocols::wl_region::module())
     .mount(protocols::wl_surface::module())
+    .mount(protocols::xdg_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {
             blit(compositor, ev);

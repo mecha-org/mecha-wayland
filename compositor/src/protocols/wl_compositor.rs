@@ -1,4 +1,4 @@
-use app::{RegisteredModule, Start, prelude::*};
+use app::{prelude::*, RegisteredModule, Start};
 use wayland::{Interface, WlCompositor, WlCompositorRequest};
 
 use crate::Compositor;
@@ -13,7 +13,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
             })
         })
         .on(|_: &mut Compositor, ev: &WlCompositorRequest| {
-            println!("wl_compositor: {:?}", ev);
+            let _ = ev;
             hlist![]
         })
 }

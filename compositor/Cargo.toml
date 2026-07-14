@@ -5,6 +5,7 @@ members = ["."]
 app = { path = "../crates/app" }
 io-ring = { path = "../crates/io-ring" }
 wayland = { path = "../crates/wayland" }
+renderer = { path = "../crates/renderer" }
 
 [package]
 name = "compositor"
@@ -14,4 +15,7 @@ edition = "2024"
 [dependencies]
 app.workspace = true
 io-ring.workspace = true
-wayland = { workspace = true, features = ["server"] }
+libc = "0.2"
+wayland = { workspace = true, features = ["server", "client"] }
+renderer.workspace = true
+smallvec = { version = "1.8.0", features = ["const_generics", "const_new", "union"] }

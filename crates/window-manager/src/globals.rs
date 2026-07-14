@@ -1,4 +1,7 @@
-use wayland::{Handle, WlCompositor, WlKeyboard, WlOutput, WlPointer, WlSeat, WlTouch, XdgWmBase, ZwlrLayerShellV1, ZwpLinuxDmabufV1};
+use wayland::{
+    Handle, WlCompositor, WlKeyboard, WlOutput, WlPointer, WlSeat, WlTouch, XdgWmBase,
+    ZwlrLayerShellV1, ZwpLinuxDmabufV1,
+};
 
 #[derive(Default)]
 pub struct WaylandGlobals {

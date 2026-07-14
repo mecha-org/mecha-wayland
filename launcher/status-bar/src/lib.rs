@@ -57,23 +57,27 @@ impl StatusBarUi {
 
 fn format_clock(h: u32, m: u32, day: u32, mon: u32) -> String {
     const MONTHS: &[&str] = &[
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let hour = ((h + 11) % 12) + 1;
     let am_pm = if h < 12 { "AM" } else { "PM" };
-    format!("{} {}  {:02}:{:02} {}", day, MONTHS[mon as usize], hour, m, am_pm)
+    format!(
+        "{} {}  {:02}:{:02} {}",
+        day, MONTHS[mon as usize], hour, m, am_pm
+    )
 }
 
 impl WidgetList for StatusBarUi {
     fn build_children(&mut self, tree: &mut WidgetTree) -> Vec<taffy::NodeId> {
-        let node = tree.new_leaf(taffy::Style {
-            size: taffy::Size {
-                width: taffy::Dimension::percent(1.0),
-                height: taffy::Dimension::percent(1.0),
-            },
-            ..taffy::Style::default()
-        }).unwrap();
+        let node = tree
+            .new_leaf(taffy::Style {
+                size: taffy::Size {
+                    width: taffy::Dimension::percent(1.0),
+                    height: taffy::Dimension::percent(1.0),
+                },
+                ..taffy::Style::default()
+            })
+            .unwrap();
         self.container = Some(node);
         vec![node]
     }

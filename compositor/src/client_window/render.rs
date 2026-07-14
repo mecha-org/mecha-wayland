@@ -47,5 +47,9 @@ fn alloc_slot(
         )
     };
 
-    Slot { surface, buffer, released: true }
+    Slot {
+        surface,
+        buffer,
+        released: true,
+    }
 }

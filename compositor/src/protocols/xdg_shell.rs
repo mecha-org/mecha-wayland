@@ -1,4 +1,4 @@
-use app::{prelude::*, RegisteredModule, Start};
+use app::{RegisteredModule, Start, prelude::*};
 use wayland::{
     Interface, XdgPositionerRequest, XdgSurfaceRequest, XdgToplevelRequest, XdgWmBase,
     XdgWmBaseRequest,

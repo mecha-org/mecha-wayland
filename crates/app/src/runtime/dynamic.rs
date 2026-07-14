@@ -32,10 +32,7 @@ impl<S, Modules> App<S, Modules> {
         &self.state
     }
 
-    pub fn mount<SubState: 'static, M>(
-        self,
-        module: M,
-    ) -> App<S, HCons<(), Modules>>
+    pub fn mount<SubState: 'static, M>(self, module: M) -> App<S, HCons<(), Modules>>
     where
         S: Lens<SubState> + 'static,
         M: RegisteredModule<SubState, S>,
@@ -58,7 +55,12 @@ impl<S, Modules> App<S, Modules> {
     }
 
     pub fn dispatch<E: Event>(&mut self, event: &E) {
-        let App { state, handlers, queue, .. } = self;
+        let App {
+            state,
+            handlers,
+            queue,
+            ..
+        } = self;
         for h in handlers.iter() {
             h(state, event as &dyn Any, queue);
         }

@@ -1,8 +1,8 @@
-use app::{prelude::*, RegisteredModule, Start};
+use app::{RegisteredModule, Start, prelude::*};
 use wayland::{Interface, WlCompositor, WlCompositorRequest};
 
-use crate::protocols::wl_registry::RegisterGlobal;
 use crate::Compositor;
+use crate::protocols::wl_registry::RegisterGlobal;
 
 pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
     Module::<Compositor, _, _>::new()

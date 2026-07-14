@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 
-use app::{prelude::*, RegisteredModule, Start};
+use app::{RegisteredModule, Start, prelude::*};
 use wayland::{
     Handle, Interface, ObjectId, WlBuffer, WlBufferRequest, WlShm, WlShmFormat, WlShmPoolRequest,
     WlShmRequest,

@@ -1,4 +1,4 @@
-use app::{prelude::*, Poll, PrePoll, Start};
+use app::{Poll, PrePoll, Start, prelude::*};
 use io_ring::{Ring, RingSettings};
 use wayland::{ClientConnected, WaylandServer};
 

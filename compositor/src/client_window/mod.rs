@@ -49,7 +49,11 @@ impl ClientWindow {
         let renderer = Renderer::new().expect("renderer init failed");
         Self {
             wayland,
-            globals: Globals { compositor: None, xdg_wm_base: None, dmabuf: None },
+            globals: Globals {
+                compositor: None,
+                xdg_wm_base: None,
+                dmabuf: None,
+            },
             renderer,
             width,
             height,
@@ -101,10 +105,16 @@ impl ClientWindow {
     }
 
     fn create_surface(&mut self) {
-        let compositor =
-            self.globals.compositor.clone().expect("compositor global missing");
-        let xdg_wm_base =
-            self.globals.xdg_wm_base.clone().expect("xdg_wm_base global missing");
+        let compositor = self
+            .globals
+            .compositor
+            .clone()
+            .expect("compositor global missing");
+        let xdg_wm_base = self
+            .globals
+            .xdg_wm_base
+            .clone()
+            .expect("xdg_wm_base global missing");
 
         let surface = compositor.create_surface();
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface);
@@ -145,7 +155,8 @@ impl ClientWindow {
         self.renderer.process_command_queue::<ClearColor>();
         self.renderer.process_command_queue::<DrawRect>();
         self.renderer.process_command_queue::<DrawQuad>();
-        self.renderer.process_command_queue::<DrawMonochromeSprite>();
+        self.renderer
+            .process_command_queue::<DrawMonochromeSprite>();
         self.renderer.process_command_queue::<DrawText>();
         self.renderer.finish();
 
@@ -156,7 +167,8 @@ impl ClientWindow {
         surface.damage(0, 0, width as i32, height as i32);
         surface.commit();
         slots[back].released = false;
-        self.frame_callbacks.insert(next_frame.object_id().expect("live callback"));
+        self.frame_callbacks
+            .insert(next_frame.object_id().expect("live callback"));
         self.back ^= 1;
     }
 
@@ -175,7 +187,8 @@ impl ClientWindow {
         surface.damage(0, 0, width as i32, height as i32);
         surface.commit();
         slots[back].released = false;
-        self.frame_callbacks.insert(next_frame.object_id().expect("live callback"));
+        self.frame_callbacks
+            .insert(next_frame.object_id().expect("live callback"));
         self.back ^= 1;
         self.blitting = true;
     }
@@ -209,7 +222,13 @@ pub fn module<S>() -> impl app::RegisteredModule<ClientWindow, S> {
         .on(|cw: &mut ClientWindow, _: &app::Start| cw.start())
         .on(|cw: &mut ClientWindow, _: &app::PrePoll| cw.pre_poll())
         .on(|cw: &mut ClientWindow, event: &wayland::WlRegistryEvent| {
-            if let wayland::WlRegistryEvent::Global { sender, name, interface, version } = event {
+            if let wayland::WlRegistryEvent::Global {
+                sender,
+                name,
+                interface,
+                version,
+            } = event
+            {
                 cw.on_registry_global(*name, interface, *version, sender);
             }
         })

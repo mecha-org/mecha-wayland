@@ -11,7 +11,7 @@ use std::rc::Rc;
 use smallvec::SmallVec;
 
 #[allow(unused_imports)]
-pub use algo::{extents, intersect, rects_to_bands, subtract, union, RectRaw};
+pub use algo::{RectRaw, extents, intersect, rects_to_bands, subtract, union};
 
 /// Half-open rectangle: [x1, x2) × [y1, y2).
 #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]

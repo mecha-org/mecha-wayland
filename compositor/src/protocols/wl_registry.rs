@@ -1,4 +1,4 @@
-use app::{prelude::*, RegisteredModule};
+use app::{RegisteredModule, prelude::*};
 use wayland::{
     Interface, WlCompositor, WlDisplayRequest, WlRegistryRequest, WlShm, WlShmFormat, XdgWmBase,
 };

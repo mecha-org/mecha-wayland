@@ -3,8 +3,8 @@ pub mod generated;
 pub mod manual;
 
 pub use generated::*;
-pub use manual::{WlCallback, WlDisplay, WlRegistry};
 #[cfg(feature = "client")]
 pub use manual::client::{WlCallbackEvent, WlDisplayError, WlDisplayEvent, WlRegistryEvent};
 #[cfg(feature = "server")]
 pub use manual::server::{WlDisplayRequest, WlRegistryRequest};
+pub use manual::{WlCallback, WlDisplay, WlRegistry};

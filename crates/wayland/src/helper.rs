@@ -14,7 +14,11 @@ pub fn parse_messages(bytes: Vec<u8>) -> Vec<RawWaylandEvent> {
             panic!("partial message");
         }
         let data = bytes[offset + HEADER..offset + size].to_vec();
-        events.push(RawWaylandEvent { object_id: ObjectId(sender_id), opcode, data });
+        events.push(RawWaylandEvent {
+            object_id: ObjectId(sender_id),
+            opcode,
+            data,
+        });
         offset += size;
     }
     if offset < bytes.len() {

@@ -31,9 +31,25 @@ fn alloc_slot(
         let stride = surface.backend.stride;
         let modifier = surface.backend.modifier;
         let params = dmabuf.create_params();
-        params.add(fd, 0, 0, stride, (modifier >> 32) as u32, (modifier & 0xffff_ffff) as u32);
-        params.create_immed(width as i32, height as i32, DRM_FORMAT_ARGB8888, ZwpLinuxBufferParamsV1Flags::empty())
+        params.add(
+            fd,
+            0,
+            0,
+            stride,
+            (modifier >> 32) as u32,
+            (modifier & 0xffff_ffff) as u32,
+        );
+        params.create_immed(
+            width as i32,
+            height as i32,
+            DRM_FORMAT_ARGB8888,
+            ZwpLinuxBufferParamsV1Flags::empty(),
+        )
     };
 
-    Slot { surface, buffer, released: true }
+    Slot {
+        surface,
+        buffer,
+        released: true,
+    }
 }

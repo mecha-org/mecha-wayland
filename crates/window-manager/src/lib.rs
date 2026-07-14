@@ -26,15 +26,24 @@ pub struct WindowManager {
     wayland: Wayland,
     globals: WaylandGlobals,
     renderer: Renderer,
+    #[lens(skip)]
     pending: Vec<(WindowSettings, Box<dyn AnyWindow>)>,
+    #[lens(skip)]
     windows: HashMap<WindowId, Box<dyn AnyWindow>>,
+    #[lens(skip)]
     frame_callbacks: HashMap<ObjectId, WindowId>,
     #[lens(skip)]
     wl_surfaces: HashMap<ObjectId, WindowId>,
+    #[lens(skip)]
+    surfaces_with_roles: HashMap<ObjectId, WindowId>,
+    #[lens(skip)]
     current_pointer_window: Option<WindowId>,
     #[lens(skip)]
     current_keyboard_window: Option<WindowId>,
+    #[lens(skip)]
     touch_window_map: HashMap<i32, WindowId>,
+    #[lens(skip)]
+    next_window_id: u32,
 }
 
 impl WindowManager {
@@ -49,9 +58,11 @@ impl WindowManager {
             windows: HashMap::new(),
             frame_callbacks: HashMap::new(),
             wl_surfaces: HashMap::new(),
+            surfaces_with_roles: HashMap::new(),
             current_pointer_window: None,
             current_keyboard_window: None,
             touch_window_map: HashMap::new(),
+            next_window_id: 0,
         }
     }
 
@@ -79,11 +90,19 @@ impl WindowManager {
             .expect("atlas upload failed");
     }
 
-    pub fn spawn_window<T: WidgetList + 'static>(&mut self, settings: WindowSettings, ui: T) {
+    pub fn spawn_window<T: WidgetList + 'static>(
+        &mut self,
+        settings: WindowSettings,
+        ui: T,
+    ) -> WindowId {
         let touch_config = settings.touch_config.or_else(|| ui.touch_config());
         let gesture_config = settings.gesture_config.or_else(|| ui.gesture_config());
 
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
+
         let window = Box::new(Window::new(
+            id,
             settings.width,
             settings.height,
             settings.clear_color,
@@ -92,6 +111,7 @@ impl WindowManager {
             gesture_config,
         ));
         self.pending.push((settings, window));
+        id
     }
 
     pub fn request_frame(&mut self, id: WindowId) {
@@ -102,6 +122,12 @@ impl WindowManager {
         let cb = window.request_frame();
         let obj_id = cb.object_id().expect("live callback");
         self.frame_callbacks.insert(obj_id, id);
+    }
+
+    pub fn destroy(&mut self, id: WindowId) {
+        if let Some(mut window) = self.windows.remove(&id) {
+            window.destroy();
+        }
     }
 
     fn flush_pending(&mut self) {
@@ -139,13 +165,15 @@ impl WindowManager {
                     layer_surface.set_anchor(anchor);
                     layer_surface.set_exclusive_zone(exclusive_zone);
                     layer_surface.set_keyboard_interactivity(keyboard_interactivity);
+                    self.surfaces_with_roles.insert(
+                        layer_surface.object_id().expect("just created"),
+                        window.id(),
+                    );
                     surface.commit();
-
-                    let id = WindowId(layer_surface.object_id().expect("just allocated"));
                     window.init(surface, WindowKindHandles::LayerShell { layer_surface });
                     let surface_id = window.surface().object_id().expect("surface initialized");
-                    self.wl_surfaces.insert(surface_id, id);
-                    self.windows.insert(id, window);
+                    self.wl_surfaces.insert(surface_id, window.id());
+                    self.windows.insert(window.id(), window);
                 }
                 WindowKind::Xdg { title } => {
                     let compositor = self
@@ -164,8 +192,8 @@ impl WindowManager {
                     let toplevel = xdg_surface.get_toplevel();
                     toplevel.set_title(&title);
                     surface.commit();
-
-                    let id = WindowId(xdg_surface.object_id().expect("just allocated"));
+                    self.surfaces_with_roles
+                        .insert(xdg_surface.object_id().expect("just created"), window.id());
                     window.init(
                         surface,
                         WindowKindHandles::Xdg {
@@ -174,8 +202,8 @@ impl WindowManager {
                         },
                     );
                     let surface_id = window.surface().object_id().expect("surface initialized");
-                    self.wl_surfaces.insert(surface_id, id);
-                    self.windows.insert(id, window);
+                    self.wl_surfaces.insert(surface_id, window.id());
+                    self.windows.insert(window.id(), window);
                 }
             }
         }
@@ -400,7 +428,10 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                     height,
                 } = event
                 {
-                    let id = WindowId(sender.object_id().expect("live handle"));
+                    let id = *wm
+                        .surfaces_with_roles
+                        .get(&sender.object_id().expect("live handle"))
+                        .expect("live handle");
                     let (stored_w, stored_h) = wm
                         .windows
                         .get(&id)
@@ -416,7 +447,11 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
         )
         .on(|wm: &mut WindowManager, event: &wayland::XdgSurfaceEvent| {
             let wayland::XdgSurfaceEvent::Configure { sender, serial } = event;
-            let id = WindowId(sender.object_id().expect("live handle"));
+
+            let id = *wm
+                .surfaces_with_roles
+                .get(&sender.object_id().expect("live handle"))
+                .expect("live handle");
             let (w, h) = wm
                 .windows
                 .get(&id)

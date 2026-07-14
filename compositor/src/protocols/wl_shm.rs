@@ -40,18 +40,45 @@ pub struct WlShmState {
 
 impl WlShmState {
     pub fn new() -> Self {
-        Self { pools: HashMap::new(), buffers: HashMap::new() }
+        Self {
+            pools: HashMap::new(),
+            buffers: HashMap::new(),
+        }
     }
 }
 
 pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
     Module::<WlShmState, _, _>::new()
+        .on(|state: &mut WlShmState, ev: &WlRegistryRequest| {
+            let WlRegistryRequest::Bind {
+                sender, name, id, ..
+            } = ev;
+            if let Some((_, interface, _)) = state.globals.iter().find(|(n, _, _)| n == name) {
+                match *interface {
+                    WlShm::NAME => {
+                        let handle = sender.proxy.new_handle::<WlShm>(*id);
+                        handle.format(WlShmFormat::Argb8888);
+                        handle.format(WlShmFormat::Xrgb8888);
+                    }
+                    _ => {}
+                }
+            }
+            hlist![]
+        })
         .on(|_: &mut WlShmState, _: &Start| -> Option<RegisterGlobal> {
-            Some(RegisterGlobal { interface: WlShm::NAME, version: WlShm::VERSION })
+            Some(RegisterGlobal {
+                interface: WlShm::NAME,
+                version: WlShm::VERSION,
+            })
         })
         .on(|state: &mut WlShmState, ev: &WlShmRequest| {
             match ev {
-                WlShmRequest::CreatePool { sender: _, id, fd, size, } => {
+                WlShmRequest::CreatePool {
+                    sender: _,
+                    id,
+                    fd,
+                    size,
+                } => {
                     let size = *size as usize;
                     let ptr = unsafe {
                         libc::mmap(
@@ -68,7 +95,15 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
                     let owned_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(fd.as_raw_fd())) };
 
                     let pool_id = id.object_id().expect("live pool");
-                    state.pools.insert(pool_id, ShmPool { ptr, size, fd: owned_fd, pending_destroy: false });
+                    state.pools.insert(
+                        pool_id,
+                        ShmPool {
+                            ptr,
+                            size,
+                            fd: owned_fd,
+                            pending_destroy: false,
+                        },
+                    );
                 }
                 WlShmRequest::Release { .. } => {}
             }
@@ -76,23 +111,36 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
         })
         .on(|state: &mut WlShmState, ev: &WlShmPoolRequest| {
             match ev {
-                WlShmPoolRequest::CreateBuffer { sender, id, offset, width, height, stride, format } => {
+                WlShmPoolRequest::CreateBuffer {
+                    sender,
+                    id,
+                    offset,
+                    width,
+                    height,
+                    stride,
+                    format,
+                } => {
                     let pool_id = sender.object_id().expect("live pool");
-                    let pool = state.pools.get(&pool_id).expect("CreateBuffer on unknown pool");
-                    let ptr = unsafe {
-                        NonNull::new_unchecked(pool.ptr.as_ptr().add(*offset as usize))
-                    };
+                    let pool = state
+                        .pools
+                        .get(&pool_id)
+                        .expect("CreateBuffer on unknown pool");
+                    let ptr =
+                        unsafe { NonNull::new_unchecked(pool.ptr.as_ptr().add(*offset as usize)) };
                     let buf_id = id.object_id().expect("live buffer");
-                    state.buffers.insert(buf_id, ShmBuffer {
-                        pool_id,
-                        offset: *offset,
-                        width: *width,
-                        height: *height,
-                        stride: *stride,
-                        format: *format,
-                        ptr,
-                        handle: id.clone(),
-                    });
+                    state.buffers.insert(
+                        buf_id,
+                        ShmBuffer {
+                            pool_id,
+                            offset: *offset,
+                            width: *width,
+                            height: *height,
+                            stride: *stride,
+                            format: *format,
+                            ptr,
+                            handle: id.clone(),
+                        },
+                    );
                 }
                 WlShmPoolRequest::Destroy { sender } => {
                     let pool_id = sender.object_id().expect("live pool");
@@ -123,7 +171,9 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
                         for buf in state.buffers.values_mut() {
                             if buf.pool_id == pool_id {
                                 buf.ptr = unsafe {
-                                    NonNull::new_unchecked(pool.ptr.as_ptr().add(buf.offset as usize))
+                                    NonNull::new_unchecked(
+                                        pool.ptr.as_ptr().add(buf.offset as usize),
+                                    )
                                 };
                             }
                         }

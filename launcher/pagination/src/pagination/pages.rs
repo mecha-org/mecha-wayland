@@ -55,7 +55,12 @@ impl<T: WidgetList> Widget for Pages<T> {
         id
     }
 
-    fn render_node(&mut self, layout: &Layout, tree: &WidgetTree, offset: Point) -> Vec<RenderCommand> {
+    fn render_node(
+        &mut self,
+        layout: &Layout,
+        tree: &WidgetTree,
+        offset: Point,
+    ) -> Vec<RenderCommand> {
         let abs_pos = Point::new(
             offset.x() + layout.location.x,
             offset.y() + layout.location.y,

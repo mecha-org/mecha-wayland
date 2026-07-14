@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use app::{prelude::*, RegisteredModule};
+use app::{RegisteredModule, prelude::*};
 use smallvec::SmallVec;
 use wayland::{
-    Handle, ObjectId, WlCallback, WlCompositorRequest, WlDisplay, WlSurface, WlSurfaceRequest,
-    DISPLAY_OBJECT_ID,
+    DISPLAY_OBJECT_ID, Handle, ObjectId, WlCallback, WlCompositorRequest, WlDisplay, WlSurface,
+    WlSurfaceRequest,
 };
 
 use crate::protocols::wl_region::RegionData;
@@ -179,14 +179,8 @@ impl SurfaceData {
         if let Some(new_buf) = self.pending.buffer.take() {
             self.current.buffer = new_buf;
         }
-        self.current.offset_x = self
-            .current
-            .offset_x
-            .saturating_add(self.pending.offset_x);
-        self.current.offset_y = self
-            .current
-            .offset_y
-            .saturating_add(self.pending.offset_y);
+        self.current.offset_x = self.current.offset_x.saturating_add(self.pending.offset_x);
+        self.current.offset_y = self.current.offset_y.saturating_add(self.pending.offset_y);
         self.pending.offset_x = 0;
         self.pending.offset_y = 0;
         self.current.scale = self.pending.scale;
@@ -318,155 +312,157 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
             }
             hlist![]
         })
-        .on(|s: &mut SurfaceState, ev: &WlSurfaceRequest| -> Option<SurfaceCommitted> {
-            match ev {
-                WlSurfaceRequest::Destroy { sender, .. } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        if surf.current.buffer.is_some() {
-                            surf.fire_release_callbacks();
+        .on(
+            |s: &mut SurfaceState, ev: &WlSurfaceRequest| -> Option<SurfaceCommitted> {
+                match ev {
+                    WlSurfaceRequest::Destroy { sender, .. } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            if surf.current.buffer.is_some() {
+                                surf.fire_release_callbacks();
+                            }
+                            surf.pending.frame_callbacks.clear();
+                            surf.pending.release_callbacks.clear();
+                            surf.current.frame_callbacks.clear();
                         }
-                        surf.pending.frame_callbacks.clear();
-                        surf.pending.release_callbacks.clear();
-                        surf.current.frame_callbacks.clear();
-                    }
-                    if let Some(sid) = sender.object_id() {
-                        s.surfaces.remove(&sid);
-                    }
-                    None
-                }
-                WlSurfaceRequest::Attach {
-                    sender,
-                    buffer,
-                    x,
-                    y,
-                } => {
-                    if let Some((sid, surf)) = with_surface(s, sender) {
-                        if *x != 0 || *y != 0 {
-                            post_error(sender, sid, 3, "non-zero attach x/y at v5+");
+                        if let Some(sid) = sender.object_id() {
+                            s.surfaces.remove(&sid);
                         }
-                        let id = buffer.as_ref().and_then(|b| b.object_id());
-                        surf.pending.buffer = Some(id);
-                        surf.pending.offset_x = *x;
-                        surf.pending.offset_y = *y;
-                    }
-                    None
-                }
-                WlSurfaceRequest::Damage {
-                    sender,
-                    x,
-                    y,
-                    width,
-                    height,
-                } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        add_damage(
-                            &mut surf.pending.damage_full,
-                            &mut surf.pending.surface_damage,
-                            DamageRect {
-                                x: *x,
-                                y: *y,
-                                width: *width,
-                                height: *height,
-                            },
-                        );
-                    }
-                    None
-                }
-                WlSurfaceRequest::DamageBuffer {
-                    sender,
-                    x,
-                    y,
-                    width,
-                    height,
-                } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        add_damage(
-                            &mut surf.pending.damage_full,
-                            &mut surf.pending.buffer_damage,
-                            DamageRect {
-                                x: *x,
-                                y: *y,
-                                width: *width,
-                                height: *height,
-                            },
-                        );
-                    }
-                    None
-                }
-                WlSurfaceRequest::Frame { sender, callback } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending.frame_callbacks.push(callback.clone());
-                    }
-                    None
-                }
-                WlSurfaceRequest::GetRelease { sender, callback } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending.release_callbacks.push(callback.clone());
-                    }
-                    None
-                }
-                WlSurfaceRequest::SetOpaqueRegion { sender, region } => {
-                    let resolved = if region.is_none() {
                         None
-                    } else {
-                        normalize_opaque(resolve_region(&mut s.regions, region))
-                    };
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending.opaque_region = Some(resolved);
                     }
-                    None
-                }
-                WlSurfaceRequest::SetInputRegion { sender, region } => {
-                    let resolved = if region.is_none() {
+                    WlSurfaceRequest::Attach {
+                        sender,
+                        buffer,
+                        x,
+                        y,
+                    } => {
+                        if let Some((sid, surf)) = with_surface(s, sender) {
+                            if *x != 0 || *y != 0 {
+                                post_error(sender, sid, 3, "non-zero attach x/y at v5+");
+                            }
+                            let id = buffer.as_ref().and_then(|b| b.object_id());
+                            surf.pending.buffer = Some(id);
+                            surf.pending.offset_x = *x;
+                            surf.pending.offset_y = *y;
+                        }
                         None
-                    } else {
-                        Some(resolve_region(&mut s.regions, region))
-                    };
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending.input_region = Some(resolved);
                     }
-                    None
-                }
-                WlSurfaceRequest::SetBufferScale { sender, scale } => {
-                    if let Some((sid, surf)) = with_surface(s, sender) {
-                        if *scale <= 0 {
-                            post_error(sender, sid, 0, "buffer scale must be > 0");
+                    WlSurfaceRequest::Damage {
+                        sender,
+                        x,
+                        y,
+                        width,
+                        height,
+                    } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            add_damage(
+                                &mut surf.pending.damage_full,
+                                &mut surf.pending.surface_damage,
+                                DamageRect {
+                                    x: *x,
+                                    y: *y,
+                                    width: *width,
+                                    height: *height,
+                                },
+                            );
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::DamageBuffer {
+                        sender,
+                        x,
+                        y,
+                        width,
+                        height,
+                    } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            add_damage(
+                                &mut surf.pending.damage_full,
+                                &mut surf.pending.buffer_damage,
+                                DamageRect {
+                                    x: *x,
+                                    y: *y,
+                                    width: *width,
+                                    height: *height,
+                                },
+                            );
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::Frame { sender, callback } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            surf.pending.frame_callbacks.push(callback.clone());
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::GetRelease { sender, callback } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            surf.pending.release_callbacks.push(callback.clone());
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::SetOpaqueRegion { sender, region } => {
+                        let resolved = if region.is_none() {
+                            None
                         } else {
-                            surf.pending.scale = *scale;
+                            normalize_opaque(resolve_region(&mut s.regions, region))
+                        };
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            surf.pending.opaque_region = Some(resolved);
                         }
+                        None
                     }
-                    None
-                }
-                WlSurfaceRequest::SetBufferTransform { sender, transform } => {
-                    if let Some((sid, surf)) = with_surface(s, sender) {
-                        if !(0..=7).contains(transform) {
-                            post_error(sender, sid, 1, "invalid buffer transform");
+                    WlSurfaceRequest::SetInputRegion { sender, region } => {
+                        let resolved = if region.is_none() {
+                            None
                         } else {
-                            surf.pending.transform = *transform;
+                            Some(resolve_region(&mut s.regions, region))
+                        };
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            surf.pending.input_region = Some(resolved);
                         }
+                        None
                     }
-                    None
-                }
-                WlSurfaceRequest::Offset { sender, x, y } => {
-                    if let Some((_, surf)) = with_surface(s, sender) {
-                        surf.pending.offset_x = *x;
-                        surf.pending.offset_y = *y;
-                    }
-                    None
-                }
-                WlSurfaceRequest::Commit { sender } => {
-                    let mut emitted = None;
-                    if let Some((sid, surf)) = with_surface(s, sender) {
-                        let has_release = !surf.pending.release_callbacks.is_empty();
-                        let has_buffer = matches!(surf.pending.buffer, Some(Some(_)));
-                        if has_release && !has_buffer {
-                            post_error(sender, sid, 5, "get_release without buffer attached");
+                    WlSurfaceRequest::SetBufferScale { sender, scale } => {
+                        if let Some((sid, surf)) = with_surface(s, sender) {
+                            if *scale <= 0 {
+                                post_error(sender, sid, 0, "buffer scale must be > 0");
+                            } else {
+                                surf.pending.scale = *scale;
+                            }
                         }
-                        surf.commit();
-                        emitted = Some(SurfaceCommitted { surface_id: sid });
+                        None
                     }
-                    emitted
+                    WlSurfaceRequest::SetBufferTransform { sender, transform } => {
+                        if let Some((sid, surf)) = with_surface(s, sender) {
+                            if !(0..=7).contains(transform) {
+                                post_error(sender, sid, 1, "invalid buffer transform");
+                            } else {
+                                surf.pending.transform = *transform;
+                            }
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::Offset { sender, x, y } => {
+                        if let Some((_, surf)) = with_surface(s, sender) {
+                            surf.pending.offset_x = *x;
+                            surf.pending.offset_y = *y;
+                        }
+                        None
+                    }
+                    WlSurfaceRequest::Commit { sender } => {
+                        let mut emitted = None;
+                        if let Some((sid, surf)) = with_surface(s, sender) {
+                            let has_release = !surf.pending.release_callbacks.is_empty();
+                            let has_buffer = matches!(surf.pending.buffer, Some(Some(_)));
+                            if has_release && !has_buffer {
+                                post_error(sender, sid, 5, "get_release without buffer attached");
+                            }
+                            surf.commit();
+                            emitted = Some(SurfaceCommitted { surface_id: sid });
+                        }
+                        emitted
+                    }
                 }
-            }
-        })
+            },
+        )
 }

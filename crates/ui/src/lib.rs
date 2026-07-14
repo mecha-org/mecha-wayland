@@ -71,7 +71,12 @@ pub trait Widget: Render {
     fn node_id(&self) -> NodeId;
     fn style(&self) -> &Style;
     fn build_tree(&mut self, tree: &mut WidgetTree) -> NodeId;
-    fn render_node(&mut self, layout: &Layout, tree: &WidgetTree, offset: Point) -> Vec<RenderCommand>;
+    fn render_node(
+        &mut self,
+        layout: &Layout,
+        tree: &WidgetTree,
+        offset: Point,
+    ) -> Vec<RenderCommand>;
     fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
         false
     }

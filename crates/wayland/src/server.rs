@@ -1,17 +1,17 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::env;
 use std::mem;
 use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::env;
 
 use app::{Many, PrePoll, RegisteredModule, prelude::*};
 use io_ring::{IoEvent, IoToken, RingProxy};
 use io_uring::{opcode, types};
 
-use crate::{Handle, IoCompletion, RawWaylandEvent, Wayland, handle_io_event, make_inner, proto};
 use crate::proto::manual::WlCallback;
+use crate::{Handle, IoCompletion, RawWaylandEvent, Wayland, handle_io_event, make_inner, proto};
 
 pub const SERVER_ID_START: u32 = 0xFF000000;
 
@@ -112,11 +112,23 @@ impl WaylandServer {
                 libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
                 0,
             );
-            assert!(fd >= 0, "socket failed: {}", std::io::Error::last_os_error());
-            let ret = libc::bind(fd, &bind_addr as *const _ as *const libc::sockaddr, addr_len);
+            assert!(
+                fd >= 0,
+                "socket failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let ret = libc::bind(
+                fd,
+                &bind_addr as *const _ as *const libc::sockaddr,
+                addr_len,
+            );
             assert!(ret == 0, "bind failed: {}", std::io::Error::last_os_error());
             let ret = libc::listen(fd, 128);
-            assert!(ret == 0, "listen failed: {}", std::io::Error::last_os_error());
+            assert!(
+                ret == 0,
+                "listen failed: {}",
+                std::io::Error::last_os_error()
+            );
             fd
         };
 
@@ -132,7 +144,9 @@ impl WaylandServer {
         };
         inner.submit_accept();
 
-        Self { data: Rc::new(RefCell::new(inner)) }
+        Self {
+            data: Rc::new(RefCell::new(inner)),
+        }
     }
 }
 
@@ -162,7 +176,13 @@ pub fn server_module<S>() -> impl app::RegisteredModule<WaylandServer, S> {
                 inner.next_client_id += 1;
                 let fd = unsafe { OwnedFd::from_raw_fd(*result) };
                 let conn = Wayland::new_server(fd, inner.ring_proxy.clone());
-                inner.clients.insert(id, ClientConn { conn, pending_sync: None });
+                inner.clients.insert(
+                    id,
+                    ClientConn {
+                        conn,
+                        pending_sync: None,
+                    },
+                );
                 Some(ClientConnected { id })
             } else {
                 None

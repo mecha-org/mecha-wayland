@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
-use app::{prelude::*, RegisteredModule};
+use app::{RegisteredModule, prelude::*};
 use wayland::{
-    Handle, ObjectId, WlCompositorRequest, WlDisplay, WlRegionRequest, DISPLAY_OBJECT_ID,
+    DISPLAY_OBJECT_ID, Handle, ObjectId, WlCompositorRequest, WlDisplay, WlRegionRequest,
 };
 
 use crate::protocols::wl_surface::SurfaceState;

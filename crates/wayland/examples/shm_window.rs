@@ -5,8 +5,8 @@ use app::prelude::*;
 use app::{Poll, PrePoll, RegisteredModule, Start};
 use io_ring::{Ring, RingSettings};
 use wayland::{
-    Handle, Interface, Wayland, WlBuffer, WlCallbackEvent, WlCompositor,
-    WlRegistryEvent, WlShell, WlShellSurface, WlShellSurfaceEvent, WlShm, WlShmFormat,
+    Handle, Interface, Wayland, WlBuffer, WlCallbackEvent, WlCompositor, WlRegistryEvent, WlShell,
+    WlShellSurface, WlShellSurfaceEvent, WlShm, WlShmFormat,
 };
 
 const WIDTH: i32 = 640;
@@ -48,7 +48,15 @@ impl ShmWindow {
     }
 
     fn on_global(&mut self, ev: &WlRegistryEvent) {
-        let WlRegistryEvent::Global { sender, name, interface, version } = ev else { return };
+        let WlRegistryEvent::Global {
+            sender,
+            name,
+            interface,
+            version,
+        } = ev
+        else {
+            return;
+        };
         match interface.as_str() {
             WlCompositor::NAME => self.compositor = Some(sender.bind(*name, *version)),
             WlShm::NAME => self.shm = Some(sender.bind(*name, *version)),
@@ -58,8 +66,7 @@ impl ShmWindow {
     }
 
     fn on_done(&mut self) {
-        let (Some(compositor), Some(shm), Some(shell)) =
-            (&self.compositor, &self.shm, &self.shell)
+        let (Some(compositor), Some(shm), Some(shell)) = (&self.compositor, &self.shm, &self.shell)
         else {
             return;
         };

@@ -1,8 +1,8 @@
 use app::prelude::*;
 
-use crate::{Handle, Interface, ObjectId, RawWaylandEvent, Wayland, helper};
+use super::{WlCallback, WlDisplay, WlRegistry, read_string, read_u32};
 use crate::server::{ClientId, ClientRawEvent, WaylandServer};
-use super::{WlCallback, WlDisplay, WlRegistry, read_u32, read_string};
+use crate::{Handle, Interface, ObjectId, RawWaylandEvent, Wayland, helper};
 
 // ── wl_display requests (client sends to server) ──────────────────────────────
 
@@ -22,7 +22,11 @@ pub enum WlDisplayRequest {
 impl Event for WlDisplayRequest {}
 
 impl WlDisplayRequest {
-    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland, client_id: ClientId) -> Option<Self> {
+    pub fn parse(
+        event: &RawWaylandEvent,
+        wayland: &mut Wayland,
+        client_id: ClientId,
+    ) -> Option<Self> {
         let sender = wayland.get_handle::<WlDisplay>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
@@ -57,7 +61,11 @@ pub enum WlRegistryRequest {
 impl Event for WlRegistryRequest {}
 
 impl WlRegistryRequest {
-    pub fn parse(event: &RawWaylandEvent, wayland: &mut Wayland, client_id: ClientId) -> Option<Self> {
+    pub fn parse(
+        event: &RawWaylandEvent,
+        wayland: &mut Wayland,
+        client_id: ClientId,
+    ) -> Option<Self> {
         let sender = wayland.get_handle::<WlRegistry>(event.object_id)?;
         let data = &event.data;
         let mut o = 0;
@@ -67,7 +75,13 @@ impl WlRegistryRequest {
                 let interface = read_string(data, &mut o)?;
                 let _version = read_u32(data, &mut o)?;
                 let id = ObjectId(read_u32(data, &mut o)?);
-                Some(WlRegistryRequest::Bind { client_id, sender, name, interface, id })
+                Some(WlRegistryRequest::Bind {
+                    client_id,
+                    sender,
+                    name,
+                    interface,
+                    id,
+                })
             }
             _ => None,
         }
@@ -95,7 +109,8 @@ impl Handle<WlDisplay> {
 impl Handle<WlCallback> {
     pub fn done(&self, callback_data: u32) {
         let sender_id = self.object_id().expect("dead handle").0;
-        self.proxy.write_raw(sender_id, 0, &callback_data.to_ne_bytes(), &[]);
+        self.proxy
+            .write_raw(sender_id, 0, &callback_data.to_ne_bytes(), &[]);
     }
 }
 

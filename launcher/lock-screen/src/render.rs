@@ -43,9 +43,22 @@ pub fn render_frame(renderer: &mut Renderer, commands: Vec<RenderCommand>, bg_co
                 });
             }
 
-            RenderCommand::DrawText { font, text, origin, z, color } => {
+            RenderCommand::DrawText {
+                font,
+                text,
+                origin,
+                z,
+                color,
+            } => {
                 let texture_id = renderer.get_texture_id(font.atlas_id);
-                renderer.send_command(DrawText { font, texture_id, text, origin, z, color });
+                renderer.send_command(DrawText {
+                    font,
+                    texture_id,
+                    text,
+                    origin,
+                    z,
+                    color,
+                });
             }
 
             // RegisterHitArea is handled by collect_hit_areas(); nothing to draw here.

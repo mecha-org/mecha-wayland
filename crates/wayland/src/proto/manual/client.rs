@@ -1,7 +1,7 @@
 use app::prelude::*;
 
+use super::{WlCallback, WlDisplay, WlRegistry, read_string, read_u32};
 use crate::{Handle, Interface, RawWaylandEvent, Wayland, helper};
-use super::{WlCallback, WlDisplay, WlRegistry, read_u32, read_string};
 
 // ── wl_display events ─────────────────────────────────────────────────────────
 
@@ -119,7 +119,8 @@ impl Handle<WlDisplay> {
         let cb: Handle<WlCallback> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let cb_id = cb.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 0, &cb_id.to_ne_bytes(), &[]);
+        self.proxy
+            .write_raw(sender_id, 0, &cb_id.to_ne_bytes(), &[]);
         cb
     }
 
@@ -127,7 +128,8 @@ impl Handle<WlDisplay> {
         let reg: Handle<WlRegistry> = self.proxy.alloc_handle();
         let sender_id = self.object_id().expect("dead handle").0;
         let reg_id = reg.object_id().expect("just allocated").0;
-        self.proxy.write_raw(sender_id, 1, &reg_id.to_ne_bytes(), &[]);
+        self.proxy
+            .write_raw(sender_id, 1, &reg_id.to_ne_bytes(), &[]);
         reg
     }
 }

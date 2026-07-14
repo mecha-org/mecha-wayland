@@ -599,8 +599,16 @@ fn gen_send_method(iface_name: &str, opcode: u16, msg: &Message, is_request: boo
         let fds_init = has_fds.then(|| {
             quote! { let mut fds: Vec<::std::os::fd::BorrowedFd<'_>> = Vec::new(); }
         });
-        let body_ref = if has_body { quote! { &body } } else { quote! { &[] } };
-        let fds_ref = if has_fds { quote! { &fds } } else { quote! { &[] } };
+        let body_ref = if has_body {
+            quote! { &body }
+        } else {
+            quote! { &[] }
+        };
+        let fds_ref = if has_fds {
+            quote! { &fds }
+        } else {
+            quote! { &[] }
+        };
         quote! {
             #body_init
             #fds_init

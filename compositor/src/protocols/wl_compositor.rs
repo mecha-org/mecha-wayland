@@ -1,5 +1,5 @@
 use app::{RegisteredModule, Start, prelude::*};
-use wayland::{Interface, WlCompositor, WlCompositorRequest};
+use wayland::{Interface, WlCompositor, WlCompositorRequest, WlRegistryRequest};
 
 use crate::Compositor;
 use crate::protocols::wl_registry::RegisterGlobal;
@@ -12,17 +12,15 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 version: WlCompositor::VERSION,
             })
         })
-        .on(|state: &mut Compositor, ev: &WlRegistryRequest| {
+        .on(|_: &mut Compositor, ev: &WlRegistryRequest| {
             let WlRegistryRequest::Bind {
-                sender, name, id, ..
+                sender,
+                id,
+                interface,
+                ..
             } = ev;
-            if let Some((_, interface, _)) = state.globals.iter().find(|(n, _, _)| n == name) {
-                match *interface {
-                    WlCompositor::NAME => {
-                        sender.proxy.new_handle::<WlCompositor>(*id);
-                    }
-                    _ => {}
-                }
+            if interface.as_str() == WlCompositor::NAME {
+                sender.proxy.new_handle::<WlCompositor>(*id);
             }
             hlist![]
         })

@@ -1,7 +1,5 @@
 use app::{RegisteredModule, prelude::*};
-use wayland::{
-    Interface, WlCompositor, WlDisplayRequest, WlRegistryRequest, WlShm, WlShmFormat, XdgWmBase,
-};
+use wayland::WlDisplayRequest;
 
 #[derive(Debug, State)]
 pub struct WlRegistryState {

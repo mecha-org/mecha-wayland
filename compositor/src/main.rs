@@ -11,6 +11,7 @@ use protocols::wl_registry::WlRegistryState;
 use protocols::wl_shm::WlShmState;
 use protocols::wl_surface::{SurfaceCommitted, SurfaceState};
 use protocols::xdg_shell::XdgShellState;
+use crate::protocols::wl_seat::WlSeatState;
 
 #[derive(State)]
 struct Compositor {
@@ -19,6 +20,7 @@ struct Compositor {
     registry: WlRegistryState,
     shm: WlShmState,
     surfaces: SurfaceState,
+    seat: WlSeatState,
     xdg_shell: XdgShellState,
     client_window: ClientWindow,
 }
@@ -105,6 +107,7 @@ fn main() {
         registry: WlRegistryState::new(),
         shm: WlShmState::new(),
         surfaces: SurfaceState::new(),
+        seat: WlSeatState::new(),
         xdg_shell: XdgShellState::default(),
         client_window,
     })
@@ -118,6 +121,7 @@ fn main() {
     .mount(protocols::wl_shm::module())
     .mount(protocols::wl_region::module())
     .mount(protocols::wl_surface::module())
+    .mount(protocols::wl_seat::module())
     .mount(protocols::xdg_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {

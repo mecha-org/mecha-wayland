@@ -55,6 +55,7 @@ pub enum WlRegistryRequest {
         sender: Handle<WlRegistry>,
         name: u32,
         interface: String,
+        version: u32,
         id: ObjectId,
     },
 }
@@ -73,13 +74,14 @@ impl WlRegistryRequest {
             0 => {
                 let name = read_u32(data, &mut o)?;
                 let interface = read_string(data, &mut o)?;
-                let _version = read_u32(data, &mut o)?;
+                let version = read_u32(data, &mut o)?;
                 let id = ObjectId(read_u32(data, &mut o)?);
                 Some(WlRegistryRequest::Bind {
                     client_id,
                     sender,
                     name,
                     interface,
+                    version,
                     id,
                 })
             }

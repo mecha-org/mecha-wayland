@@ -85,6 +85,7 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                 sender,
                 id,
                 interface,
+                version,
                 ..
             } = ev;
             if interface.as_str() == WlSeat::NAME {
@@ -94,7 +95,14 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                 } else {
                     println!("Error(seat): no capabilities registered");
                 }
-                // TODO Implement name event for version >= 2
+                // wl_seat.name event was added in version 2
+                if *version >= 2 {
+                    if !state.name.is_empty() {
+                        handle.name(&state.name);
+                    } else {
+                        println!("Error(seat): no name registered");
+                    }
+                }
             }
         })
         .on(|state: &mut WlSeatState, ev: &WlSeatRequest| match ev {

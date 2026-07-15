@@ -40,7 +40,6 @@ pub struct ClientWindow {
     buffer_ids: [Option<ObjectId>; 2],
     back: usize,
     frame_callbacks: HashSet<ObjectId>,
-    blitting: bool,
 }
 
 impl ClientWindow {
@@ -65,7 +64,6 @@ impl ClientWindow {
             buffer_ids: [None, None],
             back: 0,
             frame_callbacks: HashSet::new(),
-            blitting: false,
         }
     }
 
@@ -79,6 +77,9 @@ impl ClientWindow {
         self.renderer.init_command_queue::<DrawQuad>();
         self.renderer.init_command_queue::<DrawMonochromeSprite>();
         self.renderer.init_command_queue::<DrawText>();
+
+        self.renderer
+            .send_command(ClearColor::rgb(0.15, 0.15, 0.15));
 
         let display = self.wayland.display();
         display.get_registry();
@@ -131,6 +132,7 @@ impl ClientWindow {
         if self.slots.is_some() {
             return;
         }
+
         let dmabuf = self.globals.dmabuf.clone().expect("dmabuf global missing");
         let slots = render::alloc_slots(&mut self.renderer, &dmabuf, w, h);
         self.buffer_ids = [
@@ -143,6 +145,10 @@ impl ClientWindow {
     }
 
     fn render_frame(&mut self) {
+        if self.slots.is_none() {
+            return;
+        }
+
         let back = self.back;
         let width = self.width;
         let height = self.height;
@@ -172,10 +178,12 @@ impl ClientWindow {
         self.back ^= 1;
     }
 
-    fn is_back_released(&self) -> bool {
+    pub(crate) fn is_back_released(&self) -> bool {
+        // TO REMOVE: CPU blit tears without release tracking.
         self.slots.as_ref().map_or(false, |s| s[self.back].released)
     }
 
+    // TO REMOVE: CPU blit writes to raw DMA-BUF.
     pub fn commit_blitted_frame(&mut self) {
         let back = self.back;
         let width = self.width;
@@ -190,9 +198,9 @@ impl ClientWindow {
         self.frame_callbacks
             .insert(next_frame.object_id().expect("live callback"));
         self.back ^= 1;
-        self.blitting = true;
     }
 
+    // TO REMOVE: CPU blit mmaps the raw fd.
     pub fn back_buffer_info(&self) -> (std::os::fd::RawFd, u32, u32, u32) {
         let slots = self.slots.as_ref().expect("slots allocated");
         let slot = &slots[self.back];
@@ -235,11 +243,7 @@ pub fn module<S>() -> impl app::RegisteredModule<ClientWindow, S> {
         .on(|cw: &mut ClientWindow, event: &wayland::WlCallbackEvent| {
             let wayland::WlCallbackEvent::Done { sender, .. } = event;
             let obj_id = sender.object_id().expect("live callback");
-            if cw.frame_callbacks.remove(&obj_id) {
-                if !cw.blitting && cw.is_back_released() {
-                    cw.render_frame();
-                }
-            } else {
+            if !cw.frame_callbacks.remove(&obj_id) {
                 cw.create_surface();
             }
         })

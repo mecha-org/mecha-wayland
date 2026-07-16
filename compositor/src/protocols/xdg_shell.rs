@@ -1,7 +1,7 @@
 use app::{RegisteredModule, Start, prelude::*};
 use wayland::{
-    Interface, XdgPositionerRequest, XdgSurfaceRequest, XdgToplevelRequest, XdgWmBase,
-    XdgWmBaseRequest,
+    Interface, WlRegistryRequest, XdgPositionerRequest, XdgSurfaceRequest, XdgToplevelRequest,
+    XdgWmBase, XdgWmBaseRequest,
 };
 
 use crate::protocols::wl_registry::RegisterGlobal;
@@ -20,17 +20,16 @@ impl XdgShellState {
 
 pub fn module<S>() -> impl RegisteredModule<XdgShellState, S> {
     Module::<XdgShellState, _, _>::new()
-        .on(|state: &mut XdgShellState, ev: &WlRegistryRequest| {
+        .on(|_: &mut XdgShellState, ev: &WlRegistryRequest| {
             let WlRegistryRequest::Bind {
-                sender, name, id, ..
+                sender,
+                id,
+                interface,
+                ..
             } = ev;
-            if let Some((_, interface, _)) = state.globals.iter().find(|(n, _, _)| n == name) {
-                match *interface {
-                    XdgWmBase::NAME => {
-                        sender.proxy.new_handle::<XdgWmBase>(*id);
-                    }
-                    _ => {}
-                }
+            // WORKAROUND: trusts client's interface string instead of resolving by server-side name.
+            if interface.as_str() == XdgWmBase::NAME {
+                sender.proxy.new_handle::<XdgWmBase>(*id);
             }
             hlist![]
         })

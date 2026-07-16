@@ -4,8 +4,8 @@ use std::ptr::NonNull;
 
 use app::{RegisteredModule, Start, prelude::*};
 use wayland::{
-    Handle, Interface, ObjectId, WlBuffer, WlBufferRequest, WlShm, WlShmFormat, WlShmPoolRequest,
-    WlShmRequest,
+    Handle, Interface, ObjectId, WlBuffer, WlBufferRequest, WlRegistryRequest, WlShm, WlShmFormat,
+    WlShmPoolRequest, WlShmRequest,
 };
 
 use crate::protocols::wl_registry::RegisterGlobal;
@@ -14,6 +14,7 @@ pub struct ShmPool {
     pub ptr: NonNull<u8>,
     pub size: usize,
     pub fd: OwnedFd,
+    // WORKAROUND: buffers borrow raw ptrs instead of sharing ownership.
     pub pending_destroy: bool,
 }
 
@@ -49,19 +50,18 @@ impl WlShmState {
 
 pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
     Module::<WlShmState, _, _>::new()
-        .on(|state: &mut WlShmState, ev: &WlRegistryRequest| {
+        .on(|_: &mut WlShmState, ev: &WlRegistryRequest| {
             let WlRegistryRequest::Bind {
-                sender, name, id, ..
+                sender,
+                id,
+                interface,
+                ..
             } = ev;
-            if let Some((_, interface, _)) = state.globals.iter().find(|(n, _, _)| n == name) {
-                match *interface {
-                    WlShm::NAME => {
-                        let handle = sender.proxy.new_handle::<WlShm>(*id);
-                        handle.format(WlShmFormat::Argb8888);
-                        handle.format(WlShmFormat::Xrgb8888);
-                    }
-                    _ => {}
-                }
+            // WORKAROUND: trusts client's interface string instead of resolving by server-side name.
+            if interface.as_str() == WlShm::NAME {
+                let handle = sender.proxy.new_handle::<WlShm>(*id);
+                handle.format(WlShmFormat::Argb8888);
+                handle.format(WlShmFormat::Xrgb8888);
             }
             hlist![]
         })
@@ -145,6 +145,7 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
                 WlShmPoolRequest::Destroy { sender } => {
                     let pool_id = sender.object_id().expect("live pool");
                     let has_buffers = state.buffers.values().any(|b| b.pool_id == pool_id);
+                    // WORKAROUND: defer until all buffers released.
                     if has_buffers {
                         if let Some(pool) = state.pools.get_mut(&pool_id) {
                             pool.pending_destroy = true;
@@ -185,6 +186,7 @@ pub fn module<S>() -> impl RegisteredModule<WlShmState, S> {
         .on(|state: &mut WlShmState, ev: &WlBufferRequest| {
             let WlBufferRequest::Destroy { sender } = ev;
             let buf_id = sender.object_id().expect("live buffer");
+            // WORKAROUND: free deferred pools once last buffer drops.
             if let Some(buf) = state.buffers.remove(&buf_id) {
                 let pool_id = buf.pool_id;
                 let should_destroy = state

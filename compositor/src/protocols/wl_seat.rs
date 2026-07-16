@@ -90,18 +90,18 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
             } = ev;
             if interface.as_str() == WlSeat::NAME {
                 let handle = sender.proxy.new_handle::<WlSeat>(*id);
-                if let Some(capability) = state.capability {
-                    handle.capabilities(capability);
-                } else {
-                    println!("Error(seat): no capabilities registered");
-                }
-                // wl_seat.name event was added in version 2
+                // wl_seat.name event was added in version 2; must be sent before capabilities
                 if *version >= 2 {
                     if !state.name.is_empty() {
                         handle.name(&state.name);
                     } else {
                         println!("Error(seat): no name registered");
                     }
+                }
+                if let Some(capability) = state.capability {
+                    handle.capabilities(capability);
+                } else {
+                    println!("Error(seat): no capabilities registered");
                 }
             }
         })

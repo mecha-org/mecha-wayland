@@ -12,6 +12,7 @@ pub struct WlSeatState {
     pub capability: Option<WlSeatCapability>,
     pub name: String,
     pub pointer_state: WlPointerState,
+    pub client_seats: Vec<Handle<WlSeat>>,
 }
 
 impl WlSeatState {
@@ -21,6 +22,7 @@ impl WlSeatState {
             capability: None,
             name: String::new(),
             pointer_state: WlPointerState::new(),
+            client_seats: Vec::new(),
         }
     }
 
@@ -70,7 +72,9 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                 WlSeatEvent::Capabilities { capabilities, .. } => {
                     println!("seat capabilities: {:?}", capabilities);
                     state.capability = Some(*capabilities);
-                    // TODO Forward event to client on input capabilities change after initial flow
+                    for client_seat in &state.client_seats {
+                        client_seat.capabilities(*capabilities);
+                    }
                 }
                 WlSeatEvent::Name { name, .. } => {
                     println!("seat name: {}", name);
@@ -90,6 +94,7 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
             } = ev;
             if interface.as_str() == WlSeat::NAME {
                 let handle = sender.proxy.new_handle::<WlSeat>(*id);
+                state.client_seats.push(handle.clone());
                 // wl_seat.name event was added in version 2; must be sent before capabilities
                 if *version >= 2 {
                     if !state.name.is_empty() {

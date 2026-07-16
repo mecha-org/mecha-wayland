@@ -80,8 +80,15 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                     for client_seat in &state.client_seats {
                         client_seat.capabilities(*capabilities);
                     }
-                    // Optional as each client is expected to request release on capability changed
-                    if !capabilities.contains(WlSeatCapability::Pointer) {
+                    if capabilities.contains(WlSeatCapability::Pointer) {
+                        if state.pointer_state.pointer.is_none()
+                            && let Some(seat) = &state.seat
+                        {
+                            state.pointer_state.pointer = Some(seat.get_pointer());
+                            println!("created host pointer");
+                        }
+                    } else {
+                        state.pointer_state.pointer = None;
                         state.pointer_state.on_capability_removed();
                     }
                     if !capabilities.contains(WlSeatCapability::Keyboard) {

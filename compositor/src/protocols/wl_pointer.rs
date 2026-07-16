@@ -7,12 +7,14 @@ use crate::Compositor;
 
 #[derive(State)]
 pub struct WlPointerState {
+    pub pointer: Option<Handle<WlPointer>>,
     pub client_pointers: Vec<Handle<WlPointer>>,
 }
 
 impl WlPointerState {
     pub fn new() -> Self {
         Self {
+            pointer: None,
             client_pointers: Vec::new(),
         }
     }

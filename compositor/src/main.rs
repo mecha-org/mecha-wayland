@@ -173,6 +173,7 @@ fn main() {
     .mount(protocols::wl_region::module())
     .mount(protocols::wl_surface::module())
     .mount(protocols::wl_seat::module())
+    .mount(protocols::wl_pointer::module())
     .mount(protocols::xdg_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {

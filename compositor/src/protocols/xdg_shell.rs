@@ -27,6 +27,7 @@ pub fn module<S>() -> impl RegisteredModule<XdgShellState, S> {
                 interface,
                 ..
             } = ev;
+            // WORKAROUND: trusts client's interface string instead of resolving by server-side name.
             if interface.as_str() == XdgWmBase::NAME {
                 sender.proxy.new_handle::<XdgWmBase>(*id);
             }

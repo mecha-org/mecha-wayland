@@ -43,6 +43,10 @@ impl WlSeatState {
             _ => {}
         }
     }
+    pub fn retain_alive(&mut self) {
+        self.client_seats.retain(|s| s.is_alive());
+        self.pointer_state.retain_alive();
+    }
 }
 
 pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
@@ -72,6 +76,7 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                 WlSeatEvent::Capabilities { capabilities, .. } => {
                     println!("seat capabilities: {:?}", capabilities);
                     state.capability = Some(*capabilities);
+                    state.retain_alive();
                     for client_seat in &state.client_seats {
                         client_seat.capabilities(*capabilities);
                     }

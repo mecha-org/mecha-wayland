@@ -20,6 +20,10 @@ impl WlPointerState {
     pub fn retain_alive(&mut self) {
         self.client_pointers.retain(|p| p.is_alive());
     }
+
+    pub fn on_capability_removed(&mut self) {
+        self.client_pointers.clear();
+    }
 }
 
 pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
@@ -176,7 +180,13 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     hotspot_x,
                     hotspot_y,
                 } => (),
-                WlPointerRequest::Release { sender } => (),
+                WlPointerRequest::Release { sender } => {
+                    compositor
+                        .seat
+                        .pointer_state
+                        .client_pointers
+                        .retain(|p| p.object_id() != sender.object_id());
+                }
             },
         )
 }

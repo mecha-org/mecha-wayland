@@ -80,6 +80,16 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                     for client_seat in &state.client_seats {
                         client_seat.capabilities(*capabilities);
                     }
+                    // Optional as each client is expected to request release on capability changed
+                    if !capabilities.contains(WlSeatCapability::Pointer) {
+                        state.pointer_state.on_capability_removed();
+                    }
+                    if !capabilities.contains(WlSeatCapability::Keyboard) {
+                        // TODO clear keyboard state when added
+                    }
+                    if !capabilities.contains(WlSeatCapability::Touch) {
+                        // TODO clear touch state when added
+                    }
                 }
                 WlSeatEvent::Name { name, .. } => {
                     println!("seat name: {}", name);

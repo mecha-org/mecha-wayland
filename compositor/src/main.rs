@@ -52,6 +52,11 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
             Some(b) => b,
             None => return,
         };
+        // TO REMOVE: capture buffer dimensions for hit-testing.
+        if let Some(surf) = compositor.surfaces.surfaces.get_mut(&ev.surface_id) {
+            surf.current.buffer_width = shm_buf.width;
+            surf.current.buffer_height = shm_buf.height;
+        }
         (
             shm_buf.ptr.as_ptr() as *const u8,
             shm_buf.stride as usize,

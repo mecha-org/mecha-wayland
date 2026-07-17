@@ -9,7 +9,7 @@ use wayland::{
 };
 
 use crate::protocols::wl_region::RegionData;
-use crate::rect::Region;
+use crate::rect::{Rect, Region};
 
 const MAX_DAMAGE: usize = 32;
 
@@ -33,6 +33,9 @@ pub struct CurrentState {
     pub opaque_region: Option<Rc<Region>>,
     pub input_region: Option<Rc<Region>>,
 
+    pub buffer_width: i32,
+    pub buffer_height: i32,
+
     pub damage_full: bool,
     pub surface_damage: SmallVec<[DamageRect; 4]>,
     pub buffer_damage: SmallVec<[DamageRect; 4]>,
@@ -51,6 +54,8 @@ impl CurrentState {
             transform: 0,
             opaque_region: None,
             input_region: None,
+            buffer_width: 0,
+            buffer_height: 0,
             damage_full: false,
             surface_damage: SmallVec::new(),
             buffer_damage: SmallVec::new(),
@@ -110,6 +115,8 @@ pub struct SurfaceData {
     pub previous_buffer: Option<ObjectId>,
 
     pub role: Option<SurfaceRole>,
+
+    pub geometry: Option<Rect>,
 }
 
 impl SurfaceData {
@@ -121,6 +128,7 @@ impl SurfaceData {
             output: None,
             previous_buffer: None,
             role: None,
+            geometry: None,
         }
     }
 
@@ -235,6 +243,7 @@ impl SurfaceRole {
 pub struct SurfaceState {
     pub surfaces: HashMap<ObjectId, SurfaceData>,
     pub regions: HashMap<ObjectId, RegionData>,
+    pub stack: Vec<ObjectId>,
 }
 
 impl SurfaceState {
@@ -242,7 +251,40 @@ impl SurfaceState {
         Self {
             surfaces: HashMap::new(),
             regions: HashMap::new(),
+            stack: Vec::new(),
         }
+    }
+
+    pub fn push_to_stack(&mut self, id: ObjectId) {
+        self.stack.retain(|i| *i != id);
+        self.stack.push(id);
+    }
+
+    pub fn remove_from_stack(&mut self, id: ObjectId) {
+        self.stack.retain(|i| *i != id);
+    }
+
+    pub fn surface_at(&self, gx: i32, gy: i32) -> Option<ObjectId> {
+        for id in self.stack.iter().rev() {
+            let surf = self.surfaces.get(id)?;
+            let geo = surf.geometry?;
+            if !geo.contains(gx, gy) {
+                continue;
+            }
+            let sx = gx - geo.x1();
+            let sy = gy - geo.y1();
+            if sx < 0
+                || sy < 0
+                || sx >= surf.current.buffer_width
+                || sy >= surf.current.buffer_height
+            {
+                continue;
+            }
+            if surf.accepts_input_at(sx, sy) {
+                return Some(*id);
+            }
+        }
+        None
     }
 }
 
@@ -325,6 +367,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                             surf.current.frame_callbacks.clear();
                         }
                         if let Some(sid) = sender.object_id() {
+                            s.remove_from_stack(sid);
                             s.surfaces.remove(&sid);
                         }
                         None

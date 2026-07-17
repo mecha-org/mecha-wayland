@@ -4,9 +4,13 @@ mod button;
 
 use assets::BakedFont;
 use button::Button;
-use interactivity::InteractivityState;
-use taffy::Style;
+use ui::EventCtx;
+
+#[derive(Debug)]
+pub struct CounterChanged(pub i32);
+impl app::Event for CounterChanged {}
 use taffy::prelude::*;
+use taffy::Style;
 use ui::widgets::{Div, Text};
 use ui::{Point, RenderCommand, Widget, WidgetList, WidgetTree};
 use utils::Color;
@@ -53,18 +57,23 @@ impl WidgetList for CounterUi {
         commands
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        if interactivity.is_clicked(self.minus_rect) {
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        if ctx.interactivity().is_clicked(self.minus_rect) {
             self.count -= 1;
-            self.root.children.1.set_text(tree, self.count.to_string());
-            return true;
-        }
-        if interactivity.is_clicked(self.plus_rect) {
+            self.root
+                .children
+                .1
+                .set_text(ctx.tree(), self.count.to_string());
+            println!("Event Sent!");
+            ctx.dispatch(CounterChanged(self.count));
+        } else if ctx.interactivity().is_clicked(self.plus_rect) {
             self.count += 1;
-            self.root.children.1.set_text(tree, self.count.to_string());
-            return true;
+            self.root
+                .children
+                .1
+                .set_text(ctx.tree(), self.count.to_string());
+            ctx.dispatch(CounterChanged(self.count));
         }
-        false
     }
 
     fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {

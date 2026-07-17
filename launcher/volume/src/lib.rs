@@ -6,7 +6,7 @@ mod slider;
 use assets::BakedFont;
 use button::Button;
 use interactivity::DragState;
-use interactivity::InteractivityState;
+use ui::EventCtx;
 use slider::Slider;
 use taffy::Style;
 use taffy::prelude::*;
@@ -82,67 +82,49 @@ impl WidgetList for VolumeUi {
         commands
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        let interactivity = ctx.interactivity();
         if interactivity.is_clicked(self.minus_rect) {
             self.update_value(self.count - STEP_SIZE);
-            self.update_ui(tree);
-            return true;
-        }
-        if interactivity.is_clicked(self.plus_rect) {
+            self.update_ui(ctx.tree());
+        } else if interactivity.is_clicked(self.plus_rect) {
             self.update_value(self.count + STEP_SIZE);
-            self.update_ui(tree);
-            return true;
-        }
-        if interactivity.is_clicked(self.slider_rect) {
-            let slider = &mut self.root.children.1;
+            self.update_ui(ctx.tree());
+        } else if interactivity.is_clicked(self.slider_rect) {
             let y = interactivity.pointer.position().y();
-            let new_value = slider.calculate_new_value(y, self.slider_rect);
+            let new_value = self.root.children.1.calculate_new_value(y, self.slider_rect);
             self.update_value(new_value as i32);
-            self.update_ui(tree);
-            return true;
-        }
-        if let Some(scroll) = interactivity.pointer.just_scrolled()
-            && self
-                .slider_rect
-                .contains_point(interactivity.pointer.position())
+            self.update_ui(ctx.tree());
+        } else if let Some(scroll) = interactivity.pointer.just_scrolled()
+            && self.slider_rect.contains_point(interactivity.pointer.position())
         {
             if scroll.dy < 0.0 {
                 self.update_value(self.count + STEP_SIZE);
             } else {
                 self.update_value(self.count - STEP_SIZE);
             }
-            self.update_ui(tree);
-            return true;
-        }
-        if let Some(drag_data) = &interactivity.gesture.drag_data() {
+            self.update_ui(ctx.tree());
+        } else if let Some(drag_data) = interactivity.gesture.drag_data() {
             match drag_data.state {
                 DragState::Start => {
                     if self.slider_rect.contains_point(drag_data.current_position) {
                         self.dragging = true;
                     }
-                    return true;
                 }
-                DragState::Move => {
-                    if !self.dragging {
-                        return false;
-                    }
-                    let slider = &mut self.root.children.1;
+                DragState::Move if self.dragging => {
                     let y = drag_data.current_position.y();
-                    let new_value = slider.calculate_new_value(y, self.slider_rect);
+                    let new_value = self.root.children.1.calculate_new_value(y, self.slider_rect);
                     self.update_value(new_value as i32);
-                    self.update_ui(tree);
-                    return true;
+                    self.update_ui(ctx.tree());
                 }
                 DragState::End | DragState::Cancel => {
-                    if self.dragging {
-                        self.dragging = false;
-                    }
+                    self.dragging = false;
                 }
+                _ => {}
             }
         } else {
             self.dragging = false;
         }
-        false
     }
 }
 

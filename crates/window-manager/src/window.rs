@@ -4,8 +4,9 @@ use renderer::commands::{
     ClearColor, Color, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText, Rect, Size as RSize,
 };
 use renderer::{DmaBuf, Renderer};
+use std::any::Any;
 use taffy::{AvailableSpace, NodeId, Size, Style};
-use ui::{Point, RenderCommand, WidgetList, WidgetTree};
+use ui::{EventCtx, Point, RenderCommand, WidgetList, WidgetTree};
 use wayland::{
     Handle, ObjectId, WlBuffer, WlCallback, WlKeyboardEvent, WlPointerEvent, WlSurface,
     WlTouchEvent, XdgSurface, XdgToplevel, ZwlrLayerSurfaceV1, ZwpLinuxDmabufV1,
@@ -72,9 +73,9 @@ pub(crate) trait AnyWindow {
     fn render_frame(&mut self, renderer: &mut Renderer) -> Handle<WlCallback>;
     fn on_buffer_release(&mut self, buffer_id: ObjectId);
     fn surface(&self) -> &Handle<WlSurface>;
-    fn on_pointer_event(&mut self, ev: &WlPointerEvent);
-    fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent);
-    fn on_touch_event(&mut self, ev: &WlTouchEvent);
+    fn on_pointer_event(&mut self, ev: &WlPointerEvent, buffer: &mut Vec<Box<dyn Any>>);
+    fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent, buffer: &mut Vec<Box<dyn Any>>);
+    fn on_touch_event(&mut self, ev: &WlTouchEvent, buffer: &mut Vec<Box<dyn Any>>);
     fn wants_input(&self) -> bool;
     fn set_input_enabled(&mut self, enabled: bool);
     fn input_enabled(&self) -> bool;
@@ -324,22 +325,25 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
         self.surface.as_ref().expect("surface initialized")
     }
 
-    fn on_pointer_event(&mut self, ev: &WlPointerEvent) {
+    fn on_pointer_event(&mut self, ev: &WlPointerEvent, buffer: &mut Vec<Box<dyn Any>>) {
         self.interactivity.call_before_frame();
         self.interactivity.process_pointer(ev);
-        self.ui.on_event(&self.interactivity, &mut self.tree);
+        let mut ctx = EventCtx::new(&self.interactivity, &mut self.tree, buffer);
+        self.ui.on_event(&mut ctx);
     }
 
-    fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent) {
+    fn on_keyboard_event(&mut self, ev: &WlKeyboardEvent, buffer: &mut Vec<Box<dyn Any>>) {
         self.interactivity.call_before_frame();
         self.interactivity.process_keyboard(ev);
-        self.ui.on_event(&self.interactivity, &mut self.tree);
+        let mut ctx = EventCtx::new(&self.interactivity, &mut self.tree, buffer);
+        self.ui.on_event(&mut ctx);
     }
 
-    fn on_touch_event(&mut self, ev: &WlTouchEvent) {
+    fn on_touch_event(&mut self, ev: &WlTouchEvent, buffer: &mut Vec<Box<dyn Any>>) {
         self.interactivity.call_before_frame();
         self.interactivity.process_touch(ev);
-        self.ui.on_event(&self.interactivity, &mut self.tree);
+        let mut ctx = EventCtx::new(&self.interactivity, &mut self.tree, buffer);
+        self.ui.on_event(&mut ctx);
     }
 
     fn wants_input(&self) -> bool {

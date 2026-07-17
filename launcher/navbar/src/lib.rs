@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 use assets::{AtlasId, SpriteRegion};
-use interactivity::{DragState, InteractivityState};
+use interactivity::DragState;
+use ui::EventCtx;
 use taffy::NodeId;
 use ui::{Point, RenderCommand, WidgetList, WidgetTree};
 use utils::{Color, Size};
@@ -428,10 +429,10 @@ impl WidgetList for NavbarUi {
         cmds
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+    fn on_event(&mut self, ctx: &mut EventCtx) {
         self.now = monotonic_now();
-        let (sw, sh) = self.surface_size(tree);
-        let mut changed = self.is_animating();
+        let (sw, sh) = self.surface_size(ctx.tree());
+        let interactivity = ctx.interactivity();
 
         let gesture = &interactivity.gesture;
         let dd = gesture.drag_data();
@@ -446,7 +447,6 @@ impl WidgetList for NavbarUi {
                     {
                         self.drag_active = true;
                         self.drag_start(d.start_position.x(), d.start_position.y());
-                        changed = true;
                     }
                 }
                 Some(DragState::Move) if self.drag_active => {
@@ -458,16 +458,13 @@ impl WidgetList for NavbarUi {
                         sw,
                         sh,
                     );
-                    changed = true;
                 }
                 Some(DragState::End) if self.drag_active => {
                     let extrapolated = gesture.swipe_data().is_some();
                     self.finish_drag(extrapolated);
-                    changed = true;
                 }
                 Some(DragState::Cancel) if self.drag_active => {
                     self.cancel_drag();
-                    changed = true;
                 }
                 _ => {}
             }
@@ -481,10 +478,7 @@ impl WidgetList for NavbarUi {
                     sw,
                     sh,
                 );
-                changed = true;
             }
         }
-
-        changed
     }
 }

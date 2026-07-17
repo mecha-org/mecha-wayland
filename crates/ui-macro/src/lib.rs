@@ -2,8 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    Field, Fields, Ident, ItemStruct, parse::Parse, parse::ParseStream, parse_macro_input,
-    parse_quote,
+    Field, Fields, Ident, ItemStruct, Token, Type, parse::Parse, parse::ParseStream,
+    parse_macro_input, parse_quote, punctuated::Punctuated,
 };
 
 enum WidgetArg {
@@ -99,9 +99,8 @@ pub fn widget(attr: TokenStream, input: TokenStream) -> TokenStream {
 
             fn on_event(
                 &mut self,
-                interactivity: &::interactivity::InteractivityState,
-                tree: &mut ::ui::WidgetTree,
-            ) -> bool {
+                ctx: &mut ::ui::EventCtx,
+            ) {
                 #on_event_body
             }
         }
@@ -174,16 +173,65 @@ fn render_node_body(child_fields: &[Ident]) -> TokenStream2 {
 
 fn on_event_body(child_fields: &[Ident]) -> TokenStream2 {
     if child_fields.is_empty() {
-        quote! {
-            false
-        }
+        quote! {}
     } else {
         quote! {
-            let mut __dirty = false;
             #(
-                __dirty |= ::ui::WidgetList::on_event(&mut self.#child_fields, interactivity, tree);
+                ::ui::WidgetList::on_event(&mut self.#child_fields, ctx);
             )*
-            __dirty
         }
     }
+}
+
+/// Generates a `Module<WindowManager>` that drains `WindowManager::event_buffer`
+/// on each `UiEventsReady` event and re-dispatches the listed event types.
+///
+/// Usage: `register_events!(TypeA, TypeB, ...)`
+///
+/// Mount it alongside `window_manager::module()`:
+/// ```ignore
+/// App::new(state)
+///     .mount(window_manager::module())
+///     .mount(register_events!(MyEvent))
+/// ```
+#[proc_macro]
+pub fn register_events(input: TokenStream) -> TokenStream {
+    let event_types =
+        parse_macro_input!(input with Punctuated::<Type, Token![,]>::parse_terminated);
+    let event_types: Vec<_> = event_types.into_iter().collect();
+
+    let extract_handlers = event_types.iter().map(|ty| {
+        quote! {
+            let __m = __m.on(
+                |__wm: &mut ::window_manager::WindowManager,
+                 _: &::window_manager::UiEventsReady| {
+                    let __buf = ::std::mem::take(&mut __wm.event_buffer);
+                    let mut __vec: ::std::vec::Vec<#ty> = ::std::vec::Vec::new();
+                    for __e in __buf {
+                        match __e.downcast::<#ty>() {
+                            ::std::result::Result::Ok(__v) => __vec.push(*__v),
+                            ::std::result::Result::Err(__e) => __wm.event_buffer.push(__e),
+                        }
+                    }
+                    ::app::Many(__vec)
+                },
+            );
+        }
+    });
+
+    quote! {
+        {
+            // Type inferred from the first .on() call below.
+            let __m = ::app::Module::new();
+            // let __m = __m.on(
+            //     |__wm: &mut ::window_manager::WindowManager,
+            //      _: &::window_manager::UiEventsReady| {
+            //         __wm.event_buffer.clear();
+            //     },
+            // );
+            #(#extract_handlers)*
+            __m
+        }
+    }
+    .into()
 }

@@ -3,7 +3,7 @@
 mod pagination;
 
 use assets::BakedFont;
-use interactivity::InteractivityState;
+use ui::EventCtx;
 use interactivity::hit::{HitArea, HitAreaRegistry};
 use launcher_counter::CounterUi;
 use launcher_volume::VolumeUi;
@@ -64,14 +64,14 @@ impl WidgetList for PaginationUi {
         commands
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+    fn on_event(&mut self, ctx: &mut EventCtx) {
         let pager = &mut self.root.children.0;
         let pager_hit_id: u64 = pager.node_id().into();
         let state = &mut pager.state;
 
-        let mut dirty = false;
-        let children_dirty = pager.children.on_event(interactivity, tree);
+        pager.children.on_event(ctx);
 
+        let interactivity = ctx.interactivity();
         if let Some(drag) = interactivity.gesture.drag_data() {
             match drag.state {
                 interactivity::gesture::DragState::Start => {
@@ -86,26 +86,21 @@ impl WidgetList for PaginationUi {
                     }
                     if over_pager && !over_child {
                         state.handle_drag_start(drag.start_position.x() as f64);
-                        dirty = true;
                     }
                 }
                 interactivity::gesture::DragState::Move => {
                     if state.is_dragging {
                         state.handle_drag_move(drag.current_position.x() as f64);
-                        dirty = true;
                     }
                 }
                 interactivity::gesture::DragState::End
                 | interactivity::gesture::DragState::Cancel => {
                     if state.is_dragging {
                         state.handle_drag_end(self.pager_width);
-                        dirty = true;
                     }
                 }
             }
         }
-
-        dirty || children_dirty || state.is_animating()
     }
 }
 

@@ -179,6 +179,10 @@ fn gen_read_helpers() -> TokenStream {
             read_u32(data, o).map(|v| v as i32)
         }
 
+        fn read_f64(data: &[u8], o: &mut usize) -> Option<f64> {
+            read_i32(data, o).map(|v| v as f64 / 256.0)
+        }
+
         fn read_str(data: &[u8], o: &mut usize) -> Option<String> {
             let len = read_u32(data, o)? as usize;
             let padded = (len + 3) & !3;
@@ -684,8 +688,11 @@ fn gen_parse_stmt(iface_name: &str, arg: &Arg) -> TokenStream {
         ArgType::Fd => quote! {
             let #fname = wayland.take_fd()?;
         },
-        ArgType::Int | ArgType::Fixed => quote! {
+        ArgType::Int => quote! {
             let #fname = read_i32(data, &mut o)?;
+        },
+        ArgType::Fixed => quote! {
+            let #fname = read_f64(data, &mut o)?;
         },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
@@ -769,8 +776,11 @@ fn gen_encode_arg(arg: &Arg) -> TokenStream {
             let fname_id = id(&format!("{}_id", arg.name));
             quote! { body.extend_from_slice(&#fname_id.to_ne_bytes()); }
         }
-        ArgType::Int | ArgType::Fixed => {
+        ArgType::Int => {
             quote! { body.extend_from_slice(&(#fname as u32).to_ne_bytes()); }
+        }
+        ArgType::Fixed => {
+            quote! { body.extend_from_slice(&((#fname * 256.0) as i32 as u32).to_ne_bytes()); }
         }
         ArgType::Uint => {
             quote! { body.extend_from_slice(&u32::from(#fname).to_ne_bytes()); }
@@ -823,7 +833,8 @@ fn gen_encode_arg(arg: &Arg) -> TokenStream {
 
 fn parsed_field_type(iface_name: &str, arg: &Arg) -> TokenStream {
     match arg.arg_type {
-        ArgType::Int | ArgType::Fixed => quote! { i32 },
+        ArgType::Int => quote! { i32 },
+        ArgType::Fixed => quote! { f64 },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
                 let t = resolve_enum_ident(iface_name, e);
@@ -868,7 +879,8 @@ fn parsed_field_type(iface_name: &str, arg: &Arg) -> TokenStream {
 
 fn send_param_type(iface_name: &str, arg: &Arg) -> TokenStream {
     match arg.arg_type {
-        ArgType::Int | ArgType::Fixed => quote! { i32 },
+        ArgType::Int => quote! { i32 },
+        ArgType::Fixed => quote! { f64 },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
                 let t = resolve_enum_ident(iface_name, e);

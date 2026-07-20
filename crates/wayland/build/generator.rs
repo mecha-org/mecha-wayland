@@ -179,8 +179,8 @@ fn gen_read_helpers() -> TokenStream {
             read_u32(data, o).map(|v| v as i32)
         }
 
-        fn read_f64(data: &[u8], o: &mut usize) -> Option<f64> {
-            read_i32(data, o).map(|v| v as f64 / 256.0)
+        fn read_f32(data: &[u8], o: &mut usize) -> Option<f32> {
+            read_i32(data, o).map(|v| v as f32 / 256.0)
         }
 
         fn read_str(data: &[u8], o: &mut usize) -> Option<String> {
@@ -692,7 +692,7 @@ fn gen_parse_stmt(iface_name: &str, arg: &Arg) -> TokenStream {
             let #fname = read_i32(data, &mut o)?;
         },
         ArgType::Fixed => quote! {
-            let #fname = read_f64(data, &mut o)?;
+            let #fname = read_f32(data, &mut o)?;
         },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
@@ -834,7 +834,7 @@ fn gen_encode_arg(arg: &Arg) -> TokenStream {
 fn parsed_field_type(iface_name: &str, arg: &Arg) -> TokenStream {
     match arg.arg_type {
         ArgType::Int => quote! { i32 },
-        ArgType::Fixed => quote! { f64 },
+        ArgType::Fixed => quote! { f32 },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
                 let t = resolve_enum_ident(iface_name, e);
@@ -880,7 +880,7 @@ fn parsed_field_type(iface_name: &str, arg: &Arg) -> TokenStream {
 fn send_param_type(iface_name: &str, arg: &Arg) -> TokenStream {
     match arg.arg_type {
         ArgType::Int => quote! { i32 },
-        ArgType::Fixed => quote! { f64 },
+        ArgType::Fixed => quote! { f32 },
         ArgType::Uint => {
             if let Some(ref e) = arg.enum_type {
                 let t = resolve_enum_ident(iface_name, e);

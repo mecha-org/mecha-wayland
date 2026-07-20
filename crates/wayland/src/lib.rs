@@ -304,6 +304,11 @@ impl WaylandProxy {
         self.0.borrow_mut().submit_write();
     }
 
+    /// Returns `true` if two proxies belong to the same Wayland connection.
+    pub fn is_same_connection(&self, other: &WaylandProxy) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+
     pub(crate) fn write_raw(
         &self,
         sender_id: u32,

@@ -261,29 +261,6 @@ impl SurfaceState {
     pub fn remove_from_stack(&mut self, id: &Handle<WlSurface>) {
         self.stack.retain(|i| i != id);
     }
-
-    pub fn surface_at(&self, gx: i32, gy: i32) -> Option<Handle<WlSurface>> {
-        for id in self.stack.iter().rev() {
-            let surf = self.surfaces.get(id)?;
-            let geo = surf.geometry?;
-            if !geo.contains(gx, gy) {
-                continue;
-            }
-            let sx = gx - geo.x1();
-            let sy = gy - geo.y1();
-            if sx < 0
-                || sy < 0
-                || sx >= surf.current.buffer_width
-                || sy >= surf.current.buffer_height
-            {
-                continue;
-            }
-            if surf.accepts_input_at(sx, sy) {
-                return Some(id.clone());
-            }
-        }
-        None
-    }
 }
 
 #[derive(Debug)]

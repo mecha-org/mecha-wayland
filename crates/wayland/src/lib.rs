@@ -374,6 +374,20 @@ pub struct Handle<T: Interface> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+impl<T: Interface> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.object_id() == other.object_id()
+    }
+}
+
+impl<T: Interface> Eq for Handle<T> {}
+
+impl<T: Interface> std::hash::Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.object_id().expect("missing object id").hash(state);
+    }
+}
+
 impl<T: Interface> Handle<T> {
     pub fn object_id(&self) -> Option<ObjectId> {
         self.slot.upgrade().map(|rc| *rc)

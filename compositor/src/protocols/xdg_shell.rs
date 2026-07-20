@@ -1,8 +1,8 @@
 use app::{RegisteredModule, Start, prelude::*};
 use std::collections::HashMap;
 use wayland::{
-    Interface, ObjectId, WlRegistryRequest, XdgPositionerRequest, XdgSurfaceRequest,
-    XdgToplevelRequest, XdgWmBase, XdgWmBaseRequest,
+    Handle, Interface, ObjectId, WlRegistryRequest, WlSurface, XdgPositionerRequest,
+    XdgSurfaceRequest, XdgToplevelRequest, XdgWmBase, XdgWmBaseRequest,
 };
 
 use crate::Compositor;
@@ -18,7 +18,7 @@ pub struct XdgShellState {
 
 #[derive(Debug)]
 pub struct XdgSurface {
-    pub wl_surface_id: ObjectId,
+    pub wl_surface_id: Handle<WlSurface>,
 }
 
 impl XdgShellState {
@@ -54,17 +54,13 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 XdgWmBaseRequest::Destroy { .. } => {}
                 XdgWmBaseRequest::CreatePositioner { .. } => {}
                 XdgWmBaseRequest::GetXdgSurface { id, surface, .. } => {
-                    if let Some(wl_sid) = surface.object_id() {
-                        if let Some(xdg_sid) = id.object_id() {
-                            c.xdg_shell.xdg_surfaces.insert(
-                                xdg_sid,
-                                XdgSurface {
-                                    wl_surface_id: wl_sid,
-                                },
-                            );
-                            if let Some(surf) = c.surfaces.surfaces.get_mut(&wl_sid) {
-                                let _ = surf.set_role(SurfaceRole::XdgSurface(xdg_sid));
-                            }
+                    if let Some(xdg_sid) = id.object_id() {
+                        let wl_surface_id = surface.clone();
+                        c.xdg_shell
+                            .xdg_surfaces
+                            .insert(xdg_sid, XdgSurface { wl_surface_id });
+                        if let Some(surf) = c.surfaces.surfaces.get_mut(surface) {
+                            let _ = surf.set_role(SurfaceRole::XdgSurface(xdg_sid));
                         }
                     }
                 }
@@ -77,7 +73,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 XdgSurfaceRequest::Destroy { sender } => {
                     if let Some(xdg_sid) = sender.object_id() {
                         if let Some(xdg) = c.xdg_shell.xdg_surfaces.remove(&xdg_sid) {
-                            c.surfaces.remove_from_stack(xdg.wl_surface_id);
+                            c.surfaces.remove_from_stack(&xdg.wl_surface_id);
                             if let Some(surf) = c.surfaces.surfaces.get_mut(&xdg.wl_surface_id) {
                                 surf.geometry = None;
                                 surf.role = None;
@@ -91,7 +87,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     id.configure(0, 0, &[]);
                     if let Some(xdg_sid) = sender.object_id() {
                         if let Some(xdg) = c.xdg_shell.xdg_surfaces.get(&xdg_sid) {
-                            c.surfaces.push_to_stack(xdg.wl_surface_id);
+                            c.surfaces.push_to_stack(&xdg.wl_surface_id);
                         }
                     }
                 }

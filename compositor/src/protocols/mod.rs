@@ -1,6 +1,7 @@
 pub mod wl_callback;
 pub mod wl_compositor;
 pub mod wl_display;
+pub mod wl_keyboard;
 pub mod wl_pointer;
 pub mod wl_region;
 pub mod wl_registry;

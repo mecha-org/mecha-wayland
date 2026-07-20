@@ -239,7 +239,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 // ── Axis ─────────────────────────────────────────────────────
                 WlPointerEvent::Axis {
                     sender: _,
-                    time,
+                    time: _,
                     axis,
                     value,
                 } => {
@@ -247,7 +247,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
                         if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
                             send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis(*time, *axis, *value)
+                                p.axis(state.time_ms(), *axis, *value)
                             });
                         }
                     }
@@ -271,14 +271,14 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 // ── AxisStop ─────────────────────────────────────────────────
                 WlPointerEvent::AxisStop {
                     sender: _,
-                    time,
+                    time: _,
                     axis,
                 } => {
                     let state = &mut compositor.seat.pointer_state;
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
                         if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
                             send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_stop(*time, *axis)
+                                p.axis_stop(state.time_ms(), *axis)
                             });
                         }
                     }

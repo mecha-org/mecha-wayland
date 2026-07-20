@@ -376,7 +376,8 @@ pub struct Handle<T: Interface> {
 
 impl<T: Interface> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.object_id() == other.object_id()
+        self.object_id().expect("missing object id")
+            == other.object_id().expect("missing object id")
     }
 }
 

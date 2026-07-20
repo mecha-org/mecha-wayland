@@ -398,7 +398,7 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
         )
         .on(|wm: &mut WindowManager, event: &wayland::WlCallbackEvent| {
             let wayland::WlCallbackEvent::Done { sender, .. } = event;
-            let obj_id = sender.object_id().expect("live callback");
+            let Some(obj_id) = sender.object_id() else { return; };
 
             if let Some(window_id) = wm.frame_callbacks.remove(&obj_id) {
                 if wm
@@ -428,15 +428,10 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
                     height,
                 } = event
                 {
-                    let id = *wm
-                        .surfaces_with_roles
-                        .get(&sender.object_id().expect("live handle"))
-                        .expect("live handle");
-                    let (stored_w, stored_h) = wm
-                        .windows
-                        .get(&id)
-                        .expect("window exists for configure")
-                        .dimensions();
+                    let Some(sender_id) = sender.object_id() else { return; };
+                    let Some(&id) = wm.surfaces_with_roles.get(&sender_id) else { return; };
+                    let Some(window) = wm.windows.get(&id) else { return; };
+                    let (stored_w, stored_h) = window.dimensions();
                     let w = if *width == 0 { stored_w } else { *width };
                     let h = if *height == 0 { stored_h } else { *height };
                     sender.ack_configure(*serial);
@@ -448,15 +443,12 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
         .on(|wm: &mut WindowManager, event: &wayland::XdgSurfaceEvent| {
             let wayland::XdgSurfaceEvent::Configure { sender, serial } = event;
 
-            let id = *wm
-                .surfaces_with_roles
-                .get(&sender.object_id().expect("live handle"))
-                .expect("live handle");
-            let (w, h) = wm
-                .windows
-                .get(&id)
-                .expect("window exists for configure")
-                .dimensions();
+            // The sender's object ID may be gone if we destroyed the window and Sway
+            // delivers a configure event during teardown. Skip it gracefully.
+            let Some(obj_id) = sender.object_id() else { return; };
+            let Some(&id) = wm.surfaces_with_roles.get(&obj_id) else { return; };
+            let Some(window) = wm.windows.get(&id) else { return; };
+            let (w, h) = window.dimensions();
             sender.ack_configure(*serial);
             wm.configure_window(id, w, h);
             wm.do_render_frame(id);

@@ -120,6 +120,7 @@ fn send_to_client_ptrs(
 ) -> usize {
     let mut n = 0;
     for p in pointers {
+        // TO REMOVE: Replace proxy equal check with Handle client_id equal check
         if p.is_alive() && p.proxy.is_same_connection(proxy) {
             f(p);
             n += 1;
@@ -194,8 +195,6 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     let wx = *surface_x;
                     let wy = *surface_y;
 
-                    // println!("motion\tx\t{wx}\ty\t{wy}");
-
                     compositor.seat.pointer_state.host_x = wx;
                     compositor.seat.pointer_state.host_y = wy;
 
@@ -245,11 +244,9 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 } => {
                     let state = &mut compositor.seat.pointer_state;
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis(state.time_ms(), *axis, *value)
-                            });
-                        }
+                        send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                            p.axis(state.time_ms(), *axis, *value)
+                        });
                     }
                 }
 
@@ -260,11 +257,9 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 } => {
                     let state = &mut compositor.seat.pointer_state;
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_source(*axis_source)
-                            });
-                        }
+                        send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                            p.axis_source(*axis_source)
+                        });
                     }
                 }
 
@@ -276,11 +271,9 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 } => {
                     let state = &mut compositor.seat.pointer_state;
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_stop(state.time_ms(), *axis)
-                            });
-                        }
+                        send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                            p.axis_stop(state.time_ms(), *axis)
+                        });
                     }
                 }
 
@@ -292,45 +285,41 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 } => {
                     let state = &mut compositor.seat.pointer_state;
                     if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_discrete(*axis, *discrete)
-                            });
-                        }
+                        send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                            p.axis_discrete(*axis, *discrete)
+                        });
                     }
                 }
 
-                // ── AxisValue120 ─────────────────────────────────────────────
-                WlPointerEvent::AxisValue120 {
-                    sender: _,
-                    axis,
-                    value120,
-                } => {
-                    let state = &mut compositor.seat.pointer_state;
-                    if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_value120(*axis, *value120)
-                            });
-                        }
-                    }
-                }
+                // TODO Introduced in v8 - forward after version check
+                // // ── AxisValue120 ─────────────────────────────────────────────
+                // WlPointerEvent::AxisValue120 {
+                //     sender: _,
+                //     axis,
+                //     value120,
+                // } => {
+                //     let state = &mut compositor.seat.pointer_state;
+                //     if let Some(fid) = state.focused_surface.as_ref().clone() {
+                //         send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                //             p.axis_value120(*axis, *value120)
+                //         });
+                //     }
+                // }
 
-                // ── AxisRelativeDirection ────────────────────────────────────
-                WlPointerEvent::AxisRelativeDirection {
-                    sender: _,
-                    axis,
-                    direction,
-                } => {
-                    let state = &mut compositor.seat.pointer_state;
-                    if let Some(fid) = state.focused_surface.as_ref().clone() {
-                        if let Some(sd) = compositor.surfaces.surfaces.get(&fid) {
-                            send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
-                                p.axis_relative_direction(*axis, *direction)
-                            });
-                        }
-                    }
-                }
+                // TODO Introduced in v9 - forward after version check
+                // // ── AxisRelativeDirection ────────────────────────────────────
+                // WlPointerEvent::AxisRelativeDirection {
+                //     sender: _,
+                //     axis,
+                //     direction,
+                // } => {
+                //     let state = &mut compositor.seat.pointer_state;
+                //     if let Some(fid) = state.focused_surface.as_ref().clone() {
+                //         send_to_client_ptrs(&state.client_pointers, &fid.proxy, |p| {
+                //             p.axis_relative_direction(*axis, *direction)
+                //         });
+                //     }
+                // }
                 _ => (),
             }
         })

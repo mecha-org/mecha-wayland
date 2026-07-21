@@ -358,16 +358,14 @@ fn surface_hit_test(state: &SurfaceState, gx: i32, gy: i32) -> Option<HitResult>
         if !geo.contains(gx, gy) {
             continue;
         }
-        let sx = gx - geo.x1();
-        let sy = gy - geo.y1();
-        if sx < 0 || sy < 0 || sx >= surf.current.buffer_width || sy >= surf.current.buffer_height {
+        if gx < 0 || gy < 0 || gx >= surf.current.buffer_width || gy >= surf.current.buffer_height {
             continue;
         }
-        if surf.accepts_input_at(sx, sy) {
+        if surf.accepts_input_at(gx, gy) {
             return Some(HitResult {
                 handle: handle.clone(),
-                local_x: sx,
-                local_y: sy,
+                local_x: gx,
+                local_y: gy,
             });
         }
     }

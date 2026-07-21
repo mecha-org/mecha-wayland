@@ -366,13 +366,13 @@ impl<T: WidgetList + 'static> AnyWindow for Window<T> {
                     xdg_surface,
                     toplevel,
                 } => {
+                    toplevel.destroy();
                     xdg_surface.destroy();
-                    toplevel.destroy()
                 }
             }
         }
         if let Some(surface) = &self.surface {
-            surface.destroy()
+            surface.destroy();
         }
     }
 }

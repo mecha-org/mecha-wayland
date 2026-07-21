@@ -1,0 +1,21 @@
+[package]
+name = "dbus"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app = { path = "../app" }
+io-ring = { path = "../io-ring" }
+io-uring = { workspace = true }
+libc = { workspace = true }
+log = "0.4"
+zbus = { version = "5.16.0", features=["bus-impl"] }
+
+[[example]]
+name = "widget_service"
+
+[[example]]
+name = "network_manager"
+
+[[example]]
+name = "file_reader"

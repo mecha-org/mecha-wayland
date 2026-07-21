@@ -40,6 +40,7 @@ pub struct ClientWindow {
     buffer_ids: [Option<ObjectId>; 2],
     back: usize,
     frame_callbacks: HashSet<ObjectId>,
+    rendered: bool,
 }
 
 impl ClientWindow {
@@ -64,6 +65,7 @@ impl ClientWindow {
             buffer_ids: [None, None],
             back: 0,
             frame_callbacks: HashSet::new(),
+            rendered: false,
         }
     }
 
@@ -145,7 +147,7 @@ impl ClientWindow {
     }
 
     fn render_frame(&mut self) {
-        if self.slots.is_none() {
+        if self.rendered {
             return;
         }
 
@@ -176,6 +178,7 @@ impl ClientWindow {
         self.frame_callbacks
             .insert(next_frame.object_id().expect("live callback"));
         self.back ^= 1;
+        self.rendered = true;
     }
 
     pub(crate) fn is_back_released(&self) -> bool {

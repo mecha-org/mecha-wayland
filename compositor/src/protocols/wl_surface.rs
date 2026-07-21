@@ -9,7 +9,7 @@ use wayland::{
 };
 
 use crate::protocols::wl_region::RegionData;
-use crate::rect::Region;
+use crate::rect::{Rect, Region};
 
 const MAX_DAMAGE: usize = 32;
 
@@ -33,6 +33,9 @@ pub struct CurrentState {
     pub opaque_region: Option<Rc<Region>>,
     pub input_region: Option<Rc<Region>>,
 
+    pub buffer_width: i32,
+    pub buffer_height: i32,
+
     pub damage_full: bool,
     pub surface_damage: SmallVec<[DamageRect; 4]>,
     pub buffer_damage: SmallVec<[DamageRect; 4]>,
@@ -51,6 +54,8 @@ impl CurrentState {
             transform: 0,
             opaque_region: None,
             input_region: None,
+            buffer_width: 0,
+            buffer_height: 0,
             damage_full: false,
             surface_damage: SmallVec::new(),
             buffer_damage: SmallVec::new(),
@@ -104,23 +109,24 @@ pub struct SurfaceData {
     pub current: CurrentState,
     pub pending: PendingState,
 
-    pub handle: Handle<WlSurface>,
     pub output: Option<ObjectId>,
 
     pub previous_buffer: Option<ObjectId>,
 
     pub role: Option<SurfaceRole>,
+
+    pub geometry: Option<Rect>,
 }
 
 impl SurfaceData {
-    fn new(handle: Handle<WlSurface>) -> Self {
+    fn new() -> Self {
         Self {
             current: CurrentState::new(),
             pending: PendingState::new(),
-            handle,
             output: None,
             previous_buffer: None,
             role: None,
+            geometry: None,
         }
     }
 
@@ -233,8 +239,9 @@ impl SurfaceRole {
 
 #[derive(Debug, State)]
 pub struct SurfaceState {
-    pub surfaces: HashMap<ObjectId, SurfaceData>,
+    pub surfaces: HashMap<Handle<WlSurface>, SurfaceData>,
     pub regions: HashMap<ObjectId, RegionData>,
+    pub stack: Vec<Handle<WlSurface>>,
 }
 
 impl SurfaceState {
@@ -242,30 +249,35 @@ impl SurfaceState {
         Self {
             surfaces: HashMap::new(),
             regions: HashMap::new(),
+            stack: Vec::new(),
         }
+    }
+
+    pub fn push_to_stack(&mut self, id: &Handle<WlSurface>) {
+        self.stack.retain(|i| i != id);
+        self.stack.push(id.clone());
+    }
+
+    pub fn remove_from_stack(&mut self, id: &Handle<WlSurface>) {
+        self.stack.retain(|i| i != id);
     }
 }
 
 #[derive(Debug)]
 pub struct SurfaceCommitted {
-    pub surface_id: ObjectId,
+    pub surface_id: Handle<WlSurface>,
 }
 impl Event for SurfaceCommitted {}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
-fn post_error(sender: &Handle<impl wayland::Interface>, object_id: ObjectId, code: u32, msg: &str) {
-    if let Some(d) = sender.proxy.get_handle::<WlDisplay>(DISPLAY_OBJECT_ID) {
-        d.error(object_id, code, msg);
+fn post_error(sender: &Handle<impl wayland::Interface>, code: u32, msg: &str) {
+    if let (Some(id), Some(d)) = (
+        sender.object_id(),
+        sender.proxy.get_handle::<WlDisplay>(DISPLAY_OBJECT_ID),
+    ) {
+        d.error(id, code, msg);
     }
-}
-
-fn with_surface<'a>(
-    s: &'a mut SurfaceState,
-    sender: &Handle<impl wayland::Interface>,
-) -> Option<(ObjectId, &'a mut SurfaceData)> {
-    let sid = sender.object_id()?;
-    Some((sid, s.surfaces.get_mut(&sid)?))
 }
 
 fn resolve_region(
@@ -306,9 +318,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
     Module::<SurfaceState, _, _>::new()
         .on(|s: &mut SurfaceState, ev: &WlCompositorRequest| {
             if let WlCompositorRequest::CreateSurface { id, .. } = ev {
-                if let Some(sid) = id.object_id() {
-                    s.surfaces.insert(sid, SurfaceData::new(id.clone()));
-                }
+                s.surfaces.insert(id.clone(), SurfaceData::new());
             }
             hlist![]
         })
@@ -316,17 +326,16 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
             |s: &mut SurfaceState, ev: &WlSurfaceRequest| -> Option<SurfaceCommitted> {
                 match ev {
                     WlSurfaceRequest::Destroy { sender, .. } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             if surf.current.buffer.is_some() {
                                 surf.fire_release_callbacks();
                             }
+                            surf.fire_frame_callbacks(0);
                             surf.pending.frame_callbacks.clear();
                             surf.pending.release_callbacks.clear();
-                            surf.current.frame_callbacks.clear();
                         }
-                        if let Some(sid) = sender.object_id() {
-                            s.surfaces.remove(&sid);
-                        }
+                        s.remove_from_stack(sender);
+                        s.surfaces.remove(sender);
                         None
                     }
                     WlSurfaceRequest::Attach {
@@ -335,9 +344,9 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         x,
                         y,
                     } => {
-                        if let Some((sid, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             if *x != 0 || *y != 0 {
-                                post_error(sender, sid, 3, "non-zero attach x/y at v5+");
+                                post_error(sender, 3, "non-zero attach x/y at v5+");
                             }
                             let id = buffer.as_ref().and_then(|b| b.object_id());
                             surf.pending.buffer = Some(id);
@@ -353,7 +362,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         width,
                         height,
                     } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             add_damage(
                                 &mut surf.pending.damage_full,
                                 &mut surf.pending.surface_damage,
@@ -374,7 +383,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         width,
                         height,
                     } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             add_damage(
                                 &mut surf.pending.damage_full,
                                 &mut surf.pending.buffer_damage,
@@ -389,13 +398,13 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         None
                     }
                     WlSurfaceRequest::Frame { sender, callback } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             surf.pending.frame_callbacks.push(callback.clone());
                         }
                         None
                     }
                     WlSurfaceRequest::GetRelease { sender, callback } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             surf.pending.release_callbacks.push(callback.clone());
                         }
                         None
@@ -406,7 +415,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         } else {
                             normalize_opaque(resolve_region(&mut s.regions, region))
                         };
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             surf.pending.opaque_region = Some(resolved);
                         }
                         None
@@ -417,15 +426,15 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         } else {
                             Some(resolve_region(&mut s.regions, region))
                         };
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             surf.pending.input_region = Some(resolved);
                         }
                         None
                     }
                     WlSurfaceRequest::SetBufferScale { sender, scale } => {
-                        if let Some((sid, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             if *scale <= 0 {
-                                post_error(sender, sid, 0, "buffer scale must be > 0");
+                                post_error(sender, 0, "buffer scale must be > 0");
                             } else {
                                 surf.pending.scale = *scale;
                             }
@@ -433,9 +442,9 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         None
                     }
                     WlSurfaceRequest::SetBufferTransform { sender, transform } => {
-                        if let Some((sid, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             if !(0..=7).contains(transform) {
-                                post_error(sender, sid, 1, "invalid buffer transform");
+                                post_error(sender, 1, "invalid buffer transform");
                             } else {
                                 surf.pending.transform = *transform;
                             }
@@ -443,7 +452,7 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         None
                     }
                     WlSurfaceRequest::Offset { sender, x, y } => {
-                        if let Some((_, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             surf.pending.offset_x = *x;
                             surf.pending.offset_y = *y;
                         }
@@ -451,14 +460,16 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                     }
                     WlSurfaceRequest::Commit { sender } => {
                         let mut emitted = None;
-                        if let Some((sid, surf)) = with_surface(s, sender) {
+                        if let Some(surf) = s.surfaces.get_mut(sender) {
                             let has_release = !surf.pending.release_callbacks.is_empty();
                             let has_buffer = matches!(surf.pending.buffer, Some(Some(_)));
                             if has_release && !has_buffer {
-                                post_error(sender, sid, 5, "get_release without buffer attached");
+                                post_error(sender, 5, "get_release without buffer attached");
                             }
                             surf.commit();
-                            emitted = Some(SurfaceCommitted { surface_id: sid });
+                            emitted = Some(SurfaceCommitted {
+                                surface_id: sender.clone(),
+                            });
                         }
                         emitted
                     }

@@ -32,7 +32,7 @@ struct Compositor {
 fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
     let now = compositor.start_time.elapsed().as_millis() as u32;
 
-    let (buf_id, prev_buf_id, frame_callbacks) = {
+    let (buf_id, prev_buf_id) = {
         let surface = match compositor.surfaces.surfaces.get_mut(&ev.surface_id) {
             Some(s) => s,
             None => return,
@@ -42,8 +42,7 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
             None => return,
         };
         let prev_id = surface.previous_buffer.take();
-        let frames: Vec<_> = surface.current.frame_callbacks.drain(..).collect();
-        (buf_id, prev_id, frames)
+        (buf_id, prev_id)
     };
 
     // TO REMOVE: mmap DMA-BUF for CPU write.
@@ -52,6 +51,11 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
             Some(b) => b,
             None => return,
         };
+        // TO REMOVE: capture buffer dimensions for hit-testing.
+        if let Some(surf) = compositor.surfaces.surfaces.get_mut(&ev.surface_id) {
+            surf.current.buffer_width = shm_buf.width;
+            surf.current.buffer_height = shm_buf.height;
+        }
         (
             shm_buf.ptr.as_ptr() as *const u8,
             shm_buf.stride as usize,
@@ -140,8 +144,8 @@ fn blit(compositor: &mut Compositor, ev: &SurfaceCommitted) {
         }
     }
 
-    for cb in frame_callbacks {
-        cb.done(now);
+    if let Some(surf) = compositor.surfaces.surfaces.get_mut(&ev.surface_id) {
+        surf.fire_frame_callbacks(now);
     }
 }
 
@@ -173,6 +177,7 @@ fn main() {
     .mount(protocols::wl_region::module())
     .mount(protocols::wl_surface::module())
     .mount(protocols::wl_seat::module())
+    .mount(protocols::wl_pointer::module())
     .mount(protocols::xdg_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {

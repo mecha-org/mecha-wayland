@@ -12,6 +12,7 @@ pub struct WlSeatState {
     pub capability: Option<WlSeatCapability>,
     pub name: String,
     pub pointer_state: WlPointerState,
+    pub client_seats: Vec<Handle<WlSeat>>,
 }
 
 impl WlSeatState {
@@ -21,6 +22,7 @@ impl WlSeatState {
             capability: None,
             name: String::new(),
             pointer_state: WlPointerState::new(),
+            client_seats: Vec::new(),
         }
     }
 
@@ -40,6 +42,10 @@ impl WlSeatState {
             }
             _ => {}
         }
+    }
+    pub fn retain_alive(&mut self) {
+        self.client_seats.retain(|s| s.is_alive());
+        self.pointer_state.retain_alive();
     }
 }
 
@@ -70,7 +76,27 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                 WlSeatEvent::Capabilities { capabilities, .. } => {
                     println!("seat capabilities: {:?}", capabilities);
                     state.capability = Some(*capabilities);
-                    // TODO Forward event to client on input capabilities change after initial flow
+                    state.retain_alive();
+                    for client_seat in &state.client_seats {
+                        client_seat.capabilities(*capabilities);
+                    }
+                    if capabilities.contains(WlSeatCapability::Pointer) {
+                        if state.pointer_state.pointer.is_none()
+                            && let Some(seat) = &state.seat
+                        {
+                            state.pointer_state.pointer = Some(seat.get_pointer());
+                            println!("created host pointer");
+                        }
+                    } else {
+                        state.pointer_state.pointer = None;
+                        state.pointer_state.on_capability_removed();
+                    }
+                    if !capabilities.contains(WlSeatCapability::Keyboard) {
+                        // TODO clear keyboard state when added
+                    }
+                    if !capabilities.contains(WlSeatCapability::Touch) {
+                        // TODO clear touch state when added
+                    }
                 }
                 WlSeatEvent::Name { name, .. } => {
                     println!("seat name: {}", name);
@@ -90,18 +116,19 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
             } = ev;
             if interface.as_str() == WlSeat::NAME {
                 let handle = sender.proxy.new_handle::<WlSeat>(*id);
-                if let Some(capability) = state.capability {
-                    handle.capabilities(capability);
-                } else {
-                    println!("Error(seat): no capabilities registered");
-                }
-                // wl_seat.name event was added in version 2
+                state.client_seats.push(handle.clone());
+                // wl_seat.name event was added in version 2; must be sent before capabilities
                 if *version >= 2 {
                     if !state.name.is_empty() {
                         handle.name(&state.name);
                     } else {
                         println!("Error(seat): no name registered");
                     }
+                }
+                if let Some(capability) = state.capability {
+                    handle.capabilities(capability);
+                } else {
+                    println!("Error(seat): no capabilities registered");
                 }
             }
         })

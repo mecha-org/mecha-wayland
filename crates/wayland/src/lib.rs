@@ -304,6 +304,11 @@ impl WaylandProxy {
         self.0.borrow_mut().submit_write();
     }
 
+    /// Returns `true` if two proxies belong to the same Wayland connection.
+    pub fn is_same_connection(&self, other: &WaylandProxy) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+
     pub(crate) fn write_raw(
         &self,
         sender_id: u32,
@@ -372,6 +377,21 @@ pub struct Handle<T: Interface> {
     slot: Weak<ObjectId>,
     pub proxy: WaylandProxy,
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: Interface> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.object_id().expect("missing object id")
+            == other.object_id().expect("missing object id")
+    }
+}
+
+impl<T: Interface> Eq for Handle<T> {}
+
+impl<T: Interface> std::hash::Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.object_id().expect("missing object id").hash(state);
+    }
 }
 
 impl<T: Interface> Handle<T> {

@@ -1,11 +1,22 @@
 use app::{RegisteredModule, prelude::*};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use wayland::{
-    Handle, WlKeyboard, WlKeyboardEvent, WlKeyboardRequest, WlSeatCapability, WlSeatRequest,
-    WlSurface,
+    Handle, WlKeyboard, WlKeyboardEvent, WlKeyboardKeymapFormat, WlKeyboardRequest,
+    WlSeatCapability, WlSeatRequest, WlSurface,
 };
 
 use crate::Compositor;
+
+pub struct KbRepeatInfo {
+    pub rate: i32,
+    pub delay: i32,
+}
+
+pub struct KbKeymapInfo {
+    pub format: WlKeyboardKeymapFormat,
+    pub fd: Option<OwnedFd>,
+    pub size: u32,
+}
 
 #[derive(State)]
 pub struct WlKeyboardState {
@@ -15,6 +26,8 @@ pub struct WlKeyboardState {
     pub focused_surface: Option<Handle<WlSurface>>,
     #[lens(skip)]
     pub focused_client: Option<Handle<WlKeyboard>>,
+    pub repeat_info: KbRepeatInfo,
+    pub keymap_info: KbKeymapInfo,
 }
 
 impl WlKeyboardState {
@@ -24,6 +37,12 @@ impl WlKeyboardState {
             client_keyboards: Vec::new(),
             focused_surface: None,
             focused_client: None,
+            repeat_info: KbRepeatInfo { rate: 0, delay: 0 },
+            keymap_info: KbKeymapInfo {
+                format: WlKeyboardKeymapFormat::NoKeymap,
+                fd: None,
+                size: 0,
+            },
         }
     }
 
@@ -53,7 +72,18 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                             "seat keyboard: {:?}",
                             id.object_id().expect("live keyboard")
                         );
-                        // TODO Send all cached info like repeat rate etc.
+                        // Send all cached info like repeat rate etc.
+                        let KbRepeatInfo { rate, delay } =
+                            compositor.seat.keyboard_state.repeat_info;
+                        id.repeat_info(rate, delay);
+                        if let KbKeymapInfo {
+                            format,
+                            fd: Some(fd),
+                            size,
+                        } = &compositor.seat.keyboard_state.keymap_info
+                        {
+                            id.keymap(*format, fd.as_fd(), *size);
+                        }
                     } else {
                         // TODO Send WlSeatError - through WlDisplay
                     }
@@ -74,6 +104,11 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     for kb in &compositor.seat.keyboard_state.client_keyboards {
                         kb.keymap(*format, fd.as_fd(), *size);
                     }
+                    compositor.seat.keyboard_state.keymap_info = KbKeymapInfo {
+                        format: *format,
+                        fd: Some(fd.try_clone().expect("Failed to clone fd")),
+                        size: *size,
+                    };
                 }
                 WlKeyboardEvent::Enter {
                     sender,
@@ -168,6 +203,10 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     for kb in &compositor.seat.keyboard_state.client_keyboards {
                         kb.repeat_info(*rate, *delay);
                     }
+                    compositor.seat.keyboard_state.repeat_info = KbRepeatInfo {
+                        rate: *rate,
+                        delay: *delay,
+                    };
                 }
             }
         })

@@ -521,6 +521,7 @@ dependencies = [
  "launcher-status-bar",
  "launcher-volume",
  "notification",
+ "ui",
  "window-manager",
 ]
 
@@ -528,6 +529,7 @@ dependencies = [
 name = "launcher-counter"
 version = "0.1.0"
 dependencies = [
+ "app",
  "assets",
  "interactivity",
  "taffy",
@@ -1114,6 +1116,7 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
+ "app",
  "assets",
  "interactivity",
  "taffy",

@@ -9,7 +9,7 @@ use launcher_status_bar::{
     StatusBarUi, ATLAS, UI_FONT_INTER_100, UI_FONT_INTER_14, UI_FONT_INTER_16, UI_FONT_INTER_24,
 };
 use notification::{create_notification_ui, PANEL_HEIGHT};
-use ui_macro::register_events;
+use ui::register_events;
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,

@@ -9,6 +9,7 @@ use utils::{Color, Rect, Size as USize};
 pub use utils::Point;
 
 pub use ui_macro::widget;
+pub use ui_macro::register_events;
 
 pub mod widgets;
 

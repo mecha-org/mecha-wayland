@@ -75,7 +75,7 @@ impl PointerState {
                 surface_y,
                 ..
             } => {
-                self.position = Point::new(*surface_x as f32 / 256.0, *surface_y as f32 / 256.0);
+                self.position = Point::new(*surface_x, *surface_y);
             }
 
             WlPointerEvent::Leave { .. } => {
@@ -88,7 +88,7 @@ impl PointerState {
                 time,
                 ..
             } => {
-                self.position = Point::new(*surface_x as f32 / 256.0, *surface_y as f32 / 256.0);
+                self.position = Point::new(*surface_x, *surface_y);
                 if self.pressed(MouseButton::Left) {
                     gesture.on_source_update(self.position, Duration::from_millis(*time as u64));
                 }
@@ -123,7 +123,7 @@ impl PointerState {
 
             WlPointerEvent::Axis { axis, value, .. } => {
                 let data = self.just_scrolled.get_or_insert_with(ScrollData::default);
-                let delta = *value as f32 / 256.0;
+                let delta = *value;
                 match axis {
                     WlPointerAxis::VerticalScroll => data.dy += delta,
                     WlPointerAxis::HorizontalScroll => data.dx += delta,

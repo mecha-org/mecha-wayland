@@ -104,11 +104,8 @@ impl WlKeyboardState {
         self.repeat_info = KbRepeatInfo { rate, delay };
     }
 
-    pub fn send_focused<F>(
-        &mut self,
-        pointer_focus: Option<Handle<WlSurface>>,
-        mut send_event: F,
-    ) where
+    pub fn send_focused<F>(&mut self, pointer_focus: Option<Handle<WlSurface>>, mut send_event: F)
+    where
         F: FnMut(&Handle<WlKeyboard>, u32),
     {
         let serial = self.next_serial();
@@ -247,13 +244,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
 
                     let pointer_focus = compositor.seat.pointer_state.focused_surface.clone();
                     state.send_focused(pointer_focus, |kb, serial| {
-                        kb.modifiers(
-                            serial,
-                            *mods_depressed,
-                            *mods_latched,
-                            *mods_locked,
-                            *group,
-                        );
+                        kb.modifiers(serial, *mods_depressed, *mods_latched, *mods_locked, *group);
                         println!("in wl_keyboard modifiers client {:?}: {:?}", kb, serial);
                     });
                 }

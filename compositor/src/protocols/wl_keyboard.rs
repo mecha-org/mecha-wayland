@@ -104,16 +104,40 @@ impl WlKeyboardState {
         self.repeat_info = KbRepeatInfo { rate, delay };
     }
 
-    pub fn broadcast_modifiers(
-        &self,
-        serial: u32,
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
-        group: u32,
-    ) {
-        for kb in &self.client_keyboards {
-            kb.modifiers(serial, mods_depressed, mods_latched, mods_locked, group);
+    pub fn send_focused<F>(
+        &mut self,
+        pointer_focus: Option<Handle<WlSurface>>,
+        mut send_event: F,
+    ) where
+        F: FnMut(&Handle<WlKeyboard>, u32),
+    {
+        let serial = self.next_serial();
+
+        let Some(surf) = pointer_focus else {
+            // No surface under pointer focus
+            self.clear_focus(serial);
+            return;
+        };
+
+        if let Some(kb_surf) = &self.focused_surface {
+            if surf == *kb_surf {
+                // Same surface in keyboard focus so just send event
+                if let Some(kb) = self.focused_client.clone() {
+                    send_event(&kb, serial);
+                }
+                return;
+            }
+            // Leave old surface
+            // TODO Unable to leave keyboard focus without key event
+            let leave_serial = self.next_serial();
+            self.clear_focus(leave_serial);
+        }
+
+        // Enter new client and send event
+        let enter_serial = self.next_serial();
+        if let Some(kb) = self.focus_surface(&surf, enter_serial, &[]) {
+            let event_serial = self.next_serial();
+            send_event(&kb, event_serial);
         }
     }
 
@@ -200,28 +224,17 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     state: keystate,
                     ..
                 } => {
-                    let serial = state.next_serial();
                     let time = state.time_ms();
-                    println!("in wl_keyboard key {:?}: {:?} {:?}", serial, key, keystate);
-                    if let Some(kb) = state.focused_client.clone() {
-                        // Already focused on client; just send event
+                    println!("in wl_keyboard key: {:?} {:?}", key, keystate);
+
+                    let pointer_focus = compositor.seat.pointer_state.focused_surface.clone();
+                    state.send_focused(pointer_focus, |kb, serial| {
                         kb.key(serial, time, *key, *keystate);
                         println!(
                             "in wl_keyboard key client {:?}: {:?} {:?}",
                             kb, key, keystate
                         );
-                    } else if let Some(surf) = compositor.seat.pointer_state.focused_surface.clone()
-                    // TODO Put at top
-                    {
-                        // Enter new client and send event
-                        if let Some(kb) = state.focus_surface(&surf, serial, &[]) {
-                            kb.key(serial, time, *key, *keystate);
-                            println!(
-                                "in wl_keyboard key client {:?}: {:?} {:?}",
-                                kb, key, keystate
-                            );
-                        }
-                    }
+                    });
                 }
                 WlKeyboardEvent::Modifiers {
                     mods_depressed,
@@ -230,15 +243,19 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     group,
                     ..
                 } => {
-                    let serial = state.next_serial();
-                    println!("in wl_keyboard modifiers {:?}", serial);
-                    state.broadcast_modifiers(
-                        serial,
-                        *mods_depressed,
-                        *mods_latched,
-                        *mods_locked,
-                        *group,
-                    );
+                    println!("in wl_keyboard modifiers");
+
+                    let pointer_focus = compositor.seat.pointer_state.focused_surface.clone();
+                    state.send_focused(pointer_focus, |kb, serial| {
+                        kb.modifiers(
+                            serial,
+                            *mods_depressed,
+                            *mods_latched,
+                            *mods_locked,
+                            *group,
+                        );
+                        println!("in wl_keyboard modifiers client {:?}: {:?}", kb, serial);
+                    });
                 }
                 WlKeyboardEvent::RepeatInfo { rate, delay, .. } => {
                     println!("in wl_keyboard repeat_info {:?} {:?}", rate, delay);

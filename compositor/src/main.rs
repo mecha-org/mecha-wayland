@@ -13,6 +13,7 @@ use client_window::ClientWindow;
 use protocols::wl_registry::WlRegistryState;
 use protocols::wl_shm::WlShmState;
 use protocols::wl_surface::{SurfaceCommitted, SurfaceState};
+use protocols::wlr_layer_shell::LayerShellState;
 use protocols::xdg_shell::XdgShellState;
 
 #[derive(State)]
@@ -24,6 +25,7 @@ struct Compositor {
     surfaces: SurfaceState,
     seat: WlSeatState,
     xdg_shell: XdgShellState,
+    layer_shell: LayerShellState,
     client_window: ClientWindow,
     start_time: Instant,
 }
@@ -163,6 +165,7 @@ fn main() {
         surfaces: SurfaceState::new(),
         seat: WlSeatState::new(),
         xdg_shell: XdgShellState::default(),
+        layer_shell: LayerShellState::default(),
         client_window,
         start_time,
     })
@@ -179,6 +182,7 @@ fn main() {
     .mount(protocols::wl_seat::module())
     .mount(protocols::wl_pointer::module())
     .mount(protocols::xdg_shell::module())
+    .mount(protocols::wlr_layer_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {
             blit(compositor, ev);

@@ -13,6 +13,7 @@ members = [
 [workspace.dependencies]
 # crates from the core
 app = { path = "../crates/app" }
+ui-macro = { path = "../crates/ui-macro" }
 renderer = { path = "../crates/renderer" }
 assets = { path = "../crates/assets" }
 io-ring = { path = "../crates/io-ring" }
@@ -47,6 +48,7 @@ app.workspace = true
 io-ring.workspace = true
 window-manager.workspace = true
 interactivity.workspace = true
+ui-macro.workspace = true
 launcher-navbar.workspace = true
 launcher-status-bar.workspace = true
 launcher-counter.workspace = true

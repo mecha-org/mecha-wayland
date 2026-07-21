@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use animation::{Animated, AnimationConfig, Easing, monotonic_now};
 use assets::BakedFont;
-use interactivity::InteractivityState;
+use ui::EventCtx;
 use taffy::prelude::*;
 use ui::{Point, Render, RenderCommand, Widget, WidgetList, WidgetTree};
 use utils::{Color, Rect, Size};
@@ -250,25 +250,27 @@ impl WidgetList for NotificationUi {
         cmds
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
+    fn on_event(&mut self, ctx: &mut EventCtx) {
         let now = monotonic_now();
 
         if !self.open && !self.slide_y.is_animating(now) {
-            return false;
+            return;
         }
 
         let slide = self.slide_y.get(now);
-        if let Some(ll) = self.list_id.and_then(|id| tree.layout(id).ok()) {
-            self.entries.0.bounds = entry_bounds(tree, &ll, &self.entries.0, slide);
-            self.entries.1.bounds = entry_bounds(tree, &ll, &self.entries.1, slide);
-            self.entries.2.bounds = entry_bounds(tree, &ll, &self.entries.2, slide);
+        {
+            let tree = ctx.tree();
+            if let Some(ll) = self.list_id.and_then(|id| tree.layout(id).ok()) {
+                self.entries.0.bounds = entry_bounds(tree, &ll, &self.entries.0, slide);
+                self.entries.1.bounds = entry_bounds(tree, &ll, &self.entries.1, slide);
+                self.entries.2.bounds = entry_bounds(tree, &ll, &self.entries.2, slide);
+            }
         }
 
-        let mut ch = self.slide_y.is_animating(now);
-        ch |= self.entries.0.handle_gesture(now, interactivity);
-        ch |= self.entries.1.handle_gesture(now, interactivity);
-        ch |= self.entries.2.handle_gesture(now, interactivity);
-        ch
+        let interactivity = ctx.interactivity();
+        self.entries.0.handle_gesture(now, interactivity);
+        self.entries.1.handle_gesture(now, interactivity);
+        self.entries.2.handle_gesture(now, interactivity);
     }
 
     fn wants_input(&self) -> bool {

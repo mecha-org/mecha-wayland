@@ -7,9 +7,14 @@ use app::{RegisteredModule, prelude::State};
 use io_ring::RingProxy;
 use renderer::Renderer;
 use renderer::commands::{ClearColor, DrawMonochromeSprite, DrawQuad, DrawRect, DrawText};
+use std::any::Any;
 use std::collections::HashMap;
 use ui::WidgetList;
 use wayland::{Interface, *};
+
+#[derive(Debug)]
+pub struct UiEventsReady;
+impl app::Event for UiEventsReady {}
 
 use globals::WaylandGlobals;
 use window::{AnyWindow, Window, WindowKindHandles};
@@ -30,6 +35,8 @@ pub struct WindowManager {
     pending: Vec<(WindowSettings, Box<dyn AnyWindow>)>,
     #[lens(skip)]
     windows: HashMap<WindowId, Box<dyn AnyWindow>>,
+    #[lens(skip)]
+    pub event_buffer: Vec<Box<dyn Any>>,
     #[lens(skip)]
     frame_callbacks: HashMap<ObjectId, WindowId>,
     #[lens(skip)]
@@ -56,6 +63,7 @@ impl WindowManager {
             renderer,
             pending: Vec::new(),
             windows: HashMap::new(),
+            event_buffer: Vec::new(),
             frame_callbacks: HashMap::new(),
             wl_surfaces: HashMap::new(),
             surfaces_with_roles: HashMap::new(),
@@ -292,108 +300,117 @@ pub fn module<S>() -> impl app::RegisteredModule<WindowManager, S> {
             }
         })
         .on(
-            |wm: &mut WindowManager, event: &wayland::WlPointerEvent| match event {
-                WlPointerEvent::Enter { surface, .. } => {
-                    let surface_id = surface.object_id().expect("live surface");
-                    wm.current_pointer_window = wm.wl_surfaces.get(&surface_id).copied();
-                    if let Some(id) = wm.current_pointer_window {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_pointer_event(event);
+            |wm: &mut WindowManager, event: &wayland::WlPointerEvent| -> Option<UiEventsReady> {
+                match event {
+                    WlPointerEvent::Enter { surface, .. } => {
+                        let surface_id = surface.object_id().expect("live surface");
+                        wm.current_pointer_window = wm.wl_surfaces.get(&surface_id).copied();
+                        if let Some(id) = wm.current_pointer_window {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_pointer_event(event, &mut wm.event_buffer);
+                            }
+                        }
+                    }
+                    WlPointerEvent::Leave { .. } => {
+                        if let Some(id) = wm.current_pointer_window.take() {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_pointer_event(event, &mut wm.event_buffer);
+                            }
+                        }
+                    }
+                    _ => {
+                        if let Some(id) = wm.current_pointer_window {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_pointer_event(event, &mut wm.event_buffer);
+                            }
                         }
                     }
                 }
-                WlPointerEvent::Leave { .. } => {
-                    if let Some(id) = wm.current_pointer_window.take() {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_pointer_event(event);
-                        }
-                    }
-                }
-                _ => {
-                    if let Some(id) = wm.current_pointer_window {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_pointer_event(event);
-                        }
-                    }
-                }
+                if !wm.event_buffer.is_empty() { Some(UiEventsReady) } else { None }
             },
         )
         .on(
-            |wm: &mut WindowManager, event: &wayland::WlKeyboardEvent| match event {
-                WlKeyboardEvent::Enter { surface, .. } => {
-                    let surface_id = surface.object_id().expect("live surface");
-                    wm.current_keyboard_window = wm.wl_surfaces.get(&surface_id).copied();
-                    if let Some(id) = wm.current_keyboard_window {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_keyboard_event(event);
+            |wm: &mut WindowManager, event: &wayland::WlKeyboardEvent| -> Option<UiEventsReady> {
+                match event {
+                    WlKeyboardEvent::Enter { surface, .. } => {
+                        let surface_id = surface.object_id().expect("live surface");
+                        wm.current_keyboard_window = wm.wl_surfaces.get(&surface_id).copied();
+                        if let Some(id) = wm.current_keyboard_window {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_keyboard_event(event, &mut wm.event_buffer);
+                            }
+                        }
+                    }
+                    WlKeyboardEvent::Leave { .. } => {
+                        if let Some(id) = wm.current_keyboard_window.take() {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_keyboard_event(event, &mut wm.event_buffer);
+                            }
+                        }
+                    }
+                    _ => {
+                        if let Some(id) = wm.current_keyboard_window {
+                            if let Some(w) = wm.windows.get_mut(&id) {
+                                w.on_keyboard_event(event, &mut wm.event_buffer);
+                            }
                         }
                     }
                 }
-                WlKeyboardEvent::Leave { .. } => {
-                    if let Some(id) = wm.current_keyboard_window.take() {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_keyboard_event(event);
-                        }
-                    }
-                }
-                _ => {
-                    if let Some(id) = wm.current_keyboard_window {
-                        if let Some(w) = wm.windows.get_mut(&id) {
-                            w.on_keyboard_event(event);
-                        }
-                    }
-                }
+                if !wm.event_buffer.is_empty() { Some(UiEventsReady) } else { None }
             },
         )
         .on(
-            |wm: &mut WindowManager, event: &wayland::WlTouchEvent| match event {
-                WlTouchEvent::Down { surface, id, .. } => {
-                    if let Some(surface_id) = surface.object_id() {
-                        if let Some(&window_id) = wm.wl_surfaces.get(&surface_id) {
-                            wm.touch_window_map.insert(*id, window_id);
-                            if let Some(w) = wm.windows.get_mut(&window_id) {
-                                w.on_touch_event(event);
+            |wm: &mut WindowManager, event: &wayland::WlTouchEvent| -> Option<UiEventsReady> {
+                match event {
+                    WlTouchEvent::Down { surface, id, .. } => {
+                        if let Some(surface_id) = surface.object_id() {
+                            if let Some(&window_id) = wm.wl_surfaces.get(&surface_id) {
+                                wm.touch_window_map.insert(*id, window_id);
+                                if let Some(w) = wm.windows.get_mut(&window_id) {
+                                    w.on_touch_event(event, &mut wm.event_buffer);
+                                }
                             }
                         }
                     }
-                }
-                WlTouchEvent::Up { id, .. } => {
-                    if let Some(window_id) = wm.touch_window_map.remove(id) {
-                        if let Some(w) = wm.windows.get_mut(&window_id) {
-                            w.on_touch_event(event);
-                        }
-                    }
-                }
-                WlTouchEvent::Motion { id, .. } => {
-                    if let Some(&window_id) = wm.touch_window_map.get(id) {
-                        if let Some(w) = wm.windows.get_mut(&window_id) {
-                            w.on_touch_event(event);
-                        }
-                    }
-                }
-                WlTouchEvent::Frame { .. } => {
-                    let mut seen = std::collections::HashSet::new();
-                    for &window_id in wm.touch_window_map.values() {
-                        if seen.insert(window_id) {
+                    WlTouchEvent::Up { id, .. } => {
+                        if let Some(window_id) = wm.touch_window_map.remove(id) {
                             if let Some(w) = wm.windows.get_mut(&window_id) {
-                                w.on_touch_event(event);
+                                w.on_touch_event(event, &mut wm.event_buffer);
                             }
                         }
                     }
-                }
-                WlTouchEvent::Cancel { .. } => {
-                    let window_ids: Vec<WindowId> = wm.touch_window_map.values().copied().collect();
-                    wm.touch_window_map.clear();
-                    let mut seen = std::collections::HashSet::new();
-                    for window_id in window_ids {
-                        if seen.insert(window_id) {
+                    WlTouchEvent::Motion { id, .. } => {
+                        if let Some(&window_id) = wm.touch_window_map.get(id) {
                             if let Some(w) = wm.windows.get_mut(&window_id) {
-                                w.on_touch_event(event);
+                                w.on_touch_event(event, &mut wm.event_buffer);
                             }
                         }
                     }
+                    WlTouchEvent::Frame { .. } => {
+                        let mut seen = std::collections::HashSet::new();
+                        for &window_id in wm.touch_window_map.values() {
+                            if seen.insert(window_id) {
+                                if let Some(w) = wm.windows.get_mut(&window_id) {
+                                    w.on_touch_event(event, &mut wm.event_buffer);
+                                }
+                            }
+                        }
+                    }
+                    WlTouchEvent::Cancel { .. } => {
+                        let window_ids: Vec<WindowId> = wm.touch_window_map.values().copied().collect();
+                        wm.touch_window_map.clear();
+                        let mut seen = std::collections::HashSet::new();
+                        for window_id in window_ids {
+                            if seen.insert(window_id) {
+                                if let Some(w) = wm.windows.get_mut(&window_id) {
+                                    w.on_touch_event(event, &mut wm.event_buffer);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                if !wm.event_buffer.is_empty() { Some(UiEventsReady) } else { None }
             },
         )
         .on(|wm: &mut WindowManager, event: &wayland::WlCallbackEvent| {

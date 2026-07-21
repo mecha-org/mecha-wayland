@@ -2,12 +2,14 @@ use std::sync::mpsc;
 
 use app::prelude::*;
 use io_ring::{Ring, RingSettings};
-use launcher_navbar::{NAV_EXCLUSIVE_ZONE, NAV_SURFACE_HEIGHT, NavbarUi};
+use launcher_counter::CounterChanged;
+use launcher_navbar::{NavbarUi, NAV_EXCLUSIVE_ZONE, NAV_SURFACE_HEIGHT};
 use launcher_pagination::PaginationUi;
 use launcher_status_bar::{
-    ATLAS, StatusBarUi, UI_FONT_INTER_14, UI_FONT_INTER_16, UI_FONT_INTER_24, UI_FONT_INTER_100,
+    StatusBarUi, ATLAS, UI_FONT_INTER_100, UI_FONT_INTER_14, UI_FONT_INTER_16, UI_FONT_INTER_24,
 };
-use notification::{PANEL_HEIGHT, create_notification_ui};
+use notification::{create_notification_ui, PANEL_HEIGHT};
+use ui_macro::register_events;
 use window_manager::{
     Color, WindowKind, WindowManager, WindowSettings, ZwlrLayerShellV1Layer,
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
@@ -128,6 +130,12 @@ fn main() {
 
     let mut app = App::new(launcher)
         .mount(window_manager::module())
+        .mount(
+            Module::new().on(|_: &mut WindowManager, e: &CounterChanged| {
+                eprintln!("[counter] value -> {}", e.0);
+            }),
+        )
+        .mount(register_events!(CounterChanged))
         .mount(io_ring::module());
 
     app.dispatch(&app::Start);

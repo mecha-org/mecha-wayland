@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+app.workspace = true
 taffy = { workspace = true }
 assets = { path = "../assets" }
 utils = { path = "../utils" }

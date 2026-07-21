@@ -2,6 +2,7 @@ extern crate self as ui;
 
 use assets::BakedFont;
 use interactivity::InteractivityState;
+use std::any::Any;
 use taffy::{AvailableSpace, Layout, NodeId, Size, Style, TaffyTree};
 use utils::{Color, Rect, Size as USize};
 
@@ -63,6 +64,34 @@ pub trait Measure {
     ) -> Size<f32>;
 }
 
+pub struct EventCtx<'a> {
+    interactivity: &'a InteractivityState,
+    tree: &'a mut WidgetTree,
+    buffer: &'a mut Vec<Box<dyn Any>>,
+}
+
+impl<'a> EventCtx<'a> {
+    pub fn new(
+        interactivity: &'a InteractivityState,
+        tree: &'a mut WidgetTree,
+        buffer: &'a mut Vec<Box<dyn Any>>,
+    ) -> Self {
+        Self { interactivity, tree, buffer }
+    }
+
+    pub fn interactivity(&self) -> &'a InteractivityState {
+        self.interactivity
+    }
+
+    pub fn tree(&mut self) -> &mut WidgetTree {
+        self.tree
+    }
+
+    pub fn dispatch<T: app::Event>(&mut self, event: T) {
+        self.buffer.push(Box::new(event));
+    }
+}
+
 pub trait Render {
     fn render(&self, layout: &Layout, abs_pos: Point) -> Vec<RenderCommand>;
 }
@@ -77,17 +106,13 @@ pub trait Widget: Render {
         tree: &WidgetTree,
         offset: Point,
     ) -> Vec<RenderCommand>;
-    fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
-        false
-    }
+    fn on_event(&mut self, _ctx: &mut EventCtx) {}
 }
 
 pub trait WidgetList {
     fn build_children(&mut self, tree: &mut WidgetTree) -> Vec<NodeId>;
     fn render_children(&mut self, tree: &WidgetTree, parent_abs: Point) -> Vec<RenderCommand>;
-    fn on_event(&mut self, _interactivity: &InteractivityState, _tree: &mut WidgetTree) -> bool {
-        false
-    }
+    fn on_event(&mut self, _ctx: &mut EventCtx) {}
     fn touch_config(&self) -> Option<interactivity::touch::TouchConfig> {
         None
     }
@@ -118,8 +143,8 @@ impl<W: Widget> WidgetList for W {
         self.render_node(layout, tree, parent_abs)
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        self.on_event(interactivity, tree)
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        <W as Widget>::on_event(self, ctx)
     }
 }
 
@@ -132,8 +157,8 @@ impl<A: WidgetList> WidgetList for (A,) {
         self.0.render_children(tree, parent_abs)
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        self.0.on_event(interactivity, tree)
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        self.0.on_event(ctx)
     }
 }
 
@@ -150,10 +175,9 @@ impl<A: WidgetList, B: WidgetList> WidgetList for (A, B) {
         commands
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        let a = self.0.on_event(interactivity, tree);
-        let b = self.1.on_event(interactivity, tree);
-        a || b
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        self.0.on_event(ctx);
+        self.1.on_event(ctx);
     }
 }
 
@@ -172,10 +196,9 @@ impl<A: WidgetList, B: WidgetList, C: WidgetList> WidgetList for (A, B, C) {
         commands
     }
 
-    fn on_event(&mut self, interactivity: &InteractivityState, tree: &mut WidgetTree) -> bool {
-        let a = self.0.on_event(interactivity, tree);
-        let b = self.1.on_event(interactivity, tree);
-        let c = self.2.on_event(interactivity, tree);
-        a || b || c
+    fn on_event(&mut self, ctx: &mut EventCtx) {
+        self.0.on_event(ctx);
+        self.1.on_event(ctx);
+        self.2.on_event(ctx);
     }
 }

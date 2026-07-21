@@ -2,6 +2,7 @@ use app::{RegisteredModule, prelude::*};
 use std::os::fd::AsFd;
 use wayland::{
     Handle, WlKeyboard, WlKeyboardEvent, WlKeyboardRequest, WlSeatCapability, WlSeatRequest,
+    WlSurface,
 };
 
 use crate::Compositor;
@@ -10,6 +11,10 @@ use crate::Compositor;
 pub struct WlKeyboardState {
     pub keyboard: Option<Handle<WlKeyboard>>,
     pub client_keyboards: Vec<Handle<WlKeyboard>>,
+    /// The client surface (if any) that currently has keyboard focus. Dependent on pointer focus for now.
+    pub focused_surface: Option<Handle<WlSurface>>,
+    #[lens(skip)]
+    pub focused_client: Option<Handle<WlKeyboard>>,
 }
 
 impl WlKeyboardState {
@@ -17,6 +22,8 @@ impl WlKeyboardState {
         Self {
             keyboard: None,
             client_keyboards: Vec::new(),
+            focused_surface: None,
+            focused_client: None,
         }
     }
 
@@ -46,6 +53,7 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                             "seat keyboard: {:?}",
                             id.object_id().expect("live keyboard")
                         );
+                        // TODO Send all cached info like repeat rate etc.
                     } else {
                         // TODO Send WlSeatError - through WlDisplay
                     }
@@ -74,8 +82,17 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     keys,
                 } => {
                     println!("in wl_keyboard enter {:?}", serial);
-                    for kb in &compositor.seat.keyboard_state.client_keyboards {
-                        kb.enter(*serial, surface, keys);
+                    if let Some(surf) = &compositor.seat.pointer_state.focused_surface {
+                        for kb in &compositor.seat.keyboard_state.client_keyboards {
+                            if kb.proxy.is_same_connection(&surf.proxy) {
+                                // Send to client's first keyboard handle
+                                kb.enter(*serial, surf, keys);
+                                compositor.seat.keyboard_state.focused_surface = Some(surf.clone());
+                                compositor.seat.keyboard_state.focused_client = Some(kb.clone());
+                                println!("in wl_keyboard enter client {:?}", kb);
+                                return;
+                            }
+                        }
                     }
                 }
                 WlKeyboardEvent::Leave {
@@ -84,8 +101,13 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     surface,
                 } => {
                     println!("in wl_keyboard leave {:?}", serial);
-                    for kb in &compositor.seat.keyboard_state.client_keyboards {
-                        kb.leave(*serial, surface);
+                    if let Some(surf) = &compositor.seat.keyboard_state.focused_surface
+                        && let Some(kb) = &compositor.seat.keyboard_state.focused_client
+                    {
+                        kb.leave(*serial, surf);
+                        compositor.seat.keyboard_state.focused_surface = None;
+                        compositor.seat.keyboard_state.focused_client = None;
+                        println!("in wl_keyboard leave client {:?}", serial);
                     }
                 }
                 WlKeyboardEvent::Key {
@@ -96,8 +118,26 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     state,
                 } => {
                     println!("in wl_keyboard key {:?}: {:?} {:?}", serial, key, state);
-                    for kb in &compositor.seat.keyboard_state.client_keyboards {
+                    if let Some(kb) = &compositor.seat.keyboard_state.focused_client {
                         kb.key(*serial, *time, *key, *state);
+                        println!("in wl_keyboard key client {:?}: {:?} {:?}", kb, key, state);
+                    } else if let Some(surf) = &compositor.seat.pointer_state.focused_surface {
+                        for kb in &compositor.seat.keyboard_state.client_keyboards {
+                            if kb.proxy.is_same_connection(&surf.proxy) {
+                                // Send to client's first keyboard handle
+                                // TODO Cache keys? Empty array or fixed length?
+                                kb.enter(*serial, surf, &[]);
+                                compositor.seat.keyboard_state.focused_surface = Some(surf.clone());
+                                compositor.seat.keyboard_state.focused_client = Some(kb.clone());
+                                println!("in wl_keyboard enter client {:?}", kb);
+
+                                kb.key(*serial, *time, *key, *state);
+                                println!(
+                                    "in wl_keyboard key client {:?}: {:?} {:?}",
+                                    kb, key, state
+                                );
+                            }
+                        }
                     }
                 }
                 WlKeyboardEvent::Modifiers {

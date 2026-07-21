@@ -61,7 +61,7 @@ impl TouchState {
     pub fn process(&mut self, ev: &WlTouchEvent, gesture: &mut GestureSingle) {
         match ev {
             WlTouchEvent::Down { id, x, y, time, .. } => {
-                let position = Point::new(*x as f32 / 256.0, *y as f32 / 256.0);
+                let position = Point::new(*x, *y);
                 let time_dur = Duration::from_millis(*time as u64);
                 let active = ActiveTouch {
                     start_position: position,
@@ -70,18 +70,16 @@ impl TouchState {
                     last_time: time_dur,
                 };
                 // If no pointer touch id is set, set the first touch id as the pointer touch id
-                if self.pointer_touch_id.is_none() {
-                    if self.active_touches.is_empty() {
-                        self.pointer_touch_id = Some(*id);
-                        self.position = position;
-                        gesture.on_source_down(position, time_dur);
-                    }
+                if self.pointer_touch_id.is_none() && self.active_touches.is_empty() {
+                    self.pointer_touch_id = Some(*id);
+                    self.position = position;
+                    gesture.on_source_down(position, time_dur);
                 }
                 self.active_touches.insert(*id, active);
             }
 
             WlTouchEvent::Motion { id, x, y, time, .. } => {
-                let position = Point::new(*x as f32 / 256.0, *y as f32 / 256.0);
+                let position = Point::new(*x, *y);
                 let time_dur = Duration::from_millis(*time as u64);
                 if let Some(active) = self.active_touches.get_mut(id) {
                     active.last_position = position;
@@ -155,17 +153,17 @@ impl TouchState {
         if self.just_hold_released || !bounds.contains_point(self.position) {
             return false;
         }
-        if let Some(id) = self.pointer_touch_id {
-            if let Some(active) = self.active_touches.get(&id) {
-                let distance = {
-                    let dx = self.position.x() - active.start_position.x();
-                    let dy = self.position.y() - active.start_position.y();
-                    (dx * dx + dy * dy).sqrt()
-                };
-                let duration = active.last_time.saturating_sub(active.start_time);
-                return distance < self.config.tap_max_distance
-                    && duration > self.config.tap_max_duration;
-            }
+        if let Some(id) = self.pointer_touch_id
+            && let Some(active) = self.active_touches.get(&id)
+        {
+            let distance = {
+                let dx = self.position.x() - active.start_position.x();
+                let dy = self.position.y() - active.start_position.y();
+                (dx * dx + dy * dy).sqrt()
+            };
+            let duration = active.last_time.saturating_sub(active.start_time);
+            return distance < self.config.tap_max_distance
+                && duration > self.config.tap_max_duration;
         }
         false
     }

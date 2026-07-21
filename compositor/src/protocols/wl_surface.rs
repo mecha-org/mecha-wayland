@@ -5,7 +5,7 @@ use app::{RegisteredModule, prelude::*};
 use smallvec::SmallVec;
 use wayland::{
     DISPLAY_OBJECT_ID, Handle, ObjectId, WlCallback, WlCompositorRequest, WlDisplay, WlSurface,
-    WlSurfaceRequest,
+    WlSurfaceRequest, XdgSurface,
 };
 
 use crate::protocols::wl_region::RegionData;
@@ -218,7 +218,7 @@ impl SurfaceData {
 
 #[derive(Debug)]
 pub enum SurfaceRole {
-    XdgSurface(ObjectId),
+    XdgSurface(Handle<XdgSurface>),
     LayerSurface(ObjectId),
     LockSurface(ObjectId),
     Cursor,

@@ -241,7 +241,7 @@ impl SurfaceRole {
 pub struct SurfaceState {
     pub surfaces: HashMap<Handle<WlSurface>, SurfaceData>,
     pub regions: HashMap<ObjectId, RegionData>,
-    pub stack: Vec<Handle<WlSurface>>,
+    pub stack: Vec<(Handle<WlSurface>, u32)>,
 }
 
 impl SurfaceState {
@@ -254,12 +254,19 @@ impl SurfaceState {
     }
 
     pub fn push_to_stack(&mut self, id: &Handle<WlSurface>) {
-        self.stack.retain(|i| i != id);
-        self.stack.push(id.clone());
+        self.stack.retain(|(i, _)| i != id);
+        let pos = self.stack.partition_point(|(_, p)| *p <= 1u32);
+        self.stack.insert(pos, (id.clone(), 1u32));
     }
 
     pub fn remove_from_stack(&mut self, id: &Handle<WlSurface>) {
-        self.stack.retain(|i| i != id);
+        self.stack.retain(|(i, _)| i != id);
+    }
+
+    pub fn push_layer_surface(&mut self, id: &Handle<WlSurface>, priority: u32) {
+        self.stack.retain(|(i, _)| i != id);
+        let pos = self.stack.partition_point(|(_, p)| *p <= priority);
+        self.stack.insert(pos, (id.clone(), priority));
     }
 }
 

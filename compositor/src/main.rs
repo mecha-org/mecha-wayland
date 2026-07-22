@@ -8,6 +8,7 @@ mod client_window;
 mod protocols;
 mod rect;
 
+use crate::protocols::wl_data_device_manager::WlDataDeviceManagerState;
 use crate::protocols::wl_seat::WlSeatState;
 use client_window::ClientWindow;
 use protocols::wl_registry::WlRegistryState;
@@ -26,6 +27,7 @@ struct Compositor {
     xdg_shell: XdgShellState,
     client_window: ClientWindow,
     start_time: Instant,
+    data_device_manager: WlDataDeviceManagerState,
 }
 
 // TO REMOVE: CPU blit.
@@ -165,6 +167,7 @@ fn main() {
         xdg_shell: XdgShellState::default(),
         client_window,
         start_time,
+        data_device_manager: WlDataDeviceManagerState::new(),
     })
     .mount(wayland::server_module())
     .mount(io_ring::module())
@@ -179,6 +182,7 @@ fn main() {
     .mount(protocols::wl_seat::module())
     .mount(protocols::wl_pointer::module())
     .mount(protocols::wl_keyboard::module())
+    .mount(protocols::wl_data_device_manager::module())
     .mount(protocols::xdg_shell::module())
     .mount(Module::<Compositor, _, _>::new().on(
         |compositor: &mut Compositor, ev: &SurfaceCommitted| {

@@ -352,13 +352,18 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
 fn surface_hit_test(state: &SurfaceState, gx: i32, gy: i32) -> Option<HitResult> {
-    for handle in state.stack.iter().rev() {
+    for (handle, _prio) in state.stack.iter().rev() {
         let surf = state.surfaces.get(handle)?;
         let geo = surf.geometry?;
         if !geo.contains(gx, gy) {
             continue;
         }
-        if gx < 0 || gy < 0 || gx >= surf.current.buffer_width || gy >= surf.current.buffer_height {
+        let scale = surf.current.scale;
+        if gx < 0
+            || gy < 0
+            || gx >= surf.current.buffer_width / scale
+            || gy >= surf.current.buffer_height / scale
+        {
             continue;
         }
         if surf.accepts_input_at(gx, gy) {

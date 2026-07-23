@@ -1,7 +1,7 @@
 use app::{RegisteredModule, Start, prelude::*};
 use std::collections::HashMap;
 use wayland::{
-    Handle, Interface, ObjectId, WlRegistryRequest, WlSurface, XdgPositionerRequest,
+    Handle, Interface, WlRegistryRequest, WlSurface, XdgPositionerRequest, XdgSurface,
     XdgSurfaceRequest, XdgToplevelRequest, XdgWmBase, XdgWmBaseRequest,
 };
 
@@ -13,11 +13,11 @@ use crate::rect::Rect;
 #[derive(Debug, Default)]
 pub struct XdgShellState {
     serial: u32,
-    pub xdg_surfaces: HashMap<ObjectId, XdgSurface>,
+    pub xdg_surfaces: HashMap<Handle<XdgSurface>, XdgSurfaceData>,
 }
 
 #[derive(Debug)]
-pub struct XdgSurface {
+pub struct XdgSurfaceData {
     pub wl_surface_id: Handle<WlSurface>,
 }
 
@@ -54,14 +54,12 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                 XdgWmBaseRequest::Destroy { .. } => {}
                 XdgWmBaseRequest::CreatePositioner { .. } => {}
                 XdgWmBaseRequest::GetXdgSurface { id, surface, .. } => {
-                    if let Some(xdg_sid) = id.object_id() {
-                        let wl_surface_id = surface.clone();
-                        c.xdg_shell
-                            .xdg_surfaces
-                            .insert(xdg_sid, XdgSurface { wl_surface_id });
-                        if let Some(surf) = c.surfaces.surfaces.get_mut(surface) {
-                            let _ = surf.set_role(SurfaceRole::XdgSurface(xdg_sid));
-                        }
+                    let wl_surface_id = surface.clone();
+                    c.xdg_shell
+                        .xdg_surfaces
+                        .insert(id.clone(), XdgSurfaceData { wl_surface_id });
+                    if let Some(surf) = c.surfaces.surfaces.get_mut(surface) {
+                        let _ = surf.set_role(SurfaceRole::XdgSurface(id.clone()));
                     }
                 }
                 XdgWmBaseRequest::Pong { .. } => {}
@@ -71,13 +69,11 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
         .on(|c: &mut Compositor, ev: &XdgSurfaceRequest| {
             match ev {
                 XdgSurfaceRequest::Destroy { sender } => {
-                    if let Some(xdg_sid) = sender.object_id() {
-                        if let Some(xdg) = c.xdg_shell.xdg_surfaces.remove(&xdg_sid) {
-                            c.surfaces.remove_from_stack(&xdg.wl_surface_id);
-                            if let Some(surf) = c.surfaces.surfaces.get_mut(&xdg.wl_surface_id) {
-                                surf.geometry = None;
-                                surf.role = None;
-                            }
+                    if let Some(xdg) = c.xdg_shell.xdg_surfaces.remove(sender) {
+                        c.surfaces.remove_from_stack(&xdg.wl_surface_id);
+                        if let Some(surf) = c.surfaces.surfaces.get_mut(&xdg.wl_surface_id) {
+                            surf.geometry = None;
+                            surf.role = None;
                         }
                     }
                 }
@@ -85,10 +81,8 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     let serial = c.xdg_shell.next_serial();
                     sender.configure(serial);
                     id.configure(0, 0, &[]);
-                    if let Some(xdg_sid) = sender.object_id() {
-                        if let Some(xdg) = c.xdg_shell.xdg_surfaces.get(&xdg_sid) {
-                            c.surfaces.push_to_stack(&xdg.wl_surface_id);
-                        }
+                    if let Some(xdg) = c.xdg_shell.xdg_surfaces.get(sender) {
+                        c.surfaces.push_to_stack(&xdg.wl_surface_id);
                     }
                 }
                 XdgSurfaceRequest::GetPopup { .. } => {}
@@ -100,11 +94,9 @@ pub fn module<S>() -> impl RegisteredModule<Compositor, S> {
                     height,
                 } => {
                     let geom = Rect::new_sized_saturating(*x, *y, *width, *height);
-                    if let Some(xdg_sid) = sender.object_id() {
-                        if let Some(xdg) = c.xdg_shell.xdg_surfaces.get(&xdg_sid) {
-                            if let Some(surf) = c.surfaces.surfaces.get_mut(&xdg.wl_surface_id) {
-                                surf.geometry = Some(geom);
-                            }
+                    if let Some(xdg) = c.xdg_shell.xdg_surfaces.get(sender) {
+                        if let Some(surf) = c.surfaces.surfaces.get_mut(&xdg.wl_surface_id) {
+                            surf.geometry = Some(geom);
                         }
                     }
                 }

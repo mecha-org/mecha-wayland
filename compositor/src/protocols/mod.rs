@@ -7,4 +7,5 @@ pub mod wl_registry;
 pub mod wl_seat;
 pub mod wl_shm;
 pub mod wl_surface;
+pub mod wlr_layer_shell;
 pub mod xdg_shell;

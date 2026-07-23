@@ -352,9 +352,10 @@ pub fn module<S>() -> impl RegisteredModule<SurfaceState, S> {
                         y,
                     } => {
                         if let Some(surf) = s.surfaces.get_mut(sender) {
-                            if *x != 0 || *y != 0 {
-                                post_error(sender, 3, "non-zero attach x/y at v5+");
-                            }
+                            // TO REMOVE: Enclose error below inside client version check
+                            // if *x != 0 || *y != 0 {
+                            //     post_error(sender, 3, "non-zero attach x/y at v5+");
+                            // }
                             let id = buffer.as_ref().and_then(|b| b.object_id());
                             surf.pending.buffer = Some(id);
                             surf.pending.offset_x = *x;

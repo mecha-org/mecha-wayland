@@ -4,7 +4,9 @@ use wayland::{
     WlSeatRequest,
 };
 
-use crate::protocols::{wl_pointer::WlPointerState, wl_registry::RegisterGlobal};
+use crate::protocols::{
+    wl_keyboard::WlKeyboardState, wl_pointer::WlPointerState, wl_registry::RegisterGlobal,
+};
 
 #[derive(State)]
 pub struct WlSeatState {
@@ -12,6 +14,7 @@ pub struct WlSeatState {
     pub capability: Option<WlSeatCapability>,
     pub name: String,
     pub pointer_state: WlPointerState,
+    pub keyboard_state: WlKeyboardState,
     pub client_seats: Vec<Handle<WlSeat>>,
 }
 
@@ -22,6 +25,7 @@ impl WlSeatState {
             capability: None,
             name: String::new(),
             pointer_state: WlPointerState::new(),
+            keyboard_state: WlKeyboardState::new(),
             client_seats: Vec::new(),
         }
     }
@@ -91,10 +95,18 @@ pub fn module<S>() -> impl RegisteredModule<WlSeatState, S> {
                         state.pointer_state.pointer = None;
                         state.pointer_state.on_capability_removed();
                     }
-                    if !capabilities.contains(WlSeatCapability::Keyboard) {
-                        // TODO clear keyboard state when added
+                    if capabilities.contains(WlSeatCapability::Keyboard) {
+                        if state.keyboard_state.keyboard.is_none()
+                            && let Some(seat) = &state.seat
+                        {
+                            state.keyboard_state.keyboard = Some(seat.get_keyboard());
+                            println!("created host keyboard");
+                        }
+                    } else {
+                        state.keyboard_state.keyboard = None;
+                        state.keyboard_state.on_capability_removed();
                     }
-                    if !capabilities.contains(WlSeatCapability::Touch) {
+                    if capabilities.contains(WlSeatCapability::Touch) {
                         // TODO clear touch state when added
                     }
                 }

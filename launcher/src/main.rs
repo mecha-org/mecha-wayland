@@ -15,6 +15,8 @@ use window_manager::{
     ZwlrLayerSurfaceV1Anchor, ZwlrLayerSurfaceV1KeyboardInteractivity,
 };
 
+mod dbus;
+
 const NOTIFICATION_NS: &str = "notification";
 
 #[derive(State)]

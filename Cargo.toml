@@ -8,6 +8,7 @@ members = [
     "crates/io-ring",
     "crates/timer",
     "crates/wayland",
+    "crates/dbus",
     "crates/utils",
     "crates/ui",
     "crates/ui-macro",

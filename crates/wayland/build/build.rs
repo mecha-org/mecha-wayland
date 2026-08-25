@@ -11,7 +11,7 @@ fn main() {
         "protocols/ext-session-lock-v1.xml",
         "protocols/linux-dmabuf-unstable-v1.xml",
         "protocols/virtual-keyboard-unstable-v1.xml",
-        "protocols/xx-input-method-v2.xml",
-        "protocols/xx-text-input-v3.xml",
+        "protocols/input-method-unstable-v2.xml",
+        "protocols/text-input-unstable-v3.xml",
     ]);
 }

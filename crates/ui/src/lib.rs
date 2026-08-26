@@ -280,6 +280,9 @@ impl<W: Widget> WidgetList for W {
         z: f32,
         background: Color,
     ) -> Vec<RenderCommand> {
+        if self.style().display == taffy::style::Display::None {
+            return vec![];
+        }
         let layout = tree.layout(self.node_id()).unwrap();
         self.render_node(layout, tree, parent_abs, z, background)
     }

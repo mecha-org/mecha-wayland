@@ -15,6 +15,7 @@ members = [
     "crates/interactivity",
     "crates/window-manager",
     "crates/counter",
+    "crates/example",
 ]
 resolver = "2"
 

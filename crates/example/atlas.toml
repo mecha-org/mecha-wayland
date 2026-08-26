@@ -1,0 +1,7 @@
+[[atlas]]
+name = "example"
+
+[[atlas.font]]
+name = "inter"
+path = "../../assets/Inter-Regular.ttf"
+sizes = [32]

@@ -343,9 +343,9 @@ impl Wayland {
         WaylandProxy(Rc::clone(&self.data))
     }
 
-    /// Blocking roundtrip; consumed non-sync events are discarded, so only
-    /// use it when no other events matter. False on timeout/disconnect.
-    pub fn roundtrip(&self, ring: &mut Ring, timeout: Duration) -> bool {
+    /// Blocking wait for the compositor's sync acknowledgment; consumed
+    /// non-sync events are discarded. False on timeout/disconnect.
+    pub fn wait_for_ack(&self, ring: &mut Ring, timeout: Duration) -> bool {
         let callback = self.display().sync();
         self.proxy().flush();
         let Some(callback_id) = callback.object_id() else {

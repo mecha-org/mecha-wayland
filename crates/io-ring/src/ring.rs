@@ -135,12 +135,20 @@ impl Ring {
             1
         };
 
-        let res = match (wait_for, timeout) {
-            (_, None) | (0, _) => self.ring.submit().map(|_| 0),
-            (_, Some(d)) => {
+        let res = match timeout {
+            None => {
+                if wait_for == 0 {
+                    self.ring.submit().map(|_| 0)
+                } else {
+                    self.ring.submit_and_wait(wait_for)
+                }
+            }
+            Some(d) => {
+                // Honour the timeout even in always_no_wait/skip mode.
+                let wait = if wait_for == 0 { 1 } else { wait_for };
                 let ts = Timespec::new().sec(d.as_secs()).nsec(d.subsec_nanos());
                 let args = SubmitArgs::new().timespec(&ts);
-                self.ring.submitter().submit_with_args(wait_for, &args)
+                self.ring.submitter().submit_with_args(wait, &args)
             }
         };
 

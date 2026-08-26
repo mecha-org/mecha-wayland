@@ -343,14 +343,16 @@ impl Wayland {
         WaylandProxy(Rc::clone(&self.data))
     }
 
-    /// Blocking roundtrip: sends a display sync and drives `ring` until its
-    /// `Done` arrives, or `timeout` elapses. Returns false on timeout/disconnect.
+    /// Blocking roundtrip; consumed non-sync events are discarded, so only
+    /// use it when no other events matter. False on timeout/disconnect.
     pub fn roundtrip(&self, ring: &mut Ring, timeout: Duration) -> bool {
         let callback = self.display().sync();
         self.proxy().flush();
         let Some(callback_id) = callback.object_id() else {
             return false;
         };
+        // Guarantee an outstanding read so the loop cannot stall on an empty CQ.
+        self.data.borrow_mut().submit_read();
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let remaining = deadline - Instant::now();
@@ -358,7 +360,7 @@ impl Wayland {
                 match handle_io_event(&self.data, token, result) {
                     IoCompletion::Read(messages) => {
                         self.data.borrow_mut().submit_read();
-                        // wl_callback::done
+                        // wl_callback::done (excluded from codegen).
                         if messages
                             .iter()
                             .any(|m| m.object_id == callback_id && m.opcode == 0)

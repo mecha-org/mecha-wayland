@@ -1,6 +1,10 @@
 use app::Event;
-use io_uring::{IoUring, squeue::Entry};
-use std::{cell::RefCell, collections::VecDeque, io, rc::Rc};
+use io_uring::{
+    IoUring,
+    squeue::Entry,
+    types::{SubmitArgs, Timespec},
+};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IoToken(pub u64);
@@ -95,6 +99,15 @@ impl Ring {
     }
 
     pub fn poll(&mut self) -> Vec<IoEvent> {
+        self.poll_inner(None)
+    }
+
+    /// Like [`poll`](Self::poll), but the wait for completions is bounded.
+    pub fn poll_timeout(&mut self, timeout: Duration) -> Vec<IoEvent> {
+        self.poll_inner(Some(timeout))
+    }
+
+    fn poll_inner(&mut self, timeout: Option<Duration>) -> Vec<IoEvent> {
         let mut data = self.data.borrow_mut();
 
         if !data.pending.is_empty() {
@@ -122,7 +135,24 @@ impl Ring {
             1
         };
 
-        if let Err(e) = self.ring.submit_and_wait(wait_for) {
+        let res = match timeout {
+            None => {
+                if wait_for == 0 {
+                    self.ring.submit().map(|_| 0)
+                } else {
+                    self.ring.submit_and_wait(wait_for)
+                }
+            }
+            Some(d) => {
+                // Honour the timeout even in always_no_wait/skip mode.
+                let wait = if wait_for == 0 { 1 } else { wait_for };
+                let ts = Timespec::new().sec(d.as_secs()).nsec(d.subsec_nanos());
+                let args = SubmitArgs::new().timespec(&ts);
+                self.ring.submitter().submit_with_args(wait, &args)
+            }
+        };
+
+        if let Err(e) = res {
             eprintln!("Ring flush error: {}", e);
             return Vec::new();
         }

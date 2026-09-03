@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use app::prelude::*;
-use io_ring::{IoToken, RingProxy};
+use io_ring::{IoEvent, IoToken, Ring, RingProxy};
 use io_uring::{opcode, types};
 
 pub(crate) mod helper;
@@ -340,6 +341,39 @@ pub struct Wayland {
 impl Wayland {
     pub fn proxy(&self) -> WaylandProxy {
         WaylandProxy(Rc::clone(&self.data))
+    }
+
+    /// Blocking wait for the compositor's sync acknowledgment; consumed
+    /// non-sync events are discarded. False on timeout/disconnect.
+    pub fn wait_for_ack(&self, ring: &mut Ring, timeout: Duration) -> bool {
+        let callback = self.display().sync();
+        self.proxy().flush();
+        let Some(callback_id) = callback.object_id() else {
+            return false;
+        };
+        // Guarantee an outstanding read so the loop cannot stall on an empty CQ.
+        self.data.borrow_mut().submit_read();
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let remaining = deadline - Instant::now();
+            for IoEvent::Completed { token, result } in ring.poll_timeout(remaining) {
+                match handle_io_event(&self.data, token, result) {
+                    IoCompletion::Read(messages) => {
+                        self.data.borrow_mut().submit_read();
+                        // wl_callback::done (excluded from codegen).
+                        if messages
+                            .iter()
+                            .any(|m| m.object_id == callback_id && m.opcode == 0)
+                        {
+                            return true;
+                        }
+                    }
+                    IoCompletion::Disconnect => return false,
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 
     pub fn get_interface(&self, id: ObjectId) -> Option<&'static str> {

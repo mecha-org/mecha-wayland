@@ -13,7 +13,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use ui::{OnChange, WidgetList};
-use wayland::{Interface, *};
+use wayland::*;
 
 #[derive(Debug)]
 pub struct UiEventsReady;
@@ -265,6 +265,10 @@ impl WindowManager {
 
     pub fn window_dimensions(&self, id: WindowId) -> Option<(u32, u32)> {
         self.windows.get(&id).map(|w| w.dimensions())
+    }
+
+    pub fn wayland(&self) -> &Wayland {
+        &self.wayland
     }
 
     pub fn configure(&mut self, id: WindowId, serial: u32, w: u32, h: u32) {

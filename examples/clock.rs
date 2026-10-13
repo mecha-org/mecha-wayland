@@ -227,6 +227,7 @@ impl Widget for ClockShowcase {
             };
 
             if let Some(mut clock_ctx) = ctx.at(interactive_clock) {
+                clock_ctx.set_text("as");
                 clock_ctx.set_format(fmt);
             }
         });

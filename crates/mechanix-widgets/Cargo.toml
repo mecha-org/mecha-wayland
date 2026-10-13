@@ -12,3 +12,4 @@ layout.workspace = true
 paint.workspace = true
 theme.workspace = true
 widgets.workspace = true
+chrono.workspace = true

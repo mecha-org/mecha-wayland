@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use chrono::Local;
 
 use crate::text::{Text, TextContextExt, text};
@@ -11,68 +9,17 @@ pub struct ClockTick;
 
 impl app::Event for ClockTick {}
 
-/// The update frequency / precision of a [`Clock`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ClockInterval {
-    /// Update every second.
     #[default]
     Second,
-    /// Update every minute.
     Minute,
-}
-
-impl ClockInterval {
-    /// Detects whether the format requires second-level or minute-level updates.
-    pub fn from_format(format: &str) -> Self {
-        if format.contains("%S")
-            || format.contains("%T")
-            || format.contains("%X")
-            || format.contains("%s")
-            || format.contains("%f")
-            || format.contains("%c")
-            || format.contains("%+")
-            || format.contains("%r")
-        {
-            ClockInterval::Second
-        } else {
-            ClockInterval::Minute
-        }
-    }
-
-    /// Resolves [`ClockInterval::Auto`] to a concrete interval using `format`.
-    pub fn resolve(&self, format: &str) -> Self {
-        match self {
-            Self::Second => Self::from_format(format),
-            other => *other,
-        }
-    }
-
-    /// Monotonic step duration between updates.
-    pub fn duration(&self, format: &str) -> Duration {
-        match self.resolve(format) {
-            Self::Second => Duration::from_secs(1),
-            Self::Minute => Duration::from_secs(60),
-        }
-    }
-
-    /// Monotonic deadline [`Instant`] for the next tick based on an anchor [`Instant`].
-    #[inline]
-    pub fn next_deadline_from(&self, format: &str, last_tick: Instant) -> Instant {
-        last_tick + self.duration(format)
-    }
-
-    /// Monotonic deadline [`Instant`] for the next tick from now.
-    #[inline]
-    pub fn next_deadline(&self, format: &str) -> Instant {
-        Instant::now() + self.duration(format)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Clock {
     pub format: String,
     pub interval: ClockInterval,
-    pub last_tick: Instant,
     pub(crate) text_handle: Handle<Text>,
 }
 
@@ -95,48 +42,6 @@ impl Clock {
     #[inline]
     pub fn interval(&self) -> ClockInterval {
         self.interval
-    }
-
-    #[inline]
-    pub fn effective_interval(&self) -> ClockInterval {
-        self.interval.resolve(&self.format)
-    }
-
-    /// Monotonic interval duration between ticks.
-    #[inline]
-    pub fn duration(&self) -> Duration {
-        self.interval.duration(&self.format)
-    }
-
-    /// Monotonic deadline [`Instant`] for the next scheduled tick, anchored to `self.last_tick + self.duration()`.
-    #[inline]
-    pub fn next_deadline(&self) -> Instant {
-        self.last_tick + self.duration()
-    }
-
-    /// Checks whether the scheduled deadline for the next tick has arrived.
-    #[inline]
-    pub fn is_due(&self) -> bool {
-        Instant::now() + Duration::from_millis(20) >= self.next_deadline()
-    }
-
-    /// Monotonic duration remaining until the next scheduled tick deadline.
-    #[inline]
-    pub fn remaining_until_deadline(&self) -> Duration {
-        self.next_deadline()
-            .saturating_duration_since(Instant::now())
-    }
-
-    /// Monotonic instant of the last tick update.
-    #[inline]
-    pub fn last_tick(&self) -> Instant {
-        self.last_tick
-    }
-
-    /// Monotonic duration elapsed since the last tick update.
-    #[inline]
-    pub fn elapsed(&self) -> Duration {
-        self.last_tick.elapsed()
     }
 }
 
@@ -198,24 +103,19 @@ impl Widget for Clock {
         let text_handle = s.spawn(me, text(initial_formatted));
 
         s.on::<ClockTick>(me, |ctx, _| {
-            ctx.tick();
+            ctx.update_time();
         });
 
         Clock {
             format: b.format,
             interval: b.interval,
-            last_tick: Instant::now(),
             text_handle,
         }
     }
 }
 
 pub trait ClockContextExt {
-    /// Ticks the clock if the scheduled deadline based on `self.duration()` has arrived.
-    /// Returns `true` if the clock was updated, or `false` if it was not due yet.
-    fn tick(&mut self) -> bool;
-
-    /// Re-evaluates current time, sets `last_tick` to now, and updates the text widget unconditionally.
+    /// Re-evaluates current time and updates the text widget if the string changed.
     fn update_time(&mut self);
 
     /// Directly updates the displayed string on the text widget.
@@ -224,26 +124,13 @@ pub trait ClockContextExt {
     /// Updates the format string and re-evaluates the time.
     fn set_format(&mut self, format: impl Into<String>);
 
-    /// Updates the interval.
+    /// Updates the interval metadata.
     fn set_interval(&mut self, interval: ClockInterval);
 }
 
 impl ClockContextExt for Context<'_, Clock> {
-    fn tick(&mut self) -> bool {
-        if self.me().is_due() {
-            self.update_time();
-            true
-        } else {
-            false
-        }
-    }
-
     fn update_time(&mut self) {
-        let (format, text_handle) = {
-            let me = self.me();
-            (me.format.clone(), me.text_handle)
-        };
-        self.me().last_tick = Instant::now();
+        let (format, text_handle) = (self.me().format.clone(), self.me().text_handle);
         let formatted = Local::now().format(&format).to_string();
         if let Some(mut text_ctx) = self.at(text_handle) {
             text_ctx.set_text(formatted);
@@ -252,7 +139,6 @@ impl ClockContextExt for Context<'_, Clock> {
 
     fn set_text(&mut self, text: impl Into<String>) {
         let text_handle = self.me().text_handle;
-        self.me().last_tick = Instant::now();
         if let Some(mut text_ctx) = self.at(text_handle) {
             text_ctx.set_text(text);
         }
@@ -307,50 +193,12 @@ mod tests {
     }
 
     #[test]
-    fn test_clock_interval_auto_detection() {
-        assert_eq!(
-            ClockInterval::from_format("%H:%M:%S"),
-            ClockInterval::Second
-        );
-        assert_eq!(
-            ClockInterval::from_format("%I:%M %p"),
-            ClockInterval::Minute
-        );
-        assert_eq!(ClockInterval::from_format("%H:%M"), ClockInterval::Minute);
-        assert_eq!(ClockInterval::from_format("%Y"), ClockInterval::Minute);
-    }
-
-    #[test]
     fn test_clock_interval_explicit_configuration() {
         let c1 = clock("%H:%M").every_second();
         assert_eq!(c1.interval, ClockInterval::Second);
 
         let c2 = clock("%H:%M:%S").every_minute();
         assert_eq!(c2.interval, ClockInterval::Minute);
-    }
-
-    #[test]
-    fn test_clock_monotonic_deadlines() {
-        let c_sec = clock("%H:%M:%S");
-        assert_eq!(
-            c_sec.interval.duration(&c_sec.format),
-            Duration::from_secs(1)
-        );
-        let now = Instant::now();
-        assert_eq!(
-            c_sec.interval.next_deadline_from(&c_sec.format, now),
-            now + Duration::from_secs(1)
-        );
-
-        let c_min = clock("%H:%M");
-        assert_eq!(
-            c_min.interval.duration(&c_min.format),
-            Duration::from_secs(60)
-        );
-        assert_eq!(
-            c_min.interval.next_deadline_from(&c_min.format, now),
-            now + Duration::from_secs(60)
-        );
     }
 
     #[test]
@@ -361,14 +209,7 @@ mod tests {
 
         let clock_w = app.widget::<Clock>(clock_h).unwrap();
         assert_eq!(clock_w.format(), "%Y");
-        assert_eq!(clock_w.effective_interval(), ClockInterval::Minute);
-        let d1 = clock_w.next_deadline();
-        let d2 = clock_w.next_deadline();
-        // Deadline is stable and anchored to self.last_tick + duration, not recomputed against now()
-        assert_eq!(d1, d2);
-        assert!(clock_w.next_deadline() > Instant::now());
-        assert!(!clock_w.is_due());
-        assert!(clock_w.elapsed() < Duration::from_secs(1));
+        assert_eq!(clock_w.interval(), ClockInterval::Second);
 
         let text_h = clock_w.text();
         let text_w = app.widget::<Text>(text_h).unwrap();
@@ -385,25 +226,12 @@ mod tests {
         let clock_h = app.spawn(app.root(), clock("%H:%M:%S"));
         app.tick();
 
-        let before = app.widget::<Clock>(clock_h).unwrap().last_tick();
-        // 1. Tick before deadline does NOT advance last_tick
-        app.emit(ClockTick, clock_h);
-        app.flush();
-        app.tick();
-        assert_eq!(app.widget::<Clock>(clock_h).unwrap().last_tick(), before);
-
-        // 2. Setting last_tick into the past so that the deadline has passed
-        let past = Instant::now() - Duration::from_secs(2);
-        app.widget_mut::<Clock>(clock_h).unwrap().last_tick = past;
-        assert!(app.widget::<Clock>(clock_h).unwrap().is_due());
-
         app.emit(ClockTick, clock_h);
         app.flush();
         app.tick();
 
         let clock_w = app.widget::<Clock>(clock_h).unwrap();
         assert_eq!(clock_w.format(), "%H:%M:%S");
-        assert!(clock_w.last_tick() > past);
     }
 
     #[test]

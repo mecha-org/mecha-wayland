@@ -73,6 +73,7 @@ window = { path = "crates/window" }
 theme = { path = "crates/theme" }
 text-input = { path = "crates/text-input" }
 mechanix-widgets = { path = "crates/mechanix-widgets" }
+chrono = "0.4"
 bitflags = "2"
 fontdue = "0.9"
 gbm = { version = "0.18", default-features = false }

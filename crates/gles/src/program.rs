@@ -27,8 +27,8 @@ uniform float u_depth;
 uniform float u_inv_page;
 uniform ivec4 u_page[64];
 
-out vec2 v_local;
-out vec2 v_uv;
+flat out vec4 v_rect;
+flat out vec4 v_tile;
 flat out vec2 v_half;
 flat out vec4 v_color;
 flat out vec4 v_border_color;
@@ -45,15 +45,14 @@ void main() {
     // derived from where it lands, so a clipped quad rasterises only its
     // kept part and each kept pixel shades as it would unclipped.
     vec2 p = clamp(a_rect.xy + corner * a_rect.zw, a_clip.xy, a_clip.xy + a_clip.zw);
-    vec2 f = (p - a_rect.xy) / a_rect.zw;
     gl_Position = vec4(
         p.x / u_size.x * 2.0 - 1.0,
         p.y / u_size.y * 2.0 - 1.0,
         1.0 - 2.0 * (a_z + 0.5) / u_depth,
         1.0);
     v_half = a_rect.zw * 0.5;
-    v_local = p - a_rect.xy - v_half;
-    v_uv = (a_tile.xy + f * a_tile.zw) * u_inv_page;
+    v_rect = a_rect;
+    v_tile = a_tile * u_inv_page;
     v_color = a_color;
     v_border_color = a_border_color;
     v_background = a_background;
@@ -73,9 +72,18 @@ void main() {
 const FRAGMENT: &str = r#"precision highp float;
 precision highp int;
 
-in vec2 v_local;
-in vec2 v_uv;
+flat in vec4 v_rect;
+flat in vec4 v_tile;
 flat in vec2 v_half;
+
+// Where this pixel sits in the command's rect, from its own window
+// coordinate rather than interpolated across the clipped quad: a rect
+// moved by whole pixels, or cut by another clip, shades the same.
+// The subtraction is in integers, which the compiler cannot reassociate
+// with what follows: rects lie on whole pixels.
+#define v_rel (vec2(ivec2(gl_FragCoord.xy) - ivec2(v_rect.xy)) + 0.5)
+#define v_local (v_rel - v_half)
+#define v_uv (v_tile.xy + v_rel / v_rect.zw * v_tile.zw)
 flat in vec4 v_color;
 flat in vec4 v_border_color;
 flat in vec4 v_background;

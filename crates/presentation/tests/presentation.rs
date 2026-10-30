@@ -2309,3 +2309,58 @@ fn a_transparent_window_draws_into_argb_buffers_when_no_format_is_listed() {
         "nothing listed rules nothing out, as for XRGB8888"
     );
 }
+
+/// A drawn toplevel whose callback and buffer came back: idle, nothing
+/// wanted, and its next frame reuses the drawn slot at age 1 (see
+/// `a_frame_with_nothing_changed_commits_nothing`).
+fn idle(f: &mut Fake) -> NodeId {
+    let win = configured(f, 320, 200);
+    f.send(CALLBACK, ev::DONE, |w| w.uint(1));
+    f.send(BUF_A, ev::RELEASE, |_| {});
+    f.turn();
+    f.requests();
+    win
+}
+
+#[test]
+fn a_frame_with_nothing_to_draw_commits_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert!(log(&f).iter().filter(|l| l.starts_with("Frame")).count() >= 2);
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn a_requested_commit_is_sent_bare_on_a_frame_with_nothing_to_draw() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.resource_mut::<Surfaces>().request_commit(win);
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert_eq!(shape(&mut f), vec![(SURFACE, op::COMMIT)]);
+
+    // Honoured once.
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn a_requested_commit_rides_a_frame_that_draws() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.resource_mut::<Surfaces>().request_commit(win);
+    repaint(&mut f, win);
+    f.turn();
+    let commits = f
+        .requests()
+        .iter()
+        .filter(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::COMMIT)
+        .count();
+    assert_eq!(commits, 1);
+}

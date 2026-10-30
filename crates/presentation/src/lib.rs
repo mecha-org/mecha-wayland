@@ -17,7 +17,8 @@
 //!   asks `Scenes::queue` for the free slot's age, draws the queue into
 //!   the slot's dmabuf through `gles`, attaches, damages each rect of the
 //!   queue's scissor, asks for the callback and commits. An empty scissor
-//!   commits nothing. The callback's `done` and a buffer's `release` each
+//!   commits nothing, unless [`Surfaces::request_commit`] asked for one:
+//!   then it commits bare. The callback's `done` and a buffer's `release` each
 //!   try again.
 //! - A configure settles the size and, when the device size changed,
 //!   replaces the two slots, and always kicks. It must: `window` lets one
@@ -181,6 +182,9 @@ struct Entry {
     layer: Option<(LayerRole, (u32, u32))>,
     /// The window clears to transparent, so its slots want alpha.
     transparent: bool,
+    /// [`Surfaces::request_commit`]: the next `Frame` commits even with
+    /// nothing to draw.
+    commit_wanted: bool,
 }
 
 /// Presentation's own state: one entry per window it put on screen, and
@@ -261,6 +265,19 @@ impl Event for Drained {}
 impl Surfaces {
     pub fn surface_of(&self, window: NodeId) -> Option<WlSurface> {
         self.entries.get(&window).map(|e| e.surface)
+    }
+
+    /// Make `window`'s next `Frame` commit its surface even when nothing
+    /// in it needs drawing, so state the compositor applies on commit
+    /// (such as a `phosh_private` thumbnail's placement) is applied then.
+    /// A frame that draws commits anyway; one with no damage sends a bare
+    /// `wl_surface.commit`. Does not itself request the frame: call it
+    /// from a `Frame` system of `window`, or signal `RequestFrame` too.
+    /// Unknown windows are ignored.
+    pub fn request_commit(&mut self, window: NodeId) {
+        if let Some(entry) = self.entries.get_mut(&window) {
+            entry.commit_wanted = true;
+        }
     }
 
     /// `window`'s `zwlr_layer_surface_v1`, or `None` for a toplevel or an
@@ -741,6 +758,7 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             hidden,
             layer,
             transparent,
+            commit_wanted: false,
         },
     );
 }
@@ -1054,12 +1072,14 @@ fn on_frame(app: &mut App, f: &Frame) {
         Some((sh, _)) => scenes.queue_shifted(w, sh, age),
         None => scenes.queue(w, age),
     };
-    let Some(queue) = queue else {
+    let Some(queue) = queue.filter(|q| !q.scissor.is_empty()) else {
+        // Nothing to draw. A requested commit goes out bare: the current
+        // buffer stays, and the compositor applies what was pending.
+        if std::mem::take(&mut entry.commit_wanted) {
+            entry.surface.commit(&mut wl);
+        }
         return;
     };
-    if queue.scissor.is_empty() {
-        return;
-    }
     // Two roundings of the same size must agree: the slots' came from
     // `device_size`, which rounds the logical size times the scale, and
     // the queue's is what `render` walked at. Round here too — truncating
@@ -1104,6 +1124,7 @@ fn on_frame(app: &mut App, f: &Frame) {
     s.owner.insert(callback.id(), w);
     entry.callback = Some(callback);
     entry.surface.commit(&mut wl);
+    entry.commit_wanted = false;
     slot.held = true;
     slot.drawn = Some(entry.frames);
     entry.frames += 1;

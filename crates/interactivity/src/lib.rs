@@ -15,7 +15,8 @@
 //! - Every event dispatches deepest/frontmost-first, the contact's window
 //!   last: a preorder walk's matches, reversed.
 //! - [`Enter`]/[`Exit`] come from a fresh hit test on every `Moved`,
-//!   independent of any capture in progress.
+//!   independent of any capture in progress — unless the contact is
+//!   claimed (below).
 //! - [`Press`] locks in ("captures") the hit-set under the contact for
 //!   that press; [`Release`] and [`Clicked`] route to that captured set,
 //!   never to a fresh hit test, even if the contact moved in between.
@@ -23,6 +24,17 @@
 //!   to the captured set, after that move's `Exit`/`Enter`.
 //!   [`PressCancelled`] goes to the captured set on a `Cancelled`, before
 //!   the teardown `Exit`; that set then never gets `Release`/`Clicked`.
+//! - A handler on a captured node can claim the contact with
+//!   [`ContextClaim::claim_contact`]: the capture becomes that node
+//!   alone, the rest of the old capture gets [`PressCancelled`] and the
+//!   rest of the old hit-set [`Exit`]. The claim takes effect inside the
+//!   call, so a `Released` already queued goes to the claimer alone.
+//! - A press over a node with [`GrabPresses`]`(true)` is claimed from the
+//!   start by the outermost such node in its hit-set: it alone gets
+//!   [`Press`], and the rest of the hit-set gets [`Exit`].
+//! - While claimed, a `Moved` does no hover tracking and sends
+//!   [`PressMoved`] to the claimer alone; `Release`/`Clicked` go to the
+//!   claimer alone. The claim ends with the capture.
 //! - A `Touch` contact's state is torn down right after its `Released`
 //!   (with a final `Exit` for whatever it is over at that point), since a
 //!   finger has no idle position to keep hovering at. A `Mouse` contact's
@@ -92,6 +104,7 @@
 //! assert!(app.widget::<Button>(button).unwrap().clicked.get());
 //! ```
 
+mod claim;
 mod contact;
 mod contacts;
 mod events;
@@ -99,6 +112,7 @@ mod hit_test;
 mod keyboard;
 mod module;
 
+pub use claim::{ContextClaim, GrabPresses};
 pub use contact::{ContactId, ContactInput, ContactPhase};
 pub use contacts::Contacts;
 pub use events::{
@@ -110,8 +124,8 @@ pub use module::InteractivityModule;
 
 pub mod prelude {
     pub use crate::{
-        Clicked, ContactId, ContactInput, ContactPhase, Contacts, Enter, Exit, InteractivityModule,
-        KeyMeaning, KeyPress, KeyRelease, KeyRepeat, KeyState, KeyboardFocus, KeyboardInput,
-        Modifiers, Press, PressCancelled, PressMoved, Release,
+        Clicked, ContactId, ContactInput, ContactPhase, Contacts, ContextClaim, Enter, Exit,
+        GrabPresses, InteractivityModule, KeyMeaning, KeyPress, KeyRelease, KeyRepeat, KeyState,
+        KeyboardFocus, KeyboardInput, Modifiers, Press, PressCancelled, PressMoved, Release,
     };
 }

@@ -695,3 +695,235 @@ fn cancelled_sends_press_cancelled_to_the_captured_set_then_exit() {
     assert_eq!(take_order(), vec!["press_cancelled", "exit"]);
     assert!(take_clicked().is_empty());
 }
+
+// ── claiming a contact / grabbing presses ───────────────────────────────
+
+thread_local! {
+    static PRESS_CANCELLED: RefCell<Vec<NodeId>> = const { RefCell::new(Vec::new()) };
+}
+fn log_press_cancelled(_: &mut App, e: &Emitted<PressCancelled>) {
+    PRESS_CANCELLED.with(|l| l.borrow_mut().extend(e.targets.iter().copied()));
+}
+fn take_press_cancelled() -> Vec<NodeId> {
+    PRESS_CANCELLED.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// Claims its contact once a press on it has moved 10 px or more.
+#[derive(Default)]
+struct Claimer {
+    start: Option<Point>,
+    claimed: bool,
+}
+impl Build for Claimer {
+    type Widget = Claimer;
+}
+impl Widget for Claimer {
+    type Builder = Claimer;
+    fn build(b: Claimer, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        s.on::<Press>(me, |ctx, e| ctx.me().start = Some(e.position));
+        s.on::<PressMoved>(me, |ctx, e| {
+            let Some(start) = ctx.me().start else {
+                return;
+            };
+            let d = e.position - start;
+            if (d.x * d.x + d.y * d.y).sqrt() >= 10.0 {
+                let claimed = ctx.claim_contact(e.contact);
+                ctx.me().claimed = claimed;
+            }
+        });
+        b
+    }
+}
+
+/// Tries to claim on every `Enter`, recording what the claim returned.
+#[derive(Default)]
+struct HoverClaimer {
+    result: Option<bool>,
+}
+impl Build for HoverClaimer {
+    type Widget = HoverClaimer;
+}
+impl Widget for HoverClaimer {
+    type Builder = HoverClaimer;
+    fn build(b: HoverClaimer, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        s.on::<Enter>(me, |ctx, e| {
+            let r = ctx.claim_contact(e.contact);
+            ctx.me().result = Some(r);
+        });
+        b
+    }
+}
+
+fn claim_app() -> App {
+    let mut app = app();
+    app.system(log_press_cancelled);
+    app
+}
+
+/// A `Claimer` at (10, 10, 150, 150) in `win` with a 40x40 button as its
+/// one flow child — window-relative rect (10, 10, 40, 40).
+fn claimer_and_button(app: &mut App, win: Handle<Window>) -> (Handle<Claimer>, Handle<Leaf>) {
+    let claimer = app.spawn_with(win, Claimer::default(), (at(10.0, 10.0, 150.0, 150.0),));
+    let button = app.spawn_with(
+        claimer,
+        Leaf,
+        (LayoutStyle::default().size(px(40.0), px(40.0)),),
+    );
+    (claimer, button)
+}
+
+fn clear_logs() {
+    take_enter();
+    take_exit();
+    take_press();
+    take_release();
+    take_clicked();
+    take_press_moved();
+    take_press_cancelled();
+    take_order();
+}
+
+#[test]
+fn claim_cancels_the_rest_of_the_capture() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let (claimer, button) = claimer_and_button(&mut app, win);
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.flush();
+    clear_logs();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(40.0, 20.0)));
+    app.flush();
+    assert!(app.widget::<Claimer>(claimer).unwrap().claimed);
+    assert_eq!(take_press_cancelled(), vec![button.id(), win.id()]);
+    assert_eq!(take_exit(), vec![button.id(), win.id()]);
+
+    app.signal(released(win, ContactId::Mouse, Point::new(40.0, 20.0)));
+    app.flush();
+    assert_eq!(take_release(), vec![claimer.id()]);
+    assert_eq!(take_clicked(), vec![claimer.id()]);
+}
+
+#[test]
+fn claim_before_a_queued_release_suppresses_clicked() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let (claimer, button) = claimer_and_button(&mut app, win);
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Touch(1), p));
+    app.signal(pressed(win, ContactId::Touch(1), p));
+    app.flush();
+    clear_logs();
+
+    app.signal(moved(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
+    app.signal(released(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
+    app.flush();
+    let clicked = take_clicked();
+    assert!(!clicked.contains(&button.id()));
+    assert_eq!(clicked, vec![claimer.id()]);
+}
+
+#[test]
+fn a_claimed_contact_stops_hover() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let (claimer, _button) = claimer_and_button(&mut app, win);
+    let _other = app.spawn_with(win, Leaf, (at(170.0, 170.0, 20.0, 20.0),));
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.signal(moved(win, ContactId::Mouse, Point::new(40.0, 20.0)));
+    app.flush();
+    assert!(app.widget::<Claimer>(claimer).unwrap().claimed);
+    clear_logs();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(180.0, 180.0)));
+    app.signal(moved(win, ContactId::Mouse, Point::new(185.0, 185.0)));
+    app.flush();
+    assert!(take_enter().is_empty());
+    assert!(take_exit().is_empty());
+    assert_eq!(take_press_moved(), vec![claimer.id(), claimer.id()]);
+}
+
+#[test]
+fn grab_presses_takes_the_press_before_children() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let outer = app.spawn_with(win, Leaf, (at(10.0, 10.0, 150.0, 150.0), GrabPresses(true)));
+    let button = app.spawn_with(
+        outer,
+        Leaf,
+        (LayoutStyle::default().size(px(40.0), px(40.0)),),
+    );
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.flush();
+    clear_logs();
+
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.flush();
+    assert_eq!(take_press(), vec![outer.id()]);
+    assert_eq!(take_exit(), vec![button.id(), win.id()]);
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(25.0, 20.0)));
+    app.signal(released(win, ContactId::Mouse, Point::new(25.0, 20.0)));
+    app.flush();
+    assert_eq!(take_press_moved(), vec![outer.id()]);
+    assert_eq!(take_release(), vec![outer.id()]);
+    assert_eq!(take_clicked(), vec![outer.id()]);
+}
+
+#[test]
+fn grab_picks_the_outermost() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let outer = app.spawn_with(win, Leaf, (at(10.0, 10.0, 150.0, 150.0), GrabPresses(true)));
+    let inner = app.spawn_with(
+        outer,
+        Leaf,
+        (
+            LayoutStyle::default().size(px(100.0), px(100.0)),
+            GrabPresses(true),
+        ),
+    );
+    let _button = app.spawn_with(
+        inner,
+        Leaf,
+        (LayoutStyle::default().size(px(40.0), px(40.0)),),
+    );
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.signal(released(win, ContactId::Mouse, p));
+    app.flush();
+    assert_eq!(take_press(), vec![outer.id()]);
+    assert_eq!(take_clicked(), vec![outer.id()]);
+}
+
+#[test]
+fn claim_without_capture_is_false() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let node = app.spawn_with(win, HoverClaimer::default(), (at(10.0, 10.0, 40.0, 40.0),));
+    app.tick();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(20.0, 20.0)));
+    app.flush();
+    assert_eq!(
+        app.widget::<HoverClaimer>(node).unwrap().result,
+        Some(false)
+    );
+    assert!(!app.resource::<Contacts>().is_pressed(ContactId::Mouse));
+}

@@ -1,5 +1,6 @@
 //! Per-contact state. Everything but the two reads on `Contacts` is
-//! `pub(crate)`: the four systems in `module.rs` are its only writers.
+//! `pub(crate)`: the four systems in `module.rs` and
+//! `ContextClaim::claim_contact` in `claim.rs` are its only writers.
 
 use std::collections::HashMap;
 
@@ -13,7 +14,8 @@ pub(crate) type HitSet = SmallVec<[NodeId; 8]>;
 
 /// One live contact: where it is, what is under it right now (`hit`,
 /// fresh every `Moved`), and — only while a button or finger is down —
-/// the set `Press`/`Release`/`Clicked` stay locked onto (`captured`).
+/// the set `Press`/`Release`/`Clicked` stay locked onto (`captured`),
+/// and the one node of it that took the contact over, if any (`claimed`).
 #[derive(Debug)]
 pub(crate) struct ContactState {
     /// The window this contact's input names. Recorded on every
@@ -24,6 +26,10 @@ pub(crate) struct ContactState {
     pub(crate) position: Point,
     pub(crate) hit: HitSet,
     pub(crate) captured: Option<HitSet>,
+    /// The node that claimed this contact, by `claim_contact` or by
+    /// grabbing its press; `captured` is then exactly `[claimed]`. Ends
+    /// with the capture.
+    pub(crate) claimed: Option<NodeId>,
 }
 
 /// Every live contact — the mouse pointer plus each active touch — keyed
@@ -58,6 +64,7 @@ impl Contacts {
             position: Point::ZERO,
             hit: HitSet::new(),
             captured: None,
+            claimed: None,
         });
         state.window = window;
         state
@@ -66,6 +73,27 @@ impl Contacts {
     /// `contact`'s state if it has been seen before, without creating it.
     pub(crate) fn get_mut(&mut self, contact: ContactId) -> Option<&mut ContactState> {
         self.live.get_mut(&contact)
+    }
+
+    /// Hands `contact`'s capture to `node` alone: `captured` becomes
+    /// `[node]`, `claimed` becomes `node`, and `hit` keeps only `node`.
+    /// Returns what `node` took the contact from — the old captured set
+    /// and the old hit-set, each without `node` — and the contact's
+    /// position. `None`, changing nothing, if `contact` has no capture or
+    /// `node` is not in it.
+    pub(crate) fn claim(
+        &mut self,
+        contact: ContactId,
+        node: NodeId,
+    ) -> Option<(HitSet, HitSet, Point)> {
+        let state = self.live.get_mut(&contact)?;
+        let captured = state.captured.as_mut().filter(|c| c.contains(&node))?;
+        let cancelled = captured.iter().copied().filter(|&id| id != node).collect();
+        *captured = HitSet::from_slice(&[node]);
+        let exited = state.hit.iter().copied().filter(|&id| id != node).collect();
+        state.hit.retain(|id| *id == node);
+        state.claimed = Some(node);
+        Some((cancelled, exited, state.position))
     }
 
     /// Removes and returns `contact`'s state, if any.

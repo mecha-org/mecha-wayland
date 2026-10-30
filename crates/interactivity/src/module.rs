@@ -5,10 +5,12 @@
 //! over all four: `Moved` is independent hover tracking; `Pressed`,
 //! `Released` and `Cancelled` are one capture lifecycle. Keyboard input
 //! is one system on `KeyboardInput`, routing to whichever node holds the
-//! keyboard focus.
+//! keyboard focus. A claimed contact (see `claim.rs`) short-circuits all
+//! four to its claimer.
 
 use app::{App, Module, NodeId};
 
+use crate::claim::GrabPresses;
 use crate::contact::{ContactId, ContactInput, ContactPhase};
 use crate::contacts::{Contacts, HitSet};
 use crate::events::{
@@ -29,7 +31,8 @@ fn trusted_window(app: &App, window: NodeId) {
     );
 }
 
-/// Registers the `Contacts` and `KeyboardFocus` resources and the systems
+/// Registers the `Contacts` and `KeyboardFocus` resources, the
+/// `GrabPresses` component, and the systems
 /// that turn a `ContactInput` into `Press`/`PressMoved`/`PressCancelled`/
 /// `Release`/`Enter`/`Exit`/`Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
 /// `KeyRelease`. Installs after `WindowModule`.
@@ -39,6 +42,7 @@ impl Module for InteractivityModule {
     fn install(self, app: &mut App) {
         app.init_resource::<Contacts>()
             .init_resource::<KeyboardFocus>()
+            .register_component::<GrabPresses>()
             .system(on_moved)
             .system(on_pressed)
             .system(on_released)
@@ -58,6 +62,27 @@ fn on_moved(app: &mut App, input: &ContactInput) {
         return;
     }
     trusted_window(app, input.window);
+    // A claimed contact does no hover tracking: its moves are the
+    // claimer's alone.
+    let claimed = {
+        let mut contacts = app.resource_mut::<Contacts>();
+        let state = contacts.entry(input.contact, input.window);
+        if state.claimed.is_some() {
+            state.position = input.position;
+        }
+        state.claimed
+    };
+    if let Some(claimer) = claimed {
+        app.emit(
+            PressMoved {
+                contact: input.contact,
+                position: input.position,
+                time: input.time,
+            },
+            claimer,
+        );
+        return;
+    }
     let hit = hit_test(app, input.window, input.position);
     let (entered, exited, captured) = {
         let mut contacts = app.resource_mut::<Contacts>();
@@ -103,6 +128,41 @@ fn on_pressed(app: &mut App, input: &ContactInput) {
     }
     trusted_window(app, input.window);
     let hit = hit_test(app, input.window, input.position);
+    // The outermost grabber: the hit-set runs window last.
+    let grabber = hit
+        .iter()
+        .rev()
+        .copied()
+        .find(|&id| app.component::<GrabPresses>(id).is_some_and(|g| g.0));
+    if let Some(grabber) = grabber {
+        let exited: HitSet = hit.iter().copied().filter(|&id| id != grabber).collect();
+        {
+            let mut contacts = app.resource_mut::<Contacts>();
+            let state = contacts.entry(input.contact, input.window);
+            state.hit = HitSet::from_slice(&[grabber]);
+            state.captured = Some(HitSet::from_slice(&[grabber]));
+            state.claimed = Some(grabber);
+            state.position = input.position;
+        }
+        if !exited.is_empty() {
+            app.emit(
+                Exit {
+                    contact: input.contact,
+                    position: input.position,
+                },
+                &exited[..],
+            );
+        }
+        app.emit(
+            Press {
+                contact: input.contact,
+                position: input.position,
+                time: input.time,
+            },
+            grabber,
+        );
+        return;
+    }
     {
         let mut contacts = app.resource_mut::<Contacts>();
         let state = contacts.entry(input.contact, input.window);
@@ -136,6 +196,9 @@ fn on_released(app: &mut App, input: &ContactInput) {
             return;
         };
         state.position = input.position;
+        // The claim ends with the capture; a claimed capture is already
+        // just `[claimer]`.
+        state.claimed = None;
         state.captured.take()
     };
     if let Some(captured) = captured {

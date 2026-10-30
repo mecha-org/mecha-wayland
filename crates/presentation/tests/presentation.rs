@@ -191,11 +191,13 @@ static GPU: Mutex<()> = Mutex::new(());
 /// business, not the test's. `None` with a skip line when there is no
 /// render node.
 fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
-    fake_advertising(true)
+    fake_advertising(true, true)
 }
 
-/// [`fake`], with or without ARGB8888 among the formats advertised.
-fn fake_advertising(argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
+/// [`fake`], with or without XRGB8888 and ARGB8888 among the formats
+/// advertised. Neither is what a compositor bound at version 4 or above
+/// sends: its formats come by feedback instead.
+fn fake_advertising(xrgb: bool, argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
     let guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
     match Device::try_open(Budget::default()) {
         Ok(_) => {}
@@ -211,16 +213,18 @@ fn fake_advertising(argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
             .bind::<XdgWmBase>()
             .bind::<WlSeat>()
     });
-    f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
-        w.uint(XRGB);
-        w.uint(0);
-        w.uint(0);
-    });
-    f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
-        w.uint(XRGB);
-        w.uint((VENDOR_MOD >> 32) as u32);
-        w.uint(VENDOR_MOD as u32);
-    });
+    if xrgb {
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(XRGB);
+            w.uint(0);
+            w.uint(0);
+        });
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(XRGB);
+            w.uint((VENDOR_MOD >> 32) as u32);
+            w.uint(VENDOR_MOD as u32);
+        });
+    }
     if argb {
         f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
             w.uint(ARGB);
@@ -2191,12 +2195,24 @@ fn a_transparent_window_draws_into_argb_buffers() {
 
 #[test]
 fn a_transparent_window_falls_back_to_xrgb_when_argb_is_not_advertised() {
-    let Some((_gpu, mut f)) = fake_advertising(false) else {
+    let Some((_gpu, mut f)) = fake_advertising(true, false) else {
         return;
     };
     assert_eq!(
         transparent_slot_formats(&mut f),
         vec![XRGB, XRGB],
         "shown opaque rather than not at all"
+    );
+}
+
+#[test]
+fn a_transparent_window_draws_into_argb_buffers_when_no_format_is_listed() {
+    let Some((_gpu, mut f)) = fake_advertising(false, false) else {
+        return;
+    };
+    assert_eq!(
+        transparent_slot_formats(&mut f),
+        vec![ARGB, ARGB],
+        "nothing listed rules nothing out, as for XRGB8888"
     );
 }

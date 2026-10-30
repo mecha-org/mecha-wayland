@@ -205,9 +205,13 @@ pub struct Surfaces {
 }
 impl Resource for Surfaces {}
 
-/// What the compositor said it imports, in the order advertised.
+/// What the compositor said it imports, in the order advertised. Bound at
+/// version 4 or above it says nothing this way, its formats coming by
+/// feedback, which is not read; then nothing is ruled out.
 #[derive(Default)]
 struct Formats {
+    /// Some format or layout was named.
+    listed: bool,
     /// The layouts for XRGB8888.
     xrgb: Vec<u64>,
     /// The layouts for ARGB8888; `None` until the compositor names the
@@ -217,11 +221,13 @@ struct Formats {
 
 impl Formats {
     /// Whether a slot is ARGB8888, and the layouts to make it with. A
-    /// transparent window on a compositor that never named ARGB8888 is
-    /// drawn opaque, its clear showing black, rather than not at all.
+    /// transparent window on a compositor that listed formats without
+    /// ARGB8888 is drawn opaque, its clear showing black, rather than not
+    /// at all.
     fn pick(&self, transparent: bool) -> (bool, &[u64]) {
         match (&self.argb, transparent) {
             (Some(m), true) => (true, m),
+            (None, true) if !self.listed => (true, &[]),
             (None, true) => {
                 eprintln!(
                     "presentation: the compositor does not import ARGB8888; a transparent window is drawn opaque"
@@ -591,6 +597,7 @@ fn on_dmabuf(app: &mut App, e: &ZwpLinuxDmabufV1Event) {
         ),
     };
     let formats = &mut app.resource_mut::<Surfaces>().formats;
+    formats.listed = true;
     let list = match format {
         gles::XRGB8888 => &mut formats.xrgb,
         gles::ARGB8888 => formats.argb.get_or_insert_default(),

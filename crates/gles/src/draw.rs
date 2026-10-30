@@ -26,7 +26,10 @@ pub(crate) fn clear(gpu: &Gpu, t: &Target, q: &render::Queue) {
         gl.viewport(0, 0, t.width() as i32, t.height() as i32);
         gl.enable(glow::SCISSOR_TEST);
         gl.depth_mask(true);
-        gl.clear_color(q.clear.r, q.clear.g, q.clear.b, 1.0);
+        // Premultiplied, as everything drawn here is; an opaque target
+        // ignores the alpha.
+        let c = q.clear;
+        gl.clear_color(c.r * c.a, c.g * c.a, c.b * c.a, c.a);
         gl.clear_depth_f32(1.0);
         for &r in &q.scissor {
             let (x, y, w, h) = scissor(r);

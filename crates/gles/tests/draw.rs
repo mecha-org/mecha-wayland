@@ -3,7 +3,7 @@ mod common;
 use atlas::{AtlasId, AtlasTile};
 use common::{device, near, pixel, png, rgb};
 use geometry::{Color, Corners, Insets, Rect, Size};
-use gles::XRGB8888;
+use gles::{ARGB8888, XRGB8888};
 use render::{Command, Pass, Queue};
 
 fn queue(w: f32, h: f32, clear: Color, scissor: Vec<Rect>) -> Queue {
@@ -30,6 +30,33 @@ fn a_linear_target_has_one_plane_and_the_xrgb_fourcc() {
     assert_eq!(planes.len(), 1);
     assert!(planes[0].stride >= 64 * 4);
     assert_eq!(planes[0].offset, 0);
+    d.destroy(t);
+}
+
+#[test]
+fn a_target_with_alpha_has_the_argb_fourcc() {
+    let Some((_g, mut d)) = device() else { return };
+    let t = d.target_with_alpha(64, 48, &[]);
+    assert_eq!((t.width(), t.height()), (64, 48));
+    assert_eq!(t.fourcc(), ARGB8888);
+    assert_eq!(t.planes().count(), 1);
+    d.destroy(t);
+}
+
+#[test]
+fn a_transparent_clear_leaves_no_alpha() {
+    let Some((_g, mut d)) = device() else { return };
+    let t = d.target_with_alpha(16, 16, &[]);
+    d.draw(
+        &t,
+        &queue(16.0, 16.0, Color::TRANSPARENT, whole(16.0, 16.0)),
+    );
+    let px = d.read(&t);
+    for y in 0..16 {
+        for x in 0..16 {
+            assert_eq!(pixel(&px, 16, x, y), [0, 0, 0, 0], "at {x},{y}");
+        }
+    }
     d.destroy(t);
 }
 
@@ -440,6 +467,69 @@ fn opaque_compositing_equals_blending() {
         32,
         32,
         &blended,
+    );
+    for y in 0..32 {
+        for x in 0..32 {
+            let (p, q) = (pixel(&composited, 32, x, y), pixel(&blended, 32, x, y));
+            assert!(near(p, q, 2), "at {x},{y}: opaque {p:?}, blended {q:?}");
+        }
+    }
+    d.destroy(a);
+    d.destroy(b);
+}
+
+/// The same over a transparent clear on a target with alpha: the opaque
+/// pass composites onto the clear's alpha too, so an edge, a border or a
+/// translucent fill comes out partly transparent, as blending would leave
+/// it, and nothing outside the quad has any alpha.
+#[test]
+fn opaque_compositing_onto_a_transparent_clear_equals_blending() {
+    let Some((_g, mut d)) = device() else { return };
+    let clear = Color::TRANSPARENT;
+    let mut c = quad(
+        Rect::new(3.0, 3.0, 26.0, 26.0),
+        0.0,
+        Color::rgba(0.9, 0.5, 0.2, 0.6),
+        None,
+    );
+    c.radii = Corners::all(6.0);
+    c.border = Insets::all(3.0);
+    c.border_color = Color::rgba(0.2, 0.9, 0.4, 0.8);
+
+    let a = d.target_with_alpha(32, 32, &[]);
+    let mut o = c;
+    o.background = clear;
+    o.flags = Command::pack(Command::QUAD, true, false, 1.0);
+    d.draw(
+        &a,
+        &opaque(queue(32.0, 32.0, clear, whole(32.0, 32.0)), vec![o]),
+    );
+    let composited = d.read(&a);
+
+    let b = d.target_with_alpha(32, 32, &[]);
+    d.draw(
+        &b,
+        &translucent(queue(32.0, 32.0, clear, whole(32.0, 32.0)), vec![c]),
+    );
+    let blended = d.read(&b);
+
+    png(
+        "opaque_compositing_onto_a_transparent_clear_equals_blending.opaque",
+        32,
+        32,
+        &composited,
+    );
+    png(
+        "opaque_compositing_onto_a_transparent_clear_equals_blending.translucent",
+        32,
+        32,
+        &blended,
+    );
+    assert_eq!(pixel(&composited, 32, 0, 0), [0, 0, 0, 0], "outside");
+    let mid = pixel(&composited, 32, 16, 16);
+    assert!(
+        near(mid, [138, 77, 31, 153], 2),
+        "a 0.6 fill is premultiplied at 0.6 alpha: {mid:?}"
     );
     for y in 0..32 {
         for x in 0..32 {

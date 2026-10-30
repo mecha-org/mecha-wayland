@@ -65,13 +65,13 @@ mod program;
 mod target;
 mod textures;
 
-pub use target::{Plane, Target, XRGB8888};
+pub use target::{ARGB8888, Plane, Target, XRGB8888};
 
 /// `Error` and `Plane` are left out: `atlas` has its own of each, and a
 /// facade folding both preludes together would make neither name usable.
 /// Take them by path, as `gles::Error` and `gles::Plane`.
 pub mod prelude {
-    pub use crate::{Budget, Device, Target, XRGB8888};
+    pub use crate::{ARGB8888, Budget, Device, Target, XRGB8888};
 }
 
 /// How many atlas pages of each kind the device allocates room for, once,
@@ -158,7 +158,14 @@ impl Device {
     /// with the first layout of `modifiers` GBM can produce, or linear
     /// when the list is empty or refused.
     pub fn target(&mut self, width: u32, height: u32, modifiers: &[u64]) -> Target {
-        target::create(&self.gpu, width, height, modifiers)
+        target::create(&self.gpu, width, height, XRGB8888, modifiers)
+    }
+
+    /// The same as [`Device::target`] but ARGB8888, for a window that
+    /// clears to transparent: what is drawn keeps its alpha, premultiplied,
+    /// for the compositor to blend.
+    pub fn target_with_alpha(&mut self, width: u32, height: u32, modifiers: &[u64]) -> Target {
+        target::create(&self.gpu, width, height, ARGB8888, modifiers)
     }
 
     /// Frees the target's GL objects, EGLImage and buffer.

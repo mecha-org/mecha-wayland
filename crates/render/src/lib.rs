@@ -153,8 +153,10 @@ pub mod prelude {
 /// In the translucent pass the shader computes coverage from the rounded
 /// edge, the border or the tile and blends the primitive's colour with
 /// that coverage times its alpha. In the opaque pass it does the same
-/// arithmetic, composites onto `background`, and writes alpha one and
-/// depth: `rgb = mix(background, primitive, coverage * alpha)`.
+/// arithmetic, composites onto `background`, premultiplied, and writes
+/// depth: `rgb = mix(background, primitive, coverage * alpha)`, alpha one
+/// over an opaque background and `coverage * alpha` over a window's
+/// transparent clear.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Command {

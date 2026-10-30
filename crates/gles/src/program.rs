@@ -119,7 +119,11 @@ float square_coverage() {
 void write(vec4 color, float coverage) {
     float a = color.a * coverage;
     if (u_opaque) {
-        frag = vec4(mix(v_background.rgb, color.rgb, a), 1.0);
+        // Source-over onto the background, premultiplied: an opaque
+        // background gives its own mix and alpha one, a transparent one
+        // gives the colour at alpha `a`.
+        vec4 bg = vec4(v_background.rgb * v_background.a, v_background.a);
+        frag = vec4(mix(bg.rgb, color.rgb, a), mix(bg.a, 1.0, a));
     } else {
         frag = vec4(color.rgb * a, a);
     }

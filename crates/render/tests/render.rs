@@ -118,7 +118,7 @@ fn zs(commands: &[Command]) -> Vec<f32> {
 // ── 1, 2: passes, z and order ───────────────────────────────────────────
 
 #[test]
-fn a_rounded_quad_under_the_black_window_is_one_opaque_command() {
+fn a_rounded_quad_under_the_black_window_is_an_opaque_box_and_its_interior() {
     let mut app = app();
     let win = app.spawn(app.root(), a_window());
     app.spawn_with(
@@ -142,8 +142,27 @@ fn a_rounded_quad_under_the_black_window_is_one_opaque_command() {
     assert_eq!(q.opaque.scissor, vec![window_rect()]);
     assert!(q.translucent.commands.is_empty());
     assert!(q.translucent.scissor.is_empty());
-    assert_eq!(q.opaque.commands.len(), 1);
-    let c = q.opaque.commands[0];
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![3.0, 2.0],
+        "the interior is nearer"
+    );
+    let inner = q.opaque.commands[0];
+    assert_eq!(
+        inner.rect,
+        Rect::new(4.0, 4.0, 42.0, 12.0),
+        "inset by the radius"
+    );
+    assert_eq!(
+        (inner.radii, inner.border),
+        (Corners::all(0.0), Insets::all(0.0))
+    );
+    assert_eq!(
+        (inner.color, inner.border_color, inner.background),
+        (RED, RED, RED)
+    );
+    assert!(inner.is_opaque());
+    let c = q.opaque.commands[1];
     assert_eq!(c.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
     assert_eq!(c.z, 2.0);
     assert_eq!(c.color, RED);
@@ -291,7 +310,7 @@ fn a_border_alone_blends_and_an_invisible_quad_only_takes_a_z() {
 }
 
 #[test]
-fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
+fn inside_a_solid_a_quad_is_opaque_whatever_its_edges_or_alpha() {
     let mut app = app();
     let win = app.spawn(app.root(), a_window());
     app.spawn_with(
@@ -311,8 +330,13 @@ fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
 
     let q = queue(&mut app, win.id(), 1);
     assert!(q.translucent.commands.is_empty());
-    assert_eq!(zs(&q.opaque.commands), vec![4.0, 2.0]);
-    let rounded = q.opaque.commands[1];
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![4.0, 3.0, 2.0],
+        "the flat half-blue has no interior; the rounded red has one at 3"
+    );
+    assert_eq!(q.opaque.commands[1].rect, Rect::new(6.0, 6.0, 88.0, 38.0));
+    let rounded = q.opaque.commands[2];
     assert_eq!(
         (rounded.radii, rounded.border),
         (Corners::all(6.0), Insets::all(2.0))
@@ -324,6 +348,25 @@ fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
     let half = q.opaque.commands[0];
     assert_eq!((half.color, half.background), (HALF_BLUE, Color::BLACK));
     assert!(half.is_opaque());
+}
+
+#[test]
+fn a_pill_inside_a_solid_has_no_interior_command() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    app.spawn_with(
+        win,
+        Leaf,
+        (boxed(100.0, 20.0), Paint::Quad(Quad::new(RED).radius(10.0))),
+    );
+    app.tick();
+
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![2.0],
+        "nothing is flat inside a pill"
+    );
 }
 
 #[test]
@@ -352,10 +395,11 @@ fn a_borderless_quad_carries_its_fill_as_border_colour_and_zero_widths() {
     let q = queue(&mut app, win.id(), 1);
     assert_eq!(
         zs(&q.opaque.commands),
-        vec![4.0, 2.0],
-        "the bordered, then the borderless"
+        vec![5.0, 4.0, 2.0],
+        "the bordered's interior, the bordered, then the borderless"
     );
-    let bare = q.opaque.commands[1];
+    assert_eq!(q.opaque.commands[0].rect, Rect::new(2.0, 22.0, 46.0, 16.0));
+    let bare = q.opaque.commands[2];
     assert_eq!(
         (bare.color, bare.border_color),
         (RED, RED),
@@ -363,7 +407,7 @@ fn a_borderless_quad_carries_its_fill_as_border_colour_and_zero_widths() {
     );
     assert_eq!(bare.border, Insets::all(0.0), "and no width either");
     assert_eq!(bare.background, Color::BLACK);
-    let ringed = q.opaque.commands[0];
+    let ringed = q.opaque.commands[1];
     assert_eq!((ringed.color, ringed.border_color), (RED, BLUE));
     assert_eq!(ringed.border, Insets::all(2.0), "a visible border is kept");
 }
@@ -534,7 +578,11 @@ fn a_sprite_over_a_rounded_corner_or_opted_out_blends() {
         Rect::new(6.0, 47.0, 8.0, 8.0),
         "opted out"
     );
-    assert_eq!(zs(&q.opaque.commands), vec![6.0, 2.0], "the two panels");
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![6.0, 3.0, 2.0],
+        "the two panels and the rounded one's interior"
+    );
 }
 
 // ── 5: scale ────────────────────────────────────────────────────────────
@@ -569,10 +617,20 @@ fn scale_two_doubles_every_rect_radius_and_width_and_the_window() {
     );
     let g = q.opaque.commands[0];
     assert_eq!(g.rect, Rect::new(12.0, 14.0, 16.0, 16.0));
-    let p = q.opaque.commands[1];
+    let inner = q.opaque.commands[1];
+    assert_eq!(
+        inner.rect,
+        Rect::new(6.0, 6.0, 188.0, 68.0),
+        "inset by the scaled radius"
+    );
+    let p = q.opaque.commands[2];
     assert_eq!(p.rect, Rect::new(0.0, 0.0, 200.0, 80.0));
     assert_eq!((p.radii, p.border), (Corners::all(6.0), Insets::all(2.0)));
-    assert_eq!(zs(&q.opaque.commands), vec![4.0, 2.0], "z does not scale");
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![4.0, 3.0, 2.0],
+        "z does not scale"
+    );
 }
 
 // ── 10: images ──────────────────────────────────────────────────────────

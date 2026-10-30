@@ -12,7 +12,9 @@
 //!   exactly that colour behind a node, starting from the window's clear
 //!   colour. A primitive inside a solid goes to the opaque pass whole,
 //!   its `background` set, so the shader composites its edges, border or
-//!   tile onto it and writes depth. An opaque, edge-free quad with an
+//!   tile onto it and writes depth. An opaque-coloured quad with edges
+//!   there also writes its flat interior as a plain fill at `z + 1`, so
+//!   the depth test keeps the edge shading to its rim. An opaque, edge-free quad with an
 //!   opaque colour is a plain fill and goes to the opaque pass wherever
 //!   it is. Anything else with nothing known behind it blends in the
 //!   translucent pass; an opaque-coloured quad with edges also writes its
@@ -104,7 +106,9 @@
 //! let queue = scenes.queue(win.id(), 1).unwrap();
 //! assert_eq!(queue.scissor, vec![Rect::new(0.0, 0.0, 200.0, 100.0)]);
 //! assert!(queue.translucent.commands.is_empty(), "black behind it: nothing blends");
-//! let quad = queue.opaque.commands[0];
+//! // Nearest first: the flat middle, then the rounded box under it.
+//! assert_eq!(queue.opaque.commands[0].rect, Rect::new(4.0, 4.0, 42.0, 12.0));
+//! let quad = queue.opaque.commands[1];
 //! assert_eq!(quad.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
 //! assert_eq!(quad.background, Color::BLACK);
 //! assert_eq!(quad.kind(), Command::QUAD);

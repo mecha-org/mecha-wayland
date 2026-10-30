@@ -286,6 +286,25 @@ fn emit_quad(
                 ..base
             },
         );
+        // Its flat middle as a plain fill one step nearer: the depth test
+        // keeps the box's shader to the rim.
+        if !edge_free && q.color.a >= 1.0 && !inner.is_empty() {
+            let flat = q.color.over(s.color);
+            push(
+                &mut scene.opaque,
+                Command {
+                    rect: inner,
+                    z: z + 1.0,
+                    color: flat,
+                    border_color: flat,
+                    background: flat,
+                    radii: Corners::all(0.0),
+                    border: Insets::all(0.0),
+                    flags: opaque,
+                    ..base
+                },
+            );
+        }
     } else if q.is_opaque && edge_free && q.color.a >= 1.0 {
         // A plain fill.
         push(

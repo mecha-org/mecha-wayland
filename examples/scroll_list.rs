@@ -120,13 +120,22 @@ impl Build for ShellBuilder {
 impl Widget for Shell {
     type Builder = ShellBuilder;
     fn build(b: ShellBuilder, _me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
-        // The compositor's configure replaces this with the real size.
-        let win = s.spawn(
+        // A layer surface anchored to all four edges with no size of its
+        // own: the compositor stretches it to the output, in logical px.
+        let role = Role::Layer(LayerRole {
+            layer: Layer::Top,
+            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            exclusive_zone: -1,
+            namespace: "scroll_list".into(),
+            keyboard_interactivity: KeyboardInteractivity::None,
+        });
+        let win = s.spawn_with(
             b.root,
             window()
                 .title("scroll_list")
                 .clear(Color::rgb(0.12, 0.12, 0.14))
-                .layout(LayoutStyle::default().column().size(px(1224.0), px(2720.0))),
+                .layout(LayoutStyle::default().column().size(auto(), auto())),
+            (role,),
         );
         s.on::<CloseRequested>(win, |ctx, _| ctx.signal(Stop));
         let list = s.spawn(

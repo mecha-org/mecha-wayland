@@ -33,6 +33,7 @@ fn contact_input_is_a_plain_signal() {
         contact: ContactId::Mouse,
         phase: ContactPhase::Moved,
         position: Point::new(1.0, 2.0),
+        time: 0,
     });
     app.flush();
     assert_eq!(SEEN.with(|l| l.borrow().clone()), vec!["moved"]);
@@ -62,6 +63,7 @@ fn every_event_carries_its_contact_and_position_and_reaches_its_target() {
         Press {
             contact: ContactId::Touch(9),
             position: pos,
+            time: 0,
         },
         watcher,
     );
@@ -97,6 +99,16 @@ fn take_enter() -> Vec<NodeId> {
 }
 fn take_exit() -> Vec<NodeId> {
     EXIT.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+thread_local! {
+    static TIMES: RefCell<Vec<(&'static str, u32)>> = const { RefCell::new(Vec::new()) };
+}
+fn log_press_time(_: &mut App, e: &Emitted<Press>) {
+    TIMES.with(|l| l.borrow_mut().push(("press", e.event.time)));
+}
+fn log_release_time(_: &mut App, e: &Emitted<Release>) {
+    TIMES.with(|l| l.borrow_mut().push(("release", e.event.time)));
 }
 
 thread_local! {
@@ -183,6 +195,7 @@ fn moved(window: impl Into<NodeId>, contact: ContactId, position: Point) -> Cont
         contact,
         phase: ContactPhase::Moved,
         position,
+        time: 0,
     }
 }
 
@@ -192,6 +205,7 @@ fn pressed(window: impl Into<NodeId>, contact: ContactId, position: Point) -> Co
         contact,
         phase: ContactPhase::Pressed,
         position,
+        time: 0,
     }
 }
 fn released(window: impl Into<NodeId>, contact: ContactId, position: Point) -> ContactInput {
@@ -200,6 +214,7 @@ fn released(window: impl Into<NodeId>, contact: ContactId, position: Point) -> C
         contact,
         phase: ContactPhase::Released,
         position,
+        time: 0,
     }
 }
 fn cancelled(window: impl Into<NodeId>, contact: ContactId, position: Point) -> ContactInput {
@@ -208,6 +223,7 @@ fn cancelled(window: impl Into<NodeId>, contact: ContactId, position: Point) -> 
         contact,
         phase: ContactPhase::Cancelled,
         position,
+        time: 0,
     }
 }
 
@@ -320,6 +336,38 @@ fn press_then_release_at_the_same_spot_fires_press_release_clicked_on_the_same_s
     assert_eq!(take_release(), expected);
     assert_eq!(take_clicked(), expected);
     assert!(!app.resource::<Contacts>().is_pressed(ContactId::Mouse));
+}
+
+#[test]
+fn press_and_release_carry_the_input_time() {
+    let mut app = app();
+    app.system(log_press_time).system(log_release_time);
+    let win = app.spawn(app.root(), a_window());
+    card_and_button(&mut app, win);
+    app.tick();
+
+    let p = Point::new(30.0, 30.0);
+    app.signal(ContactInput {
+        time: 1000,
+        ..moved(win, ContactId::Mouse, p)
+    });
+    app.signal(ContactInput {
+        time: 1000,
+        ..pressed(win, ContactId::Mouse, p)
+    });
+    app.signal(ContactInput {
+        time: 1040,
+        ..released(win, ContactId::Mouse, p)
+    });
+    app.flush();
+    let times = TIMES.with(|l| std::mem::take(&mut *l.borrow_mut()));
+    assert!(times.contains(&("press", 1000)));
+    assert!(times.contains(&("release", 1040)));
+    assert!(
+        times
+            .iter()
+            .all(|&(k, t)| t == if k == "press" { 1000 } else { 1040 })
+    );
 }
 
 #[test]

@@ -106,6 +106,7 @@ fn on_pressed(app: &mut App, input: &ContactInput) {
             Press {
                 contact: input.contact,
                 position: input.position,
+                time: input.time,
             },
             &hit[..],
         );
@@ -130,6 +131,7 @@ fn on_released(app: &mut App, input: &ContactInput) {
                 Release {
                     contact: input.contact,
                     position: input.position,
+                    time: input.time,
                 },
                 &captured[..],
             );

@@ -15,6 +15,8 @@ use crate::keyboard::{KeyMeaning, Modifiers};
 pub struct Press {
     pub contact: ContactId,
     pub position: Point,
+    /// The originating `ContactInput`'s timestamp, in milliseconds.
+    pub time: u32,
 }
 /// A contact that pressed this node has now gone up. Reaches the set
 /// captured at `Press`, not a fresh hit test — the contact may have moved
@@ -23,6 +25,8 @@ pub struct Press {
 pub struct Release {
     pub contact: ContactId,
     pub position: Point,
+    /// The originating `ContactInput`'s timestamp, in milliseconds.
+    pub time: u32,
 }
 /// A contact's fresh hit-set now includes this node, where it did not on
 /// the previous `Moved`. Independent of any capture in progress.

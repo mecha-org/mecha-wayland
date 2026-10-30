@@ -122,7 +122,11 @@ mod ev {
 
 #[derive(Default)]
 struct Log(Vec<String>);
+/// The `time` of every `ContactInput`, in arrival order.
+#[derive(Default)]
+struct ContactTimes(Vec<u32>);
 impl Resource for Log {}
+impl Resource for ContactTimes {}
 fn log_resized(app: &mut App, e: &Emitted<Resized>) {
     app.resource_mut::<Log>().0.push(format!(
         "Resized {}x{}",
@@ -150,6 +154,7 @@ fn log_frame(app: &mut App, f: &Frame) {
     app.resource_mut::<Log>().0.push(format!("Frame {:?}", f.0));
 }
 fn log_contact(app: &mut App, e: &ContactInput) {
+    app.resource_mut::<ContactTimes>().0.push(e.time);
     app.resource_mut::<Log>().0.push(format!(
         "{:?} {:?} {:?} {}x{}",
         e.window, e.contact, e.phase, e.position.x, e.position.y
@@ -217,6 +222,7 @@ fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
         .insert_resource(Atlas::new());
     f.app
         .init_resource::<Log>()
+        .init_resource::<ContactTimes>()
         .init_resource::<Rescales>()
         .system(log_resized)
         .system(log_scale)
@@ -1849,21 +1855,21 @@ fn pointer_enter_motion_button_leave_produce_contact_input_at_the_focused_window
     });
     f.turn();
     f.send(ptr, ev::POINTER_MOTION, |w| {
-        w.uint(2);
+        w.uint(100);
         w.fixed(11.0);
         w.fixed(21.0);
     });
     f.turn();
     f.send(ptr, ev::POINTER_BUTTON, |w| {
         w.uint(3);
-        w.uint(4);
+        w.uint(140);
         w.uint(0x110);
         w.uint(WlPointerButtonState::Pressed.into());
     });
     f.turn();
     f.send(ptr, ev::POINTER_BUTTON, |w| {
         w.uint(5);
-        w.uint(6);
+        w.uint(180);
         w.uint(0x110);
         w.uint(WlPointerButtonState::Released.into());
     });
@@ -1883,6 +1889,13 @@ fn pointer_enter_motion_button_leave_produce_contact_input_at_the_focused_window
             format!("{win:?} Mouse Released 11x21"),
             format!("{win:?} Mouse Cancelled 11x21"),
         ]
+    );
+
+    // `Enter` and `Leave` have no `time` on the wire: the seat's last
+    // one (0 before any) stands in.
+    assert_eq!(
+        f.app.resource::<ContactTimes>().0,
+        vec![0, 100, 140, 180, 180]
     );
 }
 
@@ -1919,7 +1932,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
 
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(1);
-        w.uint(2);
+        w.uint(100);
         w.object(ObjectId(SURFACE));
         w.int(0);
         w.fixed(5.0);
@@ -1927,7 +1940,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
     });
     f.turn();
     f.send(t, ev::TOUCH_MOTION, |w| {
-        w.uint(3);
+        w.uint(120);
         w.int(0);
         w.fixed(7.0);
         w.fixed(8.0);
@@ -1935,13 +1948,13 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
     f.turn();
     f.send(t, ev::TOUCH_UP, |w| {
         w.uint(4);
-        w.uint(5);
+        w.uint(150);
         w.int(0);
     });
     f.turn();
     // A further Motion for the same, now-released id is a no-op.
     f.send(t, ev::TOUCH_MOTION, |w| {
-        w.uint(6);
+        w.uint(160);
         w.int(0);
         w.fixed(9.0);
         w.fixed(9.0);
@@ -1957,6 +1970,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
             format!("{win:?} Touch(0) Released 7x8"),
         ]
     );
+    assert_eq!(f.app.resource::<ContactTimes>().0, vec![100, 100, 120, 150]);
 }
 
 #[test]
@@ -1968,7 +1982,7 @@ fn touch_cancel_ends_every_active_touch_at_once() {
 
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(1);
-        w.uint(2);
+        w.uint(20);
         w.object(ObjectId(SURFACE));
         w.int(0);
         w.fixed(1.0);
@@ -1976,7 +1990,7 @@ fn touch_cancel_ends_every_active_touch_at_once() {
     });
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(3);
-        w.uint(4);
+        w.uint(40);
         w.object(ObjectId(SURFACE));
         w.int(1);
         w.fixed(2.0);
@@ -1993,6 +2007,10 @@ fn touch_cancel_ends_every_active_touch_at_once() {
         entries.iter().filter(|e| e.contains("Cancelled")).count(),
         2
     );
+
+    // `Cancel` has no `time`: both cancels carry the last one seen.
+    let times = f.app.resource::<ContactTimes>().0.clone();
+    assert_eq!(times[times.len() - 2..], [40, 40]);
 
     // Nothing left to cancel a second time.
     f.send(t, ev::TOUCH_CANCEL, |_| {});

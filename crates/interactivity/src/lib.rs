@@ -25,6 +25,9 @@
 //! - [`Clicked`] fires unconditionally alongside `Release`: there is
 //!   no check that the contact is still within the captured set's bounds
 //!   at release time.
+//! - Every [`ContactInput`] carries the Wayland event's millisecond
+//!   `time`; [`Press`] and [`Release`] pass it on unchanged. It wraps at
+//!   `u32::MAX`.
 //!
 //! # Model — keyboard
 //!
@@ -77,8 +80,8 @@
 //! app.tick();
 //!
 //! let pos = Point::ZERO; // the button sits at the window's content origin
-//! app.signal(ContactInput { window: win.id(), contact: ContactId::Mouse, phase: ContactPhase::Pressed, position: pos });
-//! app.signal(ContactInput { window: win.id(), contact: ContactId::Mouse, phase: ContactPhase::Released, position: pos });
+//! app.signal(ContactInput { window: win.id(), contact: ContactId::Mouse, phase: ContactPhase::Pressed, position: pos, time: 0 });
+//! app.signal(ContactInput { window: win.id(), contact: ContactId::Mouse, phase: ContactPhase::Released, position: pos, time: 0 });
 //! app.flush();
 //!
 //! assert!(app.widget::<Button>(button).unwrap().clicked.get());

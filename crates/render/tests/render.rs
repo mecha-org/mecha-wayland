@@ -175,6 +175,37 @@ fn a_rounded_quad_under_the_black_window_is_an_opaque_box_and_its_interior() {
 }
 
 #[test]
+fn a_transparent_window_is_a_solid_its_content_composites_onto() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window().clear(Color::TRANSPARENT));
+    app.spawn_with(
+        win,
+        Leaf,
+        (boxed(50.0, 20.0), Paint::Quad(Quad::new(RED).radius(4.0))),
+    );
+    app.tick();
+
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(q.clear, Color::TRANSPARENT);
+    assert!(
+        q.translucent.commands.is_empty(),
+        "nothing blends: the transparent clear is known behind the quad"
+    );
+    assert_eq!(zs(&q.opaque.commands), vec![3.0, 2.0], "box and interior");
+    let inner = q.opaque.commands[0];
+    assert_eq!(inner.rect, Rect::new(4.0, 4.0, 42.0, 12.0));
+    assert_eq!(inner.background, RED, "the interior covers itself");
+    let c = q.opaque.commands[1];
+    assert_eq!(c.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
+    assert_eq!(
+        c.background,
+        Color::TRANSPARENT,
+        "the rim composites onto the clear"
+    );
+    assert!(c.is_opaque());
+}
+
+#[test]
 fn z_follows_preorder_and_each_pass_is_sorted_its_way() {
     let mut app = app();
     let win = app.spawn(app.root(), a_window_with_no_solid());

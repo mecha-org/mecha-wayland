@@ -130,7 +130,10 @@ pub(crate) fn walk(
     clear: Color,
     scene: &mut Scene,
 ) -> u32 {
-    let root_solid = (clear.a >= 1.0).then(|| Solid {
+    // A transparent clear is as known as an opaque one: the shader
+    // composites onto its alpha too. Only an alpha in between, which no
+    // target holds, is unknown.
+    let root_solid = (clear.a >= 1.0 || clear.is_transparent()).then(|| Solid {
         color: clear,
         rect: scene.window_rect(),
     });

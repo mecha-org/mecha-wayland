@@ -57,6 +57,7 @@
 //! device.destroy(target);
 //! ```
 
+mod copy;
 mod draw;
 mod egl;
 mod program;
@@ -191,6 +192,18 @@ impl Device {
     /// How many sub-image uploads `upload` has issued so far. For tests.
     pub fn upload_calls(&self) -> u64 {
         self.textures.calls
+    }
+
+    /// Copies the presented frame in `from` into `to` for a scroll:
+    /// outside `shift.area` as it is, inside it moved by `-shift.by`. The
+    /// strip that leaves is drawn next with [`render::Scenes::queue_shifted`].
+    /// `from` and `to` are different targets of one size.
+    pub fn shift(&mut self, from: &Target, to: &Target, shift: render::Shift) {
+        debug_assert!(
+            (from.width(), from.height()) == (to.width(), to.height()),
+            "gles: a shift copies between targets of one size"
+        );
+        copy::shift(&self.gpu, from, to, shift);
     }
 
     /// Executes one queue on one target: the clears, the opaque pass,

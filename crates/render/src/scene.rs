@@ -256,6 +256,41 @@ impl Scene {
     }
 }
 
+impl Scene {
+    /// The commands for a buffer that holds the presented frame shifted
+    /// by `shift`: the scissor is the strip the move exposed, the edge
+    /// the content left first, then the side, cut to the rows it kept.
+    pub(crate) fn queue_shifted(&mut self, shift: crate::Shift) -> &Queue {
+        let q = &mut self.queue;
+        q.size = self.size;
+        q.scale = self.scale;
+        q.clear = self.clear;
+        q.depth = self.depth;
+        q.scissor.clear();
+        q.scissor.extend(exposed(shift));
+        fill(&mut q.opaque, &self.opaque, &q.scissor);
+        fill(&mut q.translucent, &self.translucent, &q.scissor);
+        q
+    }
+}
+
+/// What a shift leaves to draw: `area` less where its content lands, one
+/// rect per axis that moved.
+fn exposed(crate::Shift { area: a, by }: crate::Shift) -> impl Iterator<Item = Rect> {
+    let (dx, dy) = (by.x.abs(), by.y.abs());
+    // The rows the copy keeps, top to bottom.
+    let kept_y = if by.y > 0.0 { a.y() } else { a.y() + dy };
+    let rows = (by.y != 0.0).then(|| {
+        let y = if by.y > 0.0 { a.bottom() - dy } else { a.y() };
+        Rect::new(a.x(), y, a.width(), dy)
+    });
+    let side = (by.x != 0.0).then(|| {
+        let x = if by.x > 0.0 { a.right() - dx } else { a.x() };
+        Rect::new(x, kept_y, dx, a.height() - dy)
+    });
+    rows.into_iter().chain(side)
+}
+
 /// The commands whose part inside their clip touches any scissor rect,
 /// in order, and the rects one of them touched. `scissor` holds at most
 /// `MAX_RECTS` entries after `collapse`, so a word of bits tracks which

@@ -343,6 +343,16 @@ impl Scenes {
             .and_then(|(_, s)| s.shift())
     }
 
+    /// The commands for a buffer that already holds the presented frame
+    /// shifted by `shift`, as a backend copies it: only the strip the
+    /// move exposed is drawn. `None` if `window` has no scene.
+    pub fn queue_shifted(&mut self, window: NodeId, shift: Shift) -> Option<&Queue> {
+        self.scenes
+            .iter_mut()
+            .find(|(w, _)| *w == window)
+            .map(|(_, s)| s.queue_shifted(shift))
+    }
+
     /// The last walk of `window` is what the backend just drew and
     /// presented: the next [`Scenes::shift`] is measured from it.
     pub fn presented(&mut self, window: NodeId) {

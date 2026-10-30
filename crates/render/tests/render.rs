@@ -1749,3 +1749,41 @@ fn a_shift_at_scale_two_is_in_device_pixels() {
         })
     );
 }
+
+fn shifted_scissor(by: Point) -> Vec<Rect> {
+    let mut s = shifting();
+    let win = s.win;
+    s.app
+        .resource_mut::<Scenes>()
+        .queue_shifted(win, Shift { area: whole(), by })
+        .expect("a scene")
+        .scissor
+        .clone()
+}
+
+#[test]
+fn a_shifted_queue_draws_only_the_exposed_strip() {
+    assert_eq!(
+        shifted_scissor(Point::new(0.0, 30.0)),
+        vec![Rect::new(0.0, 170.0, 200.0, 30.0)]
+    );
+    assert_eq!(
+        shifted_scissor(Point::new(0.0, -30.0)),
+        vec![Rect::new(0.0, 0.0, 200.0, 30.0)]
+    );
+    assert_eq!(
+        shifted_scissor(Point::new(-10.0, 0.0)),
+        vec![Rect::new(0.0, 0.0, 10.0, 200.0)]
+    );
+}
+
+#[test]
+fn a_diagonal_shift_exposes_an_l() {
+    assert_eq!(
+        shifted_scissor(Point::new(10.0, 30.0)),
+        vec![
+            Rect::new(0.0, 170.0, 200.0, 30.0),
+            Rect::new(190.0, 0.0, 10.0, 170.0),
+        ]
+    );
+}

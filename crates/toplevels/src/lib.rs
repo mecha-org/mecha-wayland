@@ -9,8 +9,14 @@
 //! `done`. [`ToplevelsChanged`] is signalled whenever a `done` changes
 //! the list or a `closed`/`finished` removes from it.
 //!
-//! Install after `WaylandModule`, which must bind `WlSeat`. A compositor
-//! without the manager yields an empty, unavailable [`Toplevels`].
+//! Install after `WaylandModule`. [`Toplevels::activate`] takes a
+//! `WlSeat`, which the caller binds. A compositor without the manager
+//! yields an empty, unavailable [`Toplevels`].
+//!
+//! A closed toplevel's handle is destroyed as soon as its `closed`
+//! arrives, while callers only learn of it at the next
+//! [`ToplevelsChanged`]; requests made with its id in between are
+//! dropped rather than sent on a dead object.
 //!
 //! `phosh_private` (version 8 or later) is bound too, when offered, for
 //! live window previews: see [`Thumbnail`](prelude::Thumbnail).
@@ -54,8 +60,9 @@ pub struct ToplevelInfo {
     pub last_activated: u64,
 }
 
-/// Sent once per `done` or `closed` that changed the list, and when the
-/// manager finishes with a non-empty list.
+/// Sent at most once per dispatch, after the events of that dispatch,
+/// when a `done`, a `closed` or the manager's `finished` changed the
+/// list.
 pub struct ToplevelsChanged;
 impl Signal for ToplevelsChanged {}
 
@@ -99,19 +106,32 @@ impl Toplevels {
             .map(|e| &e.info)
     }
 
-    /// Ask the compositor to activate `id` for `seat`.
+    /// Ask the compositor to activate `id` for `seat`. Does nothing once
+    /// `id` has closed: its handle is already destroyed.
     pub fn activate(&self, wl: &mut Wayland, seat: WlSeat, id: ToplevelId) {
-        id.0.activate(wl, seat);
+        if self.holds(id) {
+            id.0.activate(wl, seat);
+        }
     }
 
-    /// Ask the compositor to close `id`.
+    /// Ask the compositor to close `id`. Does nothing once `id` has
+    /// closed.
     pub fn close(&self, wl: &mut Wayland, id: ToplevelId) {
-        id.0.close(wl);
+        if self.holds(id) {
+            id.0.close(wl);
+        }
     }
 
     /// Whether the compositor offers the manager (and still serves it).
     pub fn available(&self) -> bool {
         self.manager.is_some()
+    }
+
+    /// Whether `id`'s handle is still alive. An entry is removed in the
+    /// same step that destroys its handle, so this is exact even before
+    /// the next `ToplevelsChanged` reaches the caller.
+    pub(crate) fn holds(&self, id: ToplevelId) -> bool {
+        self.entries.iter().any(|e| e.info.id == id)
     }
 
     fn entry(&mut self, id: ToplevelId) -> Option<&mut Entry> {

@@ -232,3 +232,29 @@ fn a_burst_of_changes_is_one_signal() {
     assert_eq!(f.app.resource::<Toplevels>().iter().count(), 1);
     assert_eq!(changes(&f), 1);
 }
+
+#[test]
+fn activate_and_close_after_closed_send_nothing() {
+    let mut f = fake();
+    open(&mut f, A);
+    done(&mut f, A);
+    settle(&mut f);
+    f.send(A, EV_CLOSED, |_| {});
+    // Handled in the same dispatch as `closed`, before any PostTick.
+    f.turn();
+    f.expect(A, OP_DESTROY);
+    let id = ToplevelId::from_raw(A);
+    let seat = *f.app.resource::<WlSeat>();
+    {
+        let (t, mut wl) = f.app.query::<(Res<Toplevels>, ResMut<Wayland>)>();
+        t.activate(&mut wl, seat, id);
+        t.close(&mut wl, id);
+    }
+    settle(&mut f);
+    let sent: Vec<_> = f
+        .requests()
+        .into_iter()
+        .filter(|r| r.sender == ObjectId(A))
+        .collect();
+    assert!(sent.is_empty(), "requests on a destroyed handle: {sent:?}");
+}

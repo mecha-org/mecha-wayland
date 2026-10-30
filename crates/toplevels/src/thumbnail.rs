@@ -9,9 +9,12 @@ use crate::{ToplevelId, Toplevels};
 pub(crate) const MIN_VERSION: u32 = 8;
 
 /// One live view of a toplevel on a layer surface. Not `Copy`: give it
-/// back with [`Thumbnail::destroy`].
+/// back with [`Thumbnail::destroy`]. Dropping it without `destroy` leaks
+/// the server object, which the compositor keeps drawing.
 ///
-/// Destroying a thumbnail after its toplevel closed is fine.
+/// The layer surface must outlive the thumbnail: destroy every thumbnail
+/// on a layer surface before destroying the surface. Destroying a
+/// thumbnail after its toplevel closed is fine.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Thumbnail(PhoshPrivateThumbnail);
 
@@ -40,7 +43,7 @@ impl Toplevels {
     }
 
     /// Ask the compositor to draw `id` into `layer`. `None` when
-    /// thumbnails are unavailable.
+    /// thumbnails are unavailable or `id` has already closed.
     pub fn add_thumbnail(
         &self,
         wl: &mut Wayland,
@@ -48,6 +51,9 @@ impl Toplevels {
         layer: ZwlrLayerSurfaceV1,
     ) -> Option<Thumbnail> {
         let phosh = self.phosh?;
+        if !self.holds(id) {
+            return None;
+        }
         Some(Thumbnail(phosh.add_thumbnail_view(wl, id.handle(), layer)))
     }
 }

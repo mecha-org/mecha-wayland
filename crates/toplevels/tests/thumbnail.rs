@@ -41,6 +41,14 @@ fn fake() -> Fake {
     ])
 }
 
+/// Announce toplevel `A` and publish it.
+fn open_a(f: &mut Fake) {
+    f.send(5, 0, |w| w.new_id(ObjectId(A)));
+    f.send(A, 5, |_| {});
+    f.turn();
+    f.requests();
+}
+
 fn layer() -> ZwlrLayerSurfaceV1 {
     ZwlrLayerSurfaceV1(ObjectId(LAYER))
 }
@@ -48,6 +56,7 @@ fn layer() -> ZwlrLayerSurfaceV1 {
 #[test]
 fn add_thumbnail_sends_request() {
     let mut f = fake();
+    open_a(&mut f);
     let t = f.app.resource::<Toplevels>();
     assert!(t.thumbnails_available());
     let thumb = {
@@ -108,4 +117,23 @@ fn old_phosh_private_is_ignored() {
         t.add_thumbnail(&mut wl, ToplevelId::from_raw(A), layer())
             .is_none()
     );
+}
+
+#[test]
+fn add_thumbnail_after_closed_is_none() {
+    let mut f = fake();
+    open_a(&mut f);
+    f.send(A, 6, |_| {});
+    f.turn();
+    f.requests();
+    {
+        let (t, mut wl) = f.app.query::<(Res<Toplevels>, ResMut<Wayland>)>();
+        assert!(
+            t.add_thumbnail(&mut wl, ToplevelId::from_raw(A), layer())
+                .is_none()
+        );
+    }
+    f.turn();
+    let sent = f.requests();
+    assert!(sent.is_empty(), "requests after closed: {sent:?}");
 }

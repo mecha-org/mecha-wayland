@@ -1424,3 +1424,328 @@ fn rect_within(r: Rect, outer: Rect) -> bool {
         && r.right() <= outer.right()
         && r.bottom() <= outer.bottom()
 }
+
+// ── 12: shifting a scroll ───────────────────────────────────────────────
+
+const GREY: Color = Color::rgb(0.5, 0.5, 0.5);
+
+fn at(x: f32, y: f32, w: f32, h: f32) -> LayoutStyle {
+    LayoutStyle::default()
+        .absolute()
+        .inset(Insets {
+            top: px(y),
+            left: px(x),
+            right: auto(),
+            bottom: auto(),
+        })
+        .size(px(w), px(h))
+}
+
+/// A black 200 by 220 window and a clipping 200 by 200 list at its top,
+/// painted `list`, holding ten 200 by 40 rows of alternating colours.
+/// `extra` runs once the list exists, before the rows and the first frame.
+struct Shifting {
+    app: App,
+    win: NodeId,
+    list: NodeId,
+    rows: Vec<NodeId>,
+}
+
+fn shifting_with(list: Paint, extra: impl FnOnce(&mut App, NodeId, NodeId)) -> Shifting {
+    let mut app = app();
+    let win = app
+        .spawn(
+            app.root(),
+            window().layout(LayoutStyle::default().column().size(px(200.0), px(220.0))),
+        )
+        .id();
+    let l = app
+        .spawn_with(
+            win,
+            Leaf,
+            (
+                boxed(200.0, 200.0).column().shrink(0.0),
+                list,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        )
+        .id();
+    extra(&mut app, win, l);
+    let rows = (0..10)
+        .map(|i| {
+            let c = if i % 2 == 0 { RED } else { GREEN };
+            app.spawn_with(
+                l,
+                Leaf,
+                (boxed(200.0, 40.0).shrink(0.0), Paint::Quad(Quad::new(c))),
+            )
+            .id()
+        })
+        .collect();
+    app.tick();
+    Shifting {
+        app,
+        win,
+        list: l,
+        rows,
+    }
+}
+
+fn shifting() -> Shifting {
+    shifting_with(Paint::Quad(Quad::new(GREY)), |_, _, _| {})
+}
+
+impl Shifting {
+    fn scroll(&mut self, x: f32, y: f32) {
+        scroll_to(&mut self.app, self.list, x, y);
+        // A paint written beside the scroll reaches render a walk later;
+        // let it land.
+        self.app.tick();
+        self.app.tick();
+    }
+    fn presented(&mut self) {
+        self.app.resource_mut::<Scenes>().presented(self.win);
+    }
+    fn shift(&self) -> Option<Shift> {
+        self.app.resource::<Scenes>().shift(self.win)
+    }
+    fn repaint(&mut self, id: NodeId, c: Color) {
+        *self.app.component_mut::<Paint>(id).unwrap() = Paint::Quad(Quad::new(c));
+    }
+}
+
+fn whole() -> Rect {
+    Rect::new(0.0, 0.0, 200.0, 200.0)
+}
+
+#[test]
+fn a_pure_scroll_offers_a_shift_of_the_move() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(
+        s.shift(),
+        Some(Shift {
+            area: whole(),
+            by: Point::new(0.0, 12.0)
+        })
+    );
+}
+
+#[test]
+fn the_move_accumulates_over_walks_that_were_not_presented() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 5.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, 12.0)));
+}
+
+#[test]
+fn nothing_is_offered_before_the_first_presented_frame() {
+    let mut s = shifting();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn presented_resets_the_baseline() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    s.presented();
+    s.scroll(0.0, 20.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, 8.0)));
+}
+
+#[test]
+fn a_row_repainted_in_the_same_frame_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    let row = s.rows[1];
+    s.repaint(row, BLUE);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_change_in_a_walk_that_was_not_presented_still_counts() {
+    let mut s = shifting();
+    s.presented();
+    let row = s.rows[1];
+    s.repaint(row, BLUE);
+    s.app.tick();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_change_outside_the_viewport_takes_the_normal_path() {
+    let mut outside = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, win, _| {
+        outside = Some(
+            app.spawn_with(
+                win,
+                Leaf,
+                (at(0.0, 205.0, 10.0, 10.0), Paint::Quad(Quad::new(RED))),
+            )
+            .id(),
+        );
+    });
+    s.presented();
+    s.repaint(outside.unwrap(), BLUE);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn an_overlay_over_the_list_takes_the_normal_path() {
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, win, _| {
+        app.spawn_with(
+            win,
+            Leaf,
+            (at(50.0, 50.0, 50.0, 50.0), Paint::Quad(Quad::new(BLUE))),
+        );
+    });
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_sibling_under_the_list_takes_the_normal_path() {
+    let mut app = app();
+    let win = app
+        .spawn(
+            app.root(),
+            window().layout(LayoutStyle::default().size(px(200.0), px(200.0))),
+        )
+        .id();
+    app.spawn_with(
+        win,
+        Leaf,
+        (at(0.0, 0.0, 200.0, 50.0), Paint::Quad(Quad::new(BLUE))),
+    );
+    let list = app
+        .spawn_with(
+            win,
+            Leaf,
+            (
+                at(0.0, 0.0, 200.0, 200.0).column(),
+                Paint::None,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        )
+        .id();
+    app.spawn_with(
+        list,
+        Leaf,
+        (
+            boxed(200.0, 400.0).shrink(0.0),
+            Paint::Quad(Quad::new(RED).radius(4.0)),
+        ),
+    );
+    app.tick();
+    app.resource_mut::<Scenes>().presented(win);
+    scroll_to(&mut app, list, 0.0, 12.0);
+    app.tick();
+    assert_eq!(app.resource::<Scenes>().shift(win), None);
+}
+
+#[test]
+fn a_list_on_an_image_or_a_rounded_card_takes_the_normal_path() {
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY).radius(8.0)), |_, _, _| {});
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None, "a rounded card");
+
+    let mut s = shifting_with(
+        Paint::Polychrome(PolychromeSprite::new(tile(2))),
+        |_, _, _| {},
+    );
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None, "an image");
+}
+
+#[test]
+fn two_viewports_moving_take_the_normal_path() {
+    let mut inner = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, _, list| {
+        let v = app.spawn_with(
+            list,
+            Leaf,
+            (
+                boxed(200.0, 40.0).column().shrink(0.0),
+                Paint::None,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        );
+        app.spawn_with(
+            v,
+            Leaf,
+            (boxed(200.0, 80.0).shrink(0.0), Paint::Quad(Quad::new(BLUE))),
+        );
+        inner = Some(v.id());
+    });
+    s.presented();
+    scroll_to(&mut s.app, inner.unwrap(), 0.0, 3.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_move_as_big_as_the_area_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 200.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_horizontal_and_a_negative_move_are_offered() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(-7.0, 0.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(-7.0, 0.0)));
+    s.presented();
+    s.scroll(-7.0, -9.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, -9.0)));
+}
+
+#[test]
+fn a_fractional_scale_never_shifts() {
+    let mut s = shifting();
+    let win = s.win;
+    s.app.emit(ScaleFactorChanged { scale: 1.5 }, win);
+    s.app.flush();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_shift_at_scale_two_is_in_device_pixels() {
+    let mut s = shifting();
+    let win = s.win;
+    s.app.emit(ScaleFactorChanged { scale: 2.0 }, win);
+    s.app.flush();
+    s.presented();
+    s.scroll(0.0, 12.25);
+    assert_eq!(
+        s.shift(),
+        Some(Shift {
+            area: Rect::new(0.0, 0.0, 400.0, 400.0),
+            by: Point::new(0.0, 25.0)
+        })
+    );
+}

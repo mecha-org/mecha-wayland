@@ -9,7 +9,10 @@ use geometry::{Color, Corners, Insets, Point, Rect};
 use layout::Viewport;
 use paint::{MonochromeSprite, Paint, PolychromeSprite, Quad};
 
-use crate::{Command, Drawn, NO_TILE, rect, scene::Scene};
+use crate::{
+    Command, Drawn, NO_TILE, rect,
+    scene::{Mover, Scene, Scrolled},
+};
 
 /// A colour and the device rect known to be exactly that colour behind a
 /// node.
@@ -29,6 +32,9 @@ pub(crate) struct Visit {
     pub(crate) solid: Option<Solid>,
     pub(crate) shift: Point,
     pub(crate) clip: Rect,
+    /// Inside the viewport that scrolled this walk: how far its scroll
+    /// moved since the last walk, logical pixels.
+    pub(crate) moved: Option<Point>,
 }
 
 /// Logical to device: both edges scaled and rounded, so rects that touch
@@ -136,6 +142,7 @@ pub(crate) fn walk(
         solid: root_solid,
         shift: Point::default(),
         clip: scene.window_rect(),
+        moved: None,
     });
     let mut visited = 0u32;
     while let Some(Visit {
@@ -143,6 +150,7 @@ pub(crate) fn walk(
         solid,
         shift,
         clip,
+        moved,
     }) = stack.pop()
     {
         let z = 2.0 * visited as f32;
@@ -194,6 +202,12 @@ pub(crate) fn walk(
             // The shift is in it, so a scroll that keeps the clipped
             // bounds equal still damages them.
             if d.dirty || d.rect != bounds || d.layout != kept {
+                // Only a clean node carried by the one scroll keeps the
+                // frame a pure scroll.
+                let carried = moved.is_some_and(|m| carried_by(d.layout, kept, m));
+                if d.dirty || !carried {
+                    scene.pure = false;
+                }
                 if let Some(old) = d.rect {
                     scene.damage.push(old);
                 }
@@ -213,8 +227,11 @@ pub(crate) fn walk(
         }
         if let Some(b) = bounds {
             scene.drawing.push((id, b));
+            if moved.is_none() {
+                scene.outside.push((id, b));
+            }
         }
-        let (shift, clip) = match viewports.get(id) {
+        let (shift, clip, moved) = match viewports.get(id) {
             Some(v) => {
                 let clip = if v.clip {
                     let padding_box = scale_rect(layout.rect.inset(layout.border), scale);
@@ -224,13 +241,12 @@ pub(crate) fn walk(
                 };
                 // Whole device pixels, so every edge moves by the same
                 // amount and a row keeps its height while it scrolls.
-                let snapped = Point::new(
-                    (v.scroll.x * scale).round() / scale,
-                    (v.scroll.y * scale).round() / scale,
-                );
-                (shift + snapped, clip)
+                let device = Point::new((v.scroll.x * scale).round(), (v.scroll.y * scale).round());
+                let snapped = Point::new(device.x / scale, device.y / scale);
+                let moved = scrolled(scene, id, v.clip, device, clip, child_solid, moved, scale);
+                (shift + snapped, clip, moved)
             }
-            None => (shift, clip),
+            None => (shift, clip, moved),
         };
         if let Some(children) = tree.children(id) {
             for &child in children.iter().rev() {
@@ -239,12 +255,62 @@ pub(crate) fn walk(
                     solid: child_solid,
                     shift,
                     clip,
+                    moved,
                 });
             }
         }
     }
     scene.stack = stack;
     visited
+}
+
+/// Note a viewport's device `scroll` and visible `area` for the next walk
+/// and judge its move since the last one. Returns what its descendants
+/// carry: `moved` from above, or this viewport's move in logical pixels
+/// if it is the one that scrolled. A move fails the pure scroll when the
+/// viewport does not clip, sits inside another that moved, follows
+/// another mover, changed its area, or has anything but one colour behind
+/// its area.
+#[allow(clippy::too_many_arguments)]
+fn scrolled(
+    scene: &mut Scene,
+    id: NodeId,
+    clips: bool,
+    scroll: Point,
+    area: Rect,
+    behind: Option<Solid>,
+    moved: Option<Point>,
+    scale: f32,
+) -> Option<Point> {
+    scene.viewing.push(Scrolled { id, scroll, area });
+    let Some(last) = scene.viewed.iter().find(|s| s.id == id).copied() else {
+        return moved;
+    };
+    if last.scroll == scroll {
+        return moved;
+    }
+    let flat = behind.is_some_and(|s| rect::contains(s.rect, area));
+    if !clips || moved.is_some() || scene.mover.is_some() || last.area != area || !flat {
+        scene.pure = false;
+    }
+    let by = scroll - last.scroll;
+    scene.mover = Some(Mover { id, area, by });
+    Some(Point::new(by.x / scale, by.y / scale))
+}
+
+/// A node's displayed layout went from `old` to `new` only by the scroll
+/// moving `by` logical pixels: same box, origin up by `by`. A node coming
+/// into or going out of sight is carried too.
+fn carried_by(old: Option<Layout>, new: Option<Layout>, by: Point) -> bool {
+    let (Some(old), Some(new)) = (old, new) else {
+        return true;
+    };
+    let gap = old.rect.origin - new.rect.origin - by;
+    gap.x.abs() < 1e-3
+        && gap.y.abs() < 1e-3
+        && old.rect.size == new.rect.size
+        && old.padding == new.padding
+        && old.border == new.border
 }
 
 /// The quad's three routes, and what it hands down, cut to the clip.

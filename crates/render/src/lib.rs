@@ -118,7 +118,7 @@
 
 use animation::{AnimatedPaint, Layout};
 use app::prelude::*;
-use geometry::{Color, Corners, Insets, Rect, Size};
+use geometry::{Color, Corners, Insets, Point, Rect, Size};
 use layout::Viewport;
 use paint::{AtlasId, AtlasTile};
 use window::{Frame, InWindow, RequestFrame, Window};
@@ -130,7 +130,7 @@ mod walk;
 use scene::Scene;
 
 pub mod prelude {
-    pub use crate::{Command, Pass, Queue, RenderModule, Scenes};
+    pub use crate::{Command, Pass, Queue, RenderModule, Scenes, Shift};
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +260,16 @@ pub struct Queue {
     pub translucent: Pass,
 }
 
+/// One viewport's scroll since the last presented frame, as the backend
+/// can reuse it. Device pixels, whole numbers. `area` is the viewport's
+/// visible padding box; the content in it moved by `-by`, where `by` is
+/// the scroll now less the scroll then.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shift {
+    pub area: Rect,
+    pub by: Point,
+}
+
 // ---------------------------------------------------------------------------
 // Private state
 // ---------------------------------------------------------------------------
@@ -318,6 +328,27 @@ impl Scenes {
     /// many frames of damage each scene keeps. [`RenderModule::buffers`].
     pub fn buffers(&self) -> usize {
         self.buffers
+    }
+
+    /// How the presented frame can be reused: `Some` when every walk
+    /// since [`Scenes::presented`] changed nothing but one clipping
+    /// viewport's scroll, the viewport sits on one flat colour with
+    /// nothing else over or under its area, the scale is whole, and the
+    /// move leaves part of the area to copy. `None` for a window with no
+    /// scene.
+    pub fn shift(&self, window: NodeId) -> Option<Shift> {
+        self.scenes
+            .iter()
+            .find(|(w, _)| *w == window)
+            .and_then(|(_, s)| s.shift())
+    }
+
+    /// The last walk of `window` is what the backend just drew and
+    /// presented: the next [`Scenes::shift`] is measured from it.
+    pub fn presented(&mut self, window: NodeId) {
+        if let Some((_, s)) = self.scenes.iter_mut().find(|(w, _)| *w == window) {
+            s.presented();
+        }
     }
 
     pub(crate) fn has(&self, window: NodeId) -> bool {
@@ -477,8 +508,10 @@ fn on_frame(app: &mut App, f: &Frame) {
     for &(id, rect) in &scene.drawn {
         if !tree.is_live(id) {
             scene.damage.push(rect);
+            scene.pure = false;
         }
     }
+    scene.judge(tree);
     scene.finish(full, visited);
 
     // The walk wrote `Drawn` through flagging guards and `Scenes` through

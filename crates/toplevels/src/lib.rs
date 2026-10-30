@@ -73,6 +73,8 @@ pub struct Toplevels {
     manager: Option<ZwlrForeignToplevelManagerV1>,
     entries: Vec<Entry>,
     stamp: u64,
+    /// The list changed since the last `ToplevelsChanged`.
+    dirty: bool,
 }
 impl Resource for Toplevels {}
 
@@ -127,9 +129,10 @@ impl Module for ToplevelsModule {
             manager,
             entries: Vec::new(),
             stamp: 0,
+            dirty: false,
         });
         if available {
-            app.system(on_manager).system(on_handle);
+            app.system(on_manager).system(on_handle).system(on_post_tick);
         }
     }
 }
@@ -166,9 +169,18 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
             }
             drop((t, wl));
             if changed {
-                app.signal(ToplevelsChanged);
+                app.resource_mut::<Toplevels>().dirty = true;
             }
         }
+    }
+}
+
+/// One `ToplevelsChanged` for everything the events of this dispatch
+/// changed.
+fn on_post_tick(app: &mut App, _: &PostTick) {
+    let dirty = std::mem::take(&mut app.resource_mut::<Toplevels>().dirty);
+    if dirty {
+        app.signal(ToplevelsChanged);
     }
 }
 
@@ -255,6 +267,6 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
         _ => {}
     }
     if changed {
-        app.signal(ToplevelsChanged);
+        app.resource_mut::<Toplevels>().dirty = true;
     }
 }

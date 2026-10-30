@@ -27,6 +27,13 @@ fn count(app: &mut App, _: &ToplevelsChanged) {
     app.resource_mut::<Changes>().0 += 1;
 }
 
+/// Turn, then the runner's next tick, which is where the batched signal
+/// goes out.
+fn settle(f: &mut Fake) {
+    f.turn();
+    f.app.tick();
+}
+
 fn fake_with(globals: &[(&str, u32)]) -> Fake {
     let mut f = Fake::new(globals, |m| m.bind::<WlSeat>());
     f.app.add_module(ToplevelsModule);
@@ -82,11 +89,11 @@ fn a_toplevel_appears_after_done() {
     open(&mut f, A);
     title(&mut f, A, "Notes");
     app_id(&mut f, A, "org.mecha.Notes");
-    f.turn();
+    settle(&mut f);
     assert_eq!(f.app.resource::<Toplevels>().iter().count(), 0);
     assert_eq!(changes(&f), 0);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     let t = f.app.resource::<Toplevels>();
     let all: Vec<_> = t.iter().collect();
     assert_eq!(all.len(), 1);
@@ -105,15 +112,15 @@ fn activated_state_stamps_last_activated() {
         state(&mut f, id, false);
         done(&mut f, id);
     }
-    f.turn();
+    settle(&mut f);
     state(&mut f, A, true);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     state(&mut f, A, false);
     done(&mut f, A);
     state(&mut f, B, true);
     done(&mut f, B);
-    f.turn();
+    settle(&mut f);
     let (a, b) = (get(&f, A), get(&f, B));
     assert!(b.activated && !a.activated);
     assert!(b.last_activated > a.last_activated);
@@ -126,12 +133,12 @@ fn a_repeated_done_does_not_restamp_or_signal() {
     open(&mut f, A);
     state(&mut f, A, true);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     let stamp = get(&f, A).last_activated;
     let n = changes(&f);
     state(&mut f, A, true);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     assert_eq!(get(&f, A).last_activated, stamp);
     assert_eq!(changes(&f), n);
 }
@@ -144,7 +151,7 @@ fn parent_is_recorded() {
     open(&mut f, B);
     f.send(B, EV_PARENT, |w| w.object_opt(Some(ObjectId(A))));
     done(&mut f, B);
-    f.turn();
+    settle(&mut f);
     assert_eq!(get(&f, A).parent, None);
     assert_eq!(get(&f, B).parent, Some(ToplevelId::from_raw(A)));
 }
@@ -154,10 +161,10 @@ fn closed_toplevel_is_removed() {
     let mut f = fake();
     open(&mut f, A);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     assert_eq!(changes(&f), 1);
     f.send(A, EV_CLOSED, |_| {});
-    f.turn();
+    settle(&mut f);
     assert_eq!(f.app.resource::<Toplevels>().iter().count(), 0);
     assert_eq!(changes(&f), 2);
     f.expect(A, OP_DESTROY);
@@ -168,7 +175,7 @@ fn a_toplevel_closed_before_done_is_destroyed_without_a_signal() {
     let mut f = fake();
     open(&mut f, A);
     f.send(A, EV_CLOSED, |_| {});
-    f.turn();
+    settle(&mut f);
     assert_eq!(changes(&f), 0);
     f.expect(A, OP_DESTROY);
 }
@@ -178,8 +185,9 @@ fn manager_finished_clears_the_list() {
     let mut f = fake();
     open(&mut f, A);
     done(&mut f, A);
+    settle(&mut f);
     f.send(MANAGER, 1, |_| {});
-    f.turn();
+    settle(&mut f);
     assert_eq!(f.app.resource::<Toplevels>().iter().count(), 0);
     assert!(!f.app.resource::<Toplevels>().available());
     assert_eq!(changes(&f), 2);
@@ -190,7 +198,7 @@ fn activate_and_close_send_requests() {
     let mut f = fake();
     open(&mut f, A);
     done(&mut f, A);
-    f.turn();
+    settle(&mut f);
     let id = ToplevelId::from_raw(A);
     let seat = *f.app.resource::<WlSeat>();
     {
@@ -198,7 +206,7 @@ fn activate_and_close_send_requests() {
         t.activate(&mut wl, seat, id);
         t.close(&mut wl, id);
     }
-    f.turn();
+    settle(&mut f);
     let activate = f.expect(A, OP_ACTIVATE);
     assert_eq!(activate.reader().object(), Some(ObjectId(SEAT)));
     f.expect(A, OP_CLOSE);
@@ -210,4 +218,17 @@ fn missing_manager_is_unavailable() {
     let t = f.app.resource::<Toplevels>();
     assert!(!t.available());
     assert_eq!(t.iter().count(), 0);
+}
+
+#[test]
+fn a_burst_of_changes_is_one_signal() {
+    let mut f = fake();
+    open(&mut f, A);
+    done(&mut f, A);
+    open(&mut f, B);
+    done(&mut f, B);
+    f.send(A, EV_CLOSED, |_| {});
+    settle(&mut f);
+    assert_eq!(f.app.resource::<Toplevels>().iter().count(), 1);
+    assert_eq!(changes(&f), 1);
 }

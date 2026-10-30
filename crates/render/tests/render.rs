@@ -1399,3 +1399,28 @@ fn a_glyph_and_an_image_half_under_the_edge_stay_opaque() {
         assert!(q.translucent.commands.is_empty(), "{row:?}");
     }
 }
+
+#[test]
+fn a_scroll_damages_the_rows_that_moved_not_the_viewport() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::Quad(Quad::new(WHITE)), true, 3);
+    app.tick();
+    scroll_to(&mut app, list, 0.0, 10.0);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    let padding_box = Rect::new(2.0, 2.0, 96.0, 46.0);
+    assert!(!q.scissor.is_empty());
+    assert!(
+        q.scissor.iter().all(|r| rect_within(*r, padding_box)),
+        "only what moved inside the list: {:?}",
+        q.scissor
+    );
+}
+
+fn rect_within(r: Rect, outer: Rect) -> bool {
+    r.x() >= outer.x()
+        && r.y() >= outer.y()
+        && r.right() <= outer.right()
+        && r.bottom() <= outer.bottom()
+}

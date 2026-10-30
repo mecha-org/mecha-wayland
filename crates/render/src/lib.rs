@@ -35,8 +35,9 @@
 //!   down are cut to it. So scrolling damages what moved through the
 //!   bounds alone, and a row scrolled out of sight costs a visit and
 //!   nothing else.
-//! - `Layout`, `AnimatedPaint` and `Viewport` changes, and removals,
-//!   mark the nodes and raise `RequestFrame` for their window; animation
+//! - `Layout` and `AnimatedPaint` changes, and removals, mark the nodes
+//!   and raise `RequestFrame` for their window; a `Viewport` change only
+//!   raises it, since what it moves damages itself; animation
 //!   can request frames too. Nothing runs on `Tick`. The walk damages a
 //!   marked node's old and new bounds, a removed node's last bounds, and
 //!   the whole window on the first frame or a new size or scale. A write
@@ -265,8 +266,8 @@ pub struct Queue {
 
 /// The bounds and the displayed layout, shift included, from the last
 /// frame this node was walked (`None` for both if nothing was emitted
-/// inside the clip), and whether a `Layout`, `AnimatedPaint` or
-/// `Viewport` change was noted since. Written by the change systems and
+/// inside the clip), and whether a `Layout` or `AnimatedPaint` change
+/// was noted since. Written by the change systems and
 /// the walk; its `OnChanged` drain has no listener, and `on_frame` takes
 /// the record after the walk so the drain sees only what the change
 /// systems marked between frames.
@@ -387,11 +388,22 @@ fn on_paint_changed(app: &mut App, e: &Emitted<OnChanged<AnimatedPaint>>) {
     note(app, &e.targets);
 }
 
-/// A `Viewport` change: note the node and ask for its window. Its
-/// descendants' bounds move or are cut with it, so the walk damages them
-/// without marks.
+/// A `Viewport` change: ask for its window, without marking the node. Its
+/// own pixels do not change; its descendants' bounds move or are cut with
+/// it, so the walk damages them without marks. So `dirty` always means a
+/// layout or paint change.
 fn on_viewport_changed(app: &mut App, e: &Emitted<OnChanged<Viewport>>) {
-    note(app, &e.targets);
+    let mut windows: Vec<NodeId> = Vec::new();
+    for &id in e.targets.iter() {
+        if let Some(InWindow(Some(w))) = app.component::<InWindow>(id).copied()
+            && !windows.contains(&w)
+        {
+            windows.push(w);
+        }
+    }
+    for w in windows {
+        app.signal(RequestFrame(w));
+    }
 }
 
 /// Mark each target dirty and raise one `RequestFrame` per distinct

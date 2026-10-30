@@ -384,6 +384,44 @@ impl Surfaces {
             .map(|(role, _)| role.exclusive_zone)
     }
 
+    /// Change a layer window's keyboard interactivity: sends
+    /// `zwlr_layer_surface_v1.set_keyboard_interactivity` and commits. The
+    /// value is kept, so a remap after [`Surfaces::set_mapped`] sends it
+    /// again; while hidden it is only kept. The same value sends nothing.
+    /// No-op for a toplevel or an unknown window.
+    pub fn set_keyboard_interactivity(
+        &mut self,
+        window: NodeId,
+        ki: KeyboardInteractivity,
+        wl: &mut Wayland,
+    ) {
+        let Some(entry) = self.entries.get_mut(&window) else {
+            return;
+        };
+        let (Shell::Layer(ls), Some((role, _))) = (&entry.shell, entry.layer.as_mut()) else {
+            return;
+        };
+        if role.keyboard_interactivity == ki {
+            return;
+        }
+        role.keyboard_interactivity = ki;
+        if entry.hidden {
+            return;
+        }
+        ls.set_keyboard_interactivity(wl, ki);
+        entry.surface.commit(wl);
+    }
+
+    /// The current keyboard interactivity of a known layer window; `None`
+    /// for a toplevel or an unknown window.
+    pub fn keyboard_interactivity_of(&self, window: NodeId) -> Option<KeyboardInteractivity> {
+        self.entries
+            .get(&window)?
+            .layer
+            .as_ref()
+            .map(|(role, _)| role.keyboard_interactivity)
+    }
+
     /// The current layer of a known layer window; `None` for a toplevel
     /// or an unknown window.
     pub fn layer_of(&self, window: NodeId) -> Option<Layer> {

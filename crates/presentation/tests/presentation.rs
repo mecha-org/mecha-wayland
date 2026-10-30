@@ -1060,6 +1060,84 @@ fn set_exclusive_zone_on_a_toplevel_does_nothing() {
     assert_eq!(f.app.resource::<Surfaces>().exclusive_zone_of(win), None);
 }
 
+fn set_keyboard_interactivity(f: &mut Fake, win: NodeId, ki: KeyboardInteractivity) {
+    {
+        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.set_keyboard_interactivity(win, ki, &mut wl);
+    }
+    f.turn();
+}
+
+#[test]
+fn set_keyboard_interactivity_sends_it_then_commits() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    let reqs = f.requests();
+    let shape: Vec<(u32, u16)> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
+    assert_eq!(
+        shape,
+        vec![(XDG, op::LAYER_SET_KEYBOARD), (SURFACE, op::COMMIT)],
+        "{reqs:?}"
+    );
+    assert_eq!(
+        reqs[0].reader().uint(),
+        Some(KeyboardInteractivity::Exclusive as u32)
+    );
+    let s = f.app.resource::<Surfaces>();
+    assert_eq!(
+        s.keyboard_interactivity_of(win),
+        Some(KeyboardInteractivity::Exclusive)
+    );
+    assert!(s.is_mapped(win));
+}
+
+#[test]
+fn set_keyboard_interactivity_to_the_current_value_sends_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    let current = f
+        .app
+        .resource::<Surfaces>()
+        .keyboard_interactivity_of(win)
+        .expect("a layer window");
+    set_keyboard_interactivity(&mut f, win, current);
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn set_keyboard_interactivity_while_hidden_is_sent_on_remap() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_mapped(&mut f, win, false);
+    f.requests();
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    assert!(shape(&mut f).is_empty(), "nothing is sent while hidden");
+    set_mapped(&mut f, win, true);
+    let reqs = f.requests();
+    let ki = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(XDG) && r.opcode == op::LAYER_SET_KEYBOARD)
+        .expect("the remap sends the keyboard interactivity");
+    assert_eq!(
+        ki.reader().uint(),
+        Some(KeyboardInteractivity::Exclusive as u32)
+    );
+}
+
+#[test]
+fn set_keyboard_interactivity_on_a_toplevel_does_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    f.requests();
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    assert!(shape(&mut f).is_empty());
+    assert_eq!(
+        f.app.resource::<Surfaces>().keyboard_interactivity_of(win),
+        None
+    );
+}
+
 fn set_input_region(f: &mut Fake, win: NodeId, region: Option<&[Rect]>) {
     {
         let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();

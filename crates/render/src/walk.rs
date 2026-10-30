@@ -222,7 +222,13 @@ pub(crate) fn walk(
                 } else {
                     clip
                 };
-                (shift + v.scroll, clip)
+                // Whole device pixels, so every edge moves by the same
+                // amount and a row keeps its height while it scrolls.
+                let snapped = Point::new(
+                    (v.scroll.x * scale).round() / scale,
+                    (v.scroll.y * scale).round() / scale,
+                );
+                (shift + snapped, clip)
             }
             None => (shift, clip),
         };

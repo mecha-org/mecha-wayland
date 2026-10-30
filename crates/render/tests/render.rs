@@ -1320,3 +1320,40 @@ fn viewport_change_requests_a_frame() {
     app.tick();
     assert_eq!(take_requested(), vec![win.id()]);
 }
+
+#[test]
+fn a_half_pixel_scroll_moves_a_row_by_whole_device_pixels_and_keeps_its_height() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 2);
+    app.tick();
+    // Row 0's top lands on -0.5: rounded per edge it would grow to 21.
+    scroll_to(&mut app, list, 0.0, 2.5);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        at_z(&q, 4.0)[0].rect,
+        Rect::new(2.0, -1.0, 96.0, 20.0),
+        "the scroll rounds to 3 device pixels, the row keeps its height"
+    );
+}
+
+#[test]
+fn a_scroll_snaps_in_device_pixels_at_scale_two() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 2);
+    app.tick();
+    app.emit(ScaleFactorChanged { scale: 2.0 }, win);
+    app.flush();
+    // 2.25 logical is 4.5 device, rounded to 5.
+    scroll_to(&mut app, list, 0.0, 2.25);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, -1.0, 192.0, 40.0));
+    // Overscroll: -0.25 logical is -0.5 device, rounded away from zero.
+    scroll_to(&mut app, list, 0.0, -0.25);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, 5.0, 192.0, 40.0));
+}

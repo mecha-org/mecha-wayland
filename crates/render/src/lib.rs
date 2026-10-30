@@ -26,7 +26,8 @@
 //!   their rects overlap.
 //! - The walk also carries a shift and a clip down. Below a node with a
 //!   `layout::Viewport`, descendants are drawn at their layout less the
-//!   scroll accumulated from every such ancestor; with `clip` it also
+//!   scroll accumulated from every such ancestor, each scroll rounded to
+//!   whole device pixels so content moves without changing size; with `clip` it also
 //!   cuts their clip, which starts as the window, to its padding box. The
 //!   node itself is neither moved nor cut, as in the hit test. Every command carries
 //!   its clip for the backend to cut it by; one wholly outside it is not

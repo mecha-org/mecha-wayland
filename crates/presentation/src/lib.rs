@@ -179,6 +179,8 @@ struct Entry {
     /// the layer state when the surface is unmapped, so a remap sends it
     /// again.
     layer: Option<(LayerRole, (u32, u32))>,
+    /// The window clears to transparent, so its slots want alpha.
+    transparent: bool,
 }
 
 /// Presentation's own state: one entry per window it put on screen, and
@@ -199,9 +201,37 @@ pub struct Surfaces {
     app_id: String,
     device: Device,
     dmabuf: ZwpLinuxDmabufV1,
-    modifiers: Vec<u64>,
+    formats: Formats,
 }
 impl Resource for Surfaces {}
+
+/// What the compositor said it imports, in the order advertised.
+#[derive(Default)]
+struct Formats {
+    /// The layouts for XRGB8888.
+    xrgb: Vec<u64>,
+    /// The layouts for ARGB8888; `None` until the compositor names the
+    /// format at all, which it may do with no explicit layout.
+    argb: Option<Vec<u64>>,
+}
+
+impl Formats {
+    /// Whether a slot is ARGB8888, and the layouts to make it with. A
+    /// transparent window on a compositor that never named ARGB8888 is
+    /// drawn opaque, its clear showing black, rather than not at all.
+    fn pick(&self, transparent: bool) -> (bool, &[u64]) {
+        match (&self.argb, transparent) {
+            (Some(m), true) => (true, m),
+            (None, true) => {
+                eprintln!(
+                    "presentation: the compositor does not import ARGB8888; a transparent window is drawn opaque"
+                );
+                (false, &self.xrgb)
+            }
+            (_, false) => (false, &self.xrgb),
+        }
+    }
+}
 
 /// Where the paint stands against the atlas's last rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -518,7 +548,7 @@ impl Module for PresentationModule {
             device,
             compositor,
             dmabuf,
-            modifiers: Vec::new(),
+            formats: Formats::default(),
         });
         app.insert_resource(Seat::new(seat));
         app.system(on_spawned)
@@ -544,21 +574,30 @@ impl Module for PresentationModule {
     }
 }
 
-/// The compositor's layouts for XRGB8888, in the order advertised;
-/// `format` events and the implicit modifier are ignored.
+/// The compositor's layouts for XRGB8888 and ARGB8888, in the order
+/// advertised; the implicit modifier is not a layout. Any mention of
+/// ARGB8888 says it is imported.
 fn on_dmabuf(app: &mut App, e: &ZwpLinuxDmabufV1Event) {
-    if let ZwpLinuxDmabufV1Event::Modifier {
-        format,
-        modifier_hi,
-        modifier_lo,
-        ..
-    } = e
-        && *format == gles::XRGB8888
-    {
-        let m = ((*modifier_hi as u64) << 32) | *modifier_lo as u64;
-        if m != MOD_INVALID {
-            app.resource_mut::<Surfaces>().modifiers.push(m);
-        }
+    let (format, m) = match e {
+        ZwpLinuxDmabufV1Event::Format { format, .. } => (*format, None),
+        ZwpLinuxDmabufV1Event::Modifier {
+            format,
+            modifier_hi,
+            modifier_lo,
+            ..
+        } => (
+            *format,
+            Some(((*modifier_hi as u64) << 32) | *modifier_lo as u64),
+        ),
+    };
+    let formats = &mut app.resource_mut::<Surfaces>().formats;
+    let list = match format {
+        gles::XRGB8888 => &mut formats.xrgb,
+        gles::ARGB8888 => formats.argb.get_or_insert_default(),
+        _ => return,
+    };
+    if let Some(m) = m.filter(|&m| m != MOD_INVALID) {
+        list.push(m);
     }
 }
 
@@ -579,9 +618,9 @@ fn on_spawned(app: &mut App, s: &Spawned) {
         return;
     }
     let role = app.component::<Role>(s.id).cloned().unwrap_or_default();
-    let title = app
+    let (title, transparent) = app
         .widget::<Window>(s.id)
-        .map(|w| w.title.clone())
+        .map(|w| (w.title.clone(), w.clear().is_transparent()))
         .unwrap_or_default();
     let requested = {
         let style = app
@@ -647,6 +686,7 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             frames: 0,
             hidden,
             layer,
+            transparent,
         },
     );
 }
@@ -684,7 +724,7 @@ fn replace_slots(
     owner: &mut HashMap<ObjectId, NodeId>,
     device: &mut Device,
     dmabuf: ZwpLinuxDmabufV1,
-    modifiers: &[u64],
+    formats: &Formats,
     wl: &mut Wayland,
     w: NodeId,
 ) {
@@ -692,7 +732,8 @@ fn replace_slots(
         teardown_slots(old, owner, device, wl);
     }
     let (dw, dh) = device_size(entry.size, entry.scale);
-    let slots = Slots::create(device, wl, dmabuf, modifiers, dw, dh);
+    let (alpha, modifiers) = formats.pick(entry.transparent);
+    let slots = Slots::create(device, wl, dmabuf, alpha, modifiers, dw, dh);
     for s in &slots.slots {
         owner.insert(s.buffer.id(), w);
     }
@@ -744,7 +785,7 @@ fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
                 &mut s.owner,
                 &mut s.device,
                 s.dmabuf,
-                &s.modifiers,
+                &s.formats,
                 &mut wl,
                 w,
             );
@@ -1101,7 +1142,7 @@ fn on_surface(app: &mut App, e: &WlSurfaceEvent) {
                     &mut s.owner,
                     &mut s.device,
                     s.dmabuf,
-                    &s.modifiers,
+                    &s.formats,
                     &mut wl,
                     w,
                 );

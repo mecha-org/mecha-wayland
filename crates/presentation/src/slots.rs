@@ -27,11 +27,16 @@ fn slot(
     device: &mut Device,
     wl: &mut Wayland,
     dmabuf: ZwpLinuxDmabufV1,
+    alpha: bool,
     modifiers: &[u64],
     width: u32,
     height: u32,
 ) -> Slot {
-    let target = device.target(width, height, modifiers);
+    let target = if alpha {
+        device.target_with_alpha(width, height, modifiers)
+    } else {
+        device.target(width, height, modifiers)
+    };
     let params = dmabuf.create_params(wl);
     let modifier = target.modifier();
     for (i, p) in target.planes().enumerate() {
@@ -62,13 +67,14 @@ fn slot(
 }
 
 impl Slots {
-    /// [`BUFFERS`] slots of `width` by `height` device pixels, laid out by the
-    /// first of `modifiers` the GPU accepts, linear when the list is
-    /// empty.
+    /// [`BUFFERS`] slots of `width` by `height` device pixels, ARGB8888
+    /// with `alpha` and XRGB8888 without, laid out by the first of
+    /// `modifiers` the GPU accepts, linear when the list is empty.
     pub(crate) fn create(
         device: &mut Device,
         wl: &mut Wayland,
         dmabuf: ZwpLinuxDmabufV1,
+        alpha: bool,
         modifiers: &[u64],
         width: u32,
         height: u32,
@@ -76,7 +82,9 @@ impl Slots {
         Slots {
             width,
             height,
-            slots: std::array::from_fn(|_| slot(device, wl, dmabuf, modifiers, width, height)),
+            slots: std::array::from_fn(|_| {
+                slot(device, wl, dmabuf, alpha, modifiers, width, height)
+            }),
         }
     }
 

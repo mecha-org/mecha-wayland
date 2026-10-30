@@ -51,6 +51,9 @@ const LAYER_BUF_A: u32 = 12;
 /// `DRM_FORMAT_XRGB8888`.
 const XRGB: u32 = 0x3432_5258;
 
+/// `DRM_FORMAT_ARGB8888`.
+const ARGB: u32 = 0x3432_5241;
+
 /// `I915_FORMAT_MOD_Y_TILED`, the second layout the fake advertises after
 /// the linear one. A vendor modifier the local GBM may or may not be able
 /// to produce, so the slots report whichever of the two it picked.
@@ -183,10 +186,16 @@ static GPU: Mutex<()> = Mutex::new(());
 
 /// The fake compositor with the whole stack installed, behind the GPU
 /// lock, after it advertised two layouts for XRGB8888: linear first, then
-/// [`VENDOR_MOD`]. GBM picks the first of the two it can render into, so
-/// which one a target reports is the driver's business, not the test's.
-/// `None` with a skip line when there is no render node.
+/// [`VENDOR_MOD`], and linear for ARGB8888. GBM picks the first of the two
+/// it can render into, so which one a target reports is the driver's
+/// business, not the test's. `None` with a skip line when there is no
+/// render node.
 fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
+    fake_advertising(true)
+}
+
+/// [`fake`], with or without ARGB8888 among the formats advertised.
+fn fake_advertising(argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
     let guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
     match Device::try_open(Budget::default()) {
         Ok(_) => {}
@@ -212,6 +221,13 @@ fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
         w.uint((VENDOR_MOD >> 32) as u32);
         w.uint(VENDOR_MOD as u32);
     });
+    if argb {
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(ARGB);
+            w.uint(0);
+            w.uint(0);
+        });
+    }
     f.app
         .add_module(LayoutModule)
         .add_module(PaintModule)
@@ -2131,4 +2147,56 @@ fn showing_a_window_hidden_before_its_first_buffer_draws_without_a_new_configure
     f.app.tick();
     f.turn();
     assert_eq!(attaches(&mut f), vec![LAYER_BUF_A]);
+}
+
+// ── a transparent clear ──────────────────────────────────────────────────
+
+/// A toplevel cleared to transparent, configured to 320 by 200; returns
+/// the fourcc each of its two slots was created with.
+fn transparent_slot_formats(f: &mut Fake) -> Vec<u32> {
+    let root = f.app.root();
+    f.app.spawn(
+        root,
+        window()
+            .title("glass")
+            .layout(LayoutStyle::default().column())
+            .clear(Color::TRANSPARENT),
+    );
+    f.app.tick();
+    f.turn();
+    f.requests();
+    f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+        w.int(320);
+        w.int(200);
+        w.array(&[]);
+    });
+    f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
+    f.turn();
+    f.requests()
+        .iter()
+        .filter(|r| r.opcode == op::PARAMS_CREATE_IMMED)
+        .map(|r| {
+            let mut a = r.reader();
+            let (_buffer, _w, _h) = (a.object(), a.int(), a.int());
+            a.uint().unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn a_transparent_window_draws_into_argb_buffers() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    assert_eq!(transparent_slot_formats(&mut f), vec![ARGB, ARGB]);
+}
+
+#[test]
+fn a_transparent_window_falls_back_to_xrgb_when_argb_is_not_advertised() {
+    let Some((_gpu, mut f)) = fake_advertising(false) else {
+        return;
+    };
+    assert_eq!(
+        transparent_slot_formats(&mut f),
+        vec![XRGB, XRGB],
+        "shown opaque rather than not at all"
+    );
 }

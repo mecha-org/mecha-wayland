@@ -9,7 +9,10 @@ use geometry::{Color, Corners, Insets, Point, Rect};
 use layout::Viewport;
 use paint::{MonochromeSprite, Paint, PolychromeSprite, Quad};
 
-use crate::{Command, Drawn, NO_TILE, rect, scene::Scene};
+use crate::{
+    Command, Drawn, NO_TILE, rect,
+    scene::{Mover, Scene, Scrolled},
+};
 
 /// A colour and the device rect known to be exactly that colour behind a
 /// node.
@@ -20,15 +23,19 @@ pub(crate) struct Solid {
 }
 
 /// A node still to visit: what its ancestors hand it. `shift` is the
-/// sum of their `Viewport` scrolls, logical pixels, taken off the node's
-/// layout; `clip` is the device rect its pixels are kept to, the window
-/// when no ancestor clips.
+/// sum of their `Viewport` scrolls, each rounded to whole device pixels,
+/// taken off the node's device rects after they are rounded; `clip` is
+/// the device rect its pixels are kept to, the window when no ancestor
+/// clips.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Visit {
     pub(crate) id: NodeId,
     pub(crate) solid: Option<Solid>,
     pub(crate) shift: Point,
     pub(crate) clip: Rect,
+    /// Inside the viewport that scrolled this walk: how far its scroll
+    /// moved since the last walk.
+    pub(crate) moved: Option<Mover>,
 }
 
 /// Logical to device: both edges scaled and rounded, so rects that touch
@@ -123,7 +130,10 @@ pub(crate) fn walk(
     clear: Color,
     scene: &mut Scene,
 ) -> u32 {
-    let root_solid = (clear.a >= 1.0).then(|| Solid {
+    // A transparent clear is as known as an opaque one: the shader
+    // composites onto its alpha too. Only an alpha in between, which no
+    // target holds, is unknown.
+    let root_solid = (clear.a >= 1.0 || clear.is_transparent()).then(|| Solid {
         color: clear,
         rect: scene.window_rect(),
     });
@@ -136,6 +146,7 @@ pub(crate) fn walk(
         solid: root_solid,
         shift: Point::default(),
         clip: scene.window_rect(),
+        moved: None,
     });
     let mut visited = 0u32;
     while let Some(Visit {
@@ -143,6 +154,7 @@ pub(crate) fn walk(
         solid,
         shift,
         clip,
+        moved,
     }) = stack.pop()
     {
         let z = 2.0 * visited as f32;
@@ -151,15 +163,20 @@ pub(crate) fn walk(
             continue;
         };
         let paint = &animated.0;
-        // Where the node is displayed: its layout less the scroll above it.
+        // Device rects are the unscrolled layout's, rounded, less the
+        // whole-pixel scroll: scrolled content keeps exactly the pixels it
+        // had, so a shifted frame matches a redraw.
+        let at = |r: Rect| moved_by(scale_rect(r, scale), shift);
+        let unscrolled = *layout;
+        // Where the node is displayed, logical: what `Drawn` compares.
         let layout = Layout {
             rect: Rect {
-                origin: layout.rect.origin - shift,
+                origin: layout.rect.origin - Point::new(shift.x / scale, shift.y / scale),
                 size: layout.rect.size,
             },
             ..*layout
         };
-        let r = scale_rect(layout.rect, scale);
+        let r = at(unscrolled.rect);
         let mut bounds: Option<Rect> = None;
         let mut child_solid = solid;
         if !r.is_empty() && !paint.is_invisible() {
@@ -170,10 +187,19 @@ pub(crate) fn walk(
                     bounds = Some(r);
                 }
                 Paint::Monochrome(run) => {
-                    bounds = emit_run(run, layout.content(), z, solid, clip, scale, scene);
+                    bounds = emit_run(
+                        run,
+                        unscrolled.content(),
+                        shift,
+                        z,
+                        solid,
+                        clip,
+                        scale,
+                        scene,
+                    );
                 }
                 Paint::Polychrome(p) => {
-                    let content = scale_rect(layout.content(), scale);
+                    let content = at(unscrolled.content());
                     if !content.is_empty() {
                         emit_image(p, content, z, solid, clip, scale, scene);
                         bounds = Some(content);
@@ -194,6 +220,13 @@ pub(crate) fn walk(
             // The shift is in it, so a scroll that keeps the clipped
             // bounds equal still damages them.
             if d.dirty || d.rect != bounds || d.layout != kept {
+                // Only a clean node carried by the one scroll keeps the
+                // frame a pure scroll.
+                let carried =
+                    moved.is_some_and(|m| carried_by((d.layout, d.rect), (kept, bounds), m, scale));
+                if d.dirty || !carried {
+                    scene.pure = false;
+                }
                 if let Some(old) = d.rect {
                     scene.damage.push(old);
                 }
@@ -213,18 +246,32 @@ pub(crate) fn walk(
         }
         if let Some(b) = bounds {
             scene.drawing.push((id, b));
+            if moved.is_none() {
+                scene.outside.push((id, b));
+            }
         }
-        let (shift, clip) = match viewports.get(id) {
+        let (shift, clip, moved) = match viewports.get(id) {
             Some(v) => {
                 let clip = if v.clip {
-                    let padding_box = scale_rect(layout.rect.inset(layout.border), scale);
+                    let padding_box = at(unscrolled.rect.inset(unscrolled.border));
                     rect::intersection(clip, padding_box)
                 } else {
                     clip
                 };
-                (shift + v.scroll, clip)
+                // Whole device pixels, so every edge moves by the same
+                // amount and a row keeps its height while it scrolls.
+                let device = Point::new((v.scroll.x * scale).round(), (v.scroll.y * scale).round());
+                // Every node has a `Viewport`; only one that clips can be
+                // the shift's, and one that does not and scrolls fails its
+                // descendants' carry instead. So only clipping ones are kept.
+                let moved = if v.clip {
+                    scrolled(scene, id, device, clip, child_solid, moved)
+                } else {
+                    moved
+                };
+                (shift + device, clip, moved)
             }
-            None => (shift, clip),
+            None => (shift, clip, moved),
         };
         if let Some(children) = tree.children(id) {
             for &child in children.iter().rev() {
@@ -233,12 +280,92 @@ pub(crate) fn walk(
                     solid: child_solid,
                     shift,
                     clip,
+                    moved,
                 });
             }
         }
     }
     scene.stack = stack;
     visited
+}
+
+/// `r` less a device-pixel `shift`.
+fn moved_by(r: Rect, shift: Point) -> Rect {
+    Rect {
+        origin: r.origin - shift,
+        size: r.size,
+    }
+}
+
+/// Note a viewport's device `scroll` and visible `area` for the next walk
+/// and judge its move since the last one. Returns what its descendants
+/// carry: `moved` from above, or this viewport's move if it is the one
+/// that scrolled. A move fails the pure scroll when the viewport sits
+/// inside another that moved, follows another mover, changed its area, or
+/// has anything but one colour behind its area. For a clipping viewport.
+fn scrolled(
+    scene: &mut Scene,
+    id: NodeId,
+    scroll: Point,
+    area: Rect,
+    behind: Option<Solid>,
+    moved: Option<Mover>,
+) -> Option<Mover> {
+    // Viewports come in the same preorder walk after walk, so the record
+    // at this one's index is nearly always its own.
+    let k = scene.viewing.len();
+    scene.viewing.push(Scrolled { id, scroll, area });
+    let last = match scene.viewed.get(k) {
+        Some(s) if s.id == id => Some(*s),
+        _ => scene.viewed.iter().find(|s| s.id == id).copied(),
+    };
+    let Some(last) = last else {
+        return moved;
+    };
+    if last.scroll == scroll {
+        return moved;
+    }
+    let flat = behind.is_some_and(|s| rect::contains(s.rect, area));
+    if moved.is_some() || scene.mover.is_some() || last.area != area || !flat {
+        scene.pure = false;
+    }
+    let m = Mover {
+        id,
+        area,
+        by: scroll - last.scroll,
+    };
+    scene.mover = Some(m);
+    Some(m)
+}
+
+/// A node went from `old` to `new`, each its displayed layout and its
+/// clipped device bounds, only by `m`'s scroll: the same box with its
+/// origin up by the move; or it came into sight where the move exposed,
+/// or left sight where the move took it out of the area.
+fn carried_by(
+    old: (Option<Layout>, Option<Rect>),
+    new: (Option<Layout>, Option<Rect>),
+    m: Mover,
+    scale: f32,
+) -> bool {
+    match (old, new) {
+        ((Some(old), _), (Some(new), _)) => {
+            let gap =
+                old.rect.origin - new.rect.origin - Point::new(m.by.x / scale, m.by.y / scale);
+            gap.x.abs() < 1e-3
+                && gap.y.abs() < 1e-3
+                && old.rect.size == new.rect.size
+                && old.padding == new.padding
+                && old.border == new.border
+        }
+        // Coming into sight: before the move it lay outside the area.
+        ((None, _), (_, Some(b))) => {
+            !rect::intersects(moved_by(b, Point::new(-m.by.x, -m.by.y)), m.area)
+        }
+        // Leaving sight: the move takes it out of the area.
+        ((_, Some(b)), (None, _)) => !rect::intersects(moved_by(b, m.by), m.area),
+        _ => true,
+    }
 }
 
 /// The quad's three routes, and what it hands down, cut to the clip.
@@ -251,7 +378,10 @@ fn emit_quad(
     scale: f32,
     scene: &mut Scene,
 ) -> Option<Solid> {
-    let inside = solid.is_some_and(|s| rect::contains(s.rect, r));
+    // Judged on the part the clip keeps, so a row sliding under a
+    // viewport's edge takes the same route all the way.
+    let kept = rect::intersection(r, clip);
+    let inside = solid.is_some_and(|s| rect::contains(s.rect, kept));
     let radii = q.radii.map(|v| v * scale);
     let border = q.border.map(|v| v * scale);
     let visible = border_visible(q);
@@ -286,6 +416,25 @@ fn emit_quad(
                 ..base
             },
         );
+        // Its flat middle as a plain fill one step nearer: the depth test
+        // keeps the box's shader to the rim.
+        if !edge_free && q.color.a >= 1.0 && !inner.is_empty() {
+            let flat = q.color.over(s.color);
+            push(
+                &mut scene.opaque,
+                Command {
+                    rect: inner,
+                    z: z + 1.0,
+                    color: flat,
+                    border_color: flat,
+                    background: flat,
+                    radii: Corners::all(0.0),
+                    border: Insets::all(0.0),
+                    flags: opaque,
+                    ..base
+                },
+            );
+        }
     } else if q.is_opaque && edge_free && q.color.a >= 1.0 {
         // A plain fill.
         push(
@@ -333,9 +482,11 @@ fn push(list: &mut Vec<Command>, c: Command) {
 
 /// One command per visible sprite, from the content box's corner. Returns
 /// the union of their rects.
+#[allow(clippy::too_many_arguments)]
 fn emit_run(
     run: &[MonochromeSprite],
     content: Rect,
+    shift: Point,
     z: f32,
     solid: Option<Solid>,
     clip: Rect,
@@ -353,12 +504,12 @@ fn emit_run(
             s.size.width,
             s.size.height,
         );
-        let sr = scale_rect(logical, scale);
+        let sr = moved_by(scale_rect(logical, scale), shift);
         if sr.is_empty() {
             continue;
         }
         let over = if s.is_opaque {
-            solid.filter(|so| rect::contains(so.rect, sr))
+            solid.filter(|so| rect::contains(so.rect, rect::intersection(sr, clip)))
         } else {
             None
         };
@@ -396,7 +547,7 @@ fn emit_image(
     scene: &mut Scene,
 ) {
     let over = if p.is_opaque {
-        solid.filter(|so| rect::contains(so.rect, content))
+        solid.filter(|so| rect::contains(so.rect, rect::intersection(content, clip)))
     } else {
         None
     };

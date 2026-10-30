@@ -21,8 +21,11 @@
 //! - [`Device::draw`] uploads both passes' commands as the bytes they
 //!   are, clears each damage rect, then draws the opaque pass with depth
 //!   write and no blending and the translucent pass with depth test and
-//!   premultiplied blending: one instanced draw of the whole pass per
-//!   damage rect. No texture is bound inside a frame. The vertex shader
+//!   premultiplied blending. Each kind of command has its own small
+//!   program (fill, box, sprite, image) carrying only that kind's work;
+//!   the opaque pass is grouped by program, cheapest first, and the
+//!   translucent pass keeps its order. Each run of one program is one
+//!   instanced draw per damage rect. No texture is bound inside a frame. The vertex shader
 //!   clamps each command's corners to its `clip` and shades from where
 //!   they land, so a clipped command draws only its kept part, unchanged.
 //! - Everything is device pixels, y included: GL row 0 is the buffer's
@@ -45,6 +48,7 @@
 //!     clear: Color::rgb(0.1, 0.2, 0.3),
 //!     depth: 2.0,
 //!     scissor: vec![Rect::new(0.0, 0.0, 320.0, 200.0)],
+//!     copy: Vec::new(),
 //!     opaque: Pass::default(),
 //!     translucent: Pass::default(),
 //! };
@@ -54,19 +58,20 @@
 //! device.destroy(target);
 //! ```
 
+mod copy;
 mod draw;
 mod egl;
 mod program;
 mod target;
 mod textures;
 
-pub use target::{Plane, Target, XRGB8888};
+pub use target::{ARGB8888, Plane, Target, XRGB8888};
 
 /// `Error` and `Plane` are left out: `atlas` has its own of each, and a
 /// facade folding both preludes together would make neither name usable.
 /// Take them by path, as `gles::Error` and `gles::Plane`.
 pub mod prelude {
-    pub use crate::{Budget, Device, Target, XRGB8888};
+    pub use crate::{ARGB8888, Budget, Device, Target, XRGB8888};
 }
 
 /// How many atlas pages of each kind the device allocates room for, once,
@@ -103,11 +108,13 @@ pub enum Error {
 /// device's life. Not `Send`.
 ///
 /// `gpu` is declared last so it drops last: [`Drop for Device`](#impl-Drop-for-Device)
-/// frees the atlas textures and the program's GL objects first, while
+/// frees the atlas textures and the programs' GL objects first, while
 /// the context is still current.
 pub struct Device {
     budget: Budget,
-    program: program::Program,
+    programs: program::Programs,
+    /// The opaque pass in program order, reused by every draw.
+    sorted: Vec<render::Command>,
     textures: textures::Textures,
     gpu: egl::Gpu,
 }
@@ -117,12 +124,13 @@ impl Device {
     /// [`Error::NoDevice`].
     pub fn try_open(budget: Budget) -> Result<Device, Error> {
         let gpu = egl::Gpu::open()?;
-        let program = program::Program::new(&gpu);
+        let programs = program::Programs::new(&gpu);
         let textures = textures::Textures::new(&gpu, budget);
         Ok(Device {
             gpu,
             budget,
-            program,
+            programs,
+            sorted: Vec::new(),
             textures,
         })
     }
@@ -150,7 +158,14 @@ impl Device {
     /// with the first layout of `modifiers` GBM can produce, or linear
     /// when the list is empty or refused.
     pub fn target(&mut self, width: u32, height: u32, modifiers: &[u64]) -> Target {
-        target::create(&self.gpu, width, height, modifiers)
+        target::create(&self.gpu, width, height, XRGB8888, modifiers)
+    }
+
+    /// The same as [`Device::target`] but ARGB8888, for a window that
+    /// clears to transparent: what is drawn keeps its alpha, premultiplied,
+    /// for the compositor to blend.
+    pub fn target_with_alpha(&mut self, width: u32, height: u32, modifiers: &[u64]) -> Target {
+        target::create(&self.gpu, width, height, ARGB8888, modifiers)
     }
 
     /// Frees the target's GL objects, EGLImage and buffer.
@@ -179,12 +194,31 @@ impl Device {
     /// Uploads what changed in the atlas: new pages get a layer, dirty
     /// cells go up as runs. Takes `&Atlas`, so the drain is not a write.
     pub fn upload(&mut self, atlas: &atlas::Atlas) {
-        self.textures.upload(&self.gpu, &self.program, atlas);
+        self.textures.upload(&self.gpu, &self.programs, atlas);
     }
 
     /// How many sub-image uploads `upload` has issued so far. For tests.
     pub fn upload_calls(&self) -> u64 {
         self.textures.calls
+    }
+
+    /// Copies the presented frame in `from` into `to` for a scroll: each
+    /// of `copy` (the shifted queue's [`render::Queue::copy`]) as it is,
+    /// then `shift.area` moved by `-shift.by`. The strip that leaves is
+    /// drawn next with [`render::Scenes::queue_shifted`]. `from` and `to`
+    /// are different targets of one size.
+    pub fn shift(
+        &mut self,
+        from: &Target,
+        to: &Target,
+        shift: render::Shift,
+        copy: &[geometry::Rect],
+    ) {
+        debug_assert!(
+            (from.width(), from.height()) == (to.width(), to.height()),
+            "gles: a shift copies between targets of one size"
+        );
+        copy::shift(&self.gpu, from, to, shift, copy);
     }
 
     /// Executes one queue on one target: the clears, the opaque pass,
@@ -204,7 +238,7 @@ impl Device {
             }
         }
         draw::clear(&self.gpu, target, queue);
-        draw::passes(&self.gpu, &self.program, target, queue);
+        draw::passes(&self.gpu, &self.programs, target, queue, &mut self.sorted);
         draw::finish(&self.gpu);
     }
 }
@@ -220,6 +254,6 @@ fn q_commands(q: &render::Queue) -> impl Iterator<Item = &render::Command> {
 impl Drop for Device {
     fn drop(&mut self) {
         self.textures.drop_with(&self.gpu);
-        self.program.drop_with(&self.gpu);
+        self.programs.drop_with(&self.gpu);
     }
 }

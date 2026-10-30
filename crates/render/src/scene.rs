@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 
 use app::NodeId;
-use geometry::{Color, Rect, Size};
+use geometry::{Color, Point, Rect, Size};
 
 use crate::{Command, Pass, Queue, rect, walk::Visit};
 
@@ -42,6 +42,44 @@ pub(crate) struct Scene {
     /// No frame has been walked yet.
     fresh: bool,
     queue: Queue,
+    /// This walk changed nothing but one viewport's scroll, so far.
+    pub(crate) pure: bool,
+    /// The viewport whose scroll moved this walk.
+    pub(crate) mover: Option<Mover>,
+    /// Every viewport's device scroll and area, last walk and this one.
+    pub(crate) viewed: Vec<Scrolled>,
+    pub(crate) viewing: Vec<Scrolled>,
+    /// What this walk drew outside the mover's subtree, ancestors
+    /// included: each node with its bounds.
+    pub(crate) outside: Vec<(NodeId, Rect)>,
+    /// Since the last presented walk; `None` before the first.
+    since: Option<Since>,
+}
+
+/// A viewport as a walk saw it: its scroll in whole device pixels and the
+/// device rect its content shows in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Scrolled {
+    pub(crate) id: NodeId,
+    pub(crate) scroll: Point,
+    pub(crate) area: Rect,
+}
+
+/// The viewport that scrolled in a walk, and by how much, device pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Mover {
+    pub(crate) id: NodeId,
+    pub(crate) area: Rect,
+    pub(crate) by: Point,
+}
+
+/// The walks since the last presented one: whether each was a pure
+/// scroll of the same viewport, which, and the move added up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Since {
+    clean: bool,
+    mover: Option<(NodeId, Rect)>,
+    by: Point,
 }
 
 impl Scene {
@@ -61,6 +99,12 @@ impl Scene {
             buffers,
             fresh: true,
             queue: Queue::default(),
+            pure: false,
+            mover: None,
+            viewed: Vec::new(),
+            viewing: Vec::new(),
+            outside: Vec::new(),
+            since: None,
         }
     }
 
@@ -83,7 +127,53 @@ impl Scene {
         self.drawing.clear();
         self.damage.clear();
         self.stack.clear();
+        self.pure = !full;
+        self.mover = None;
+        self.viewing.clear();
+        self.outside.clear();
         full
+    }
+
+    /// After the walk: the mover's area is overdrawn or underlaid by a
+    /// node outside its subtree that is not one of its ancestors, whose
+    /// pixels a shift would drag along.
+    pub(crate) fn judge(&mut self, tree: app::Tree<'_>) {
+        let Some(m) = self.mover else {
+            return;
+        };
+        // The root is its own parent, which ends the climb.
+        let mut up = Vec::new();
+        let mut at = m.id;
+        while let Some(p) = tree.parent(at).filter(|p| *p != at) {
+            up.push(p);
+            at = p;
+        }
+        if self
+            .outside
+            .iter()
+            .any(|(id, b)| *id != m.id && !up.contains(id) && rect::intersects(*b, m.area))
+        {
+            self.pure = false;
+        }
+    }
+
+    /// The walk just finished is what the backend drew and presented.
+    pub(crate) fn presented(&mut self) {
+        self.since = Some(Since {
+            clean: true,
+            mover: None,
+            by: Point::default(),
+        });
+    }
+
+    /// The move since the last presented walk, if every walk since was a
+    /// pure scroll of one viewport and the move leaves something to copy.
+    pub(crate) fn shift(&self) -> Option<crate::Shift> {
+        let s = self.since.filter(|s| s.clean)?;
+        let (_, area) = s.mover?;
+        let fits = s.by.x.abs() < area.width() && s.by.y.abs() < area.height();
+        (self.scale.fract() == 0.0 && s.by != Point::default() && fits)
+            .then_some(crate::Shift { area, by: s.by })
     }
 
     /// End a frame after the walk: sort the passes, take the drawing list
@@ -95,6 +185,20 @@ impl Scene {
         self.opaque.sort_by(|a, b| b.z.total_cmp(&a.z));
         self.translucent.sort_by(|a, b| a.z.total_cmp(&b.z));
         std::mem::swap(&mut self.drawn, &mut self.drawing);
+        std::mem::swap(&mut self.viewed, &mut self.viewing);
+        if let Some(s) = &mut self.since {
+            match self.mover {
+                _ if !self.pure => s.clean = false,
+                Some(m) => {
+                    if s.mover.is_some_and(|v| v != (m.id, m.area)) {
+                        s.clean = false;
+                    }
+                    s.mover = Some((m.id, m.area));
+                    s.by = s.by + m.by;
+                }
+                None => {}
+            }
+        }
 
         // The oldest list, if one falls off, becomes the next frame's
         // collector, so the ring allocates only while it grows.
@@ -150,6 +254,77 @@ impl Scene {
         fill(&mut q.translucent, &self.translucent, &q.scissor);
         q
     }
+}
+
+impl Scene {
+    /// The commands for a buffer that holds the presented frame shifted
+    /// by `shift`: the scissor is the strip the move exposed, the edge
+    /// the content left first, then the side, cut to the rows it kept.
+    pub(crate) fn queue_shifted(&mut self, shift: crate::Shift, age: usize) -> &Queue {
+        let window = self.window_rect();
+        let q = &mut self.queue;
+        q.size = self.size;
+        q.scale = self.scale;
+        q.clear = self.clear;
+        q.depth = self.depth;
+        // What the buffer lacks, as `queue` unions it, less the area.
+        q.copy.clear();
+        let held = age >= 1 && age <= self.history.len();
+        let whole = (!held).then_some(window);
+        let lacks = self
+            .history
+            .iter()
+            .take(if held { age } else { 0 })
+            .flatten()
+            .copied();
+        for r in lacks.chain(whole) {
+            for part in around(r, shift.area) {
+                if !q.copy.iter().any(|kept| rect::contains(*kept, part)) {
+                    q.copy.push(part);
+                }
+            }
+        }
+        q.scissor.clear();
+        q.scissor.extend(exposed(shift));
+        fill(&mut q.opaque, &self.opaque, &q.scissor);
+        fill(&mut q.translucent, &self.translucent, &q.scissor);
+        q
+    }
+}
+
+/// `r` less `hole`: up to four rects, the bands above and below the hole
+/// across `r`, then the sides beside it.
+fn around(r: Rect, hole: Rect) -> impl Iterator<Item = Rect> {
+    let cut = rect::intersection(r, hole);
+    let parts = if cut.is_empty() {
+        [Some(r), None, None, None]
+    } else {
+        [
+            Rect::new(r.x(), r.y(), r.width(), cut.y() - r.y()),
+            Rect::new(r.x(), cut.bottom(), r.width(), r.bottom() - cut.bottom()),
+            Rect::new(r.x(), cut.y(), cut.x() - r.x(), cut.height()),
+            Rect::new(cut.right(), cut.y(), r.right() - cut.right(), cut.height()),
+        ]
+        .map(|p| (p.width() > 0.0 && p.height() > 0.0).then_some(p))
+    };
+    parts.into_iter().flatten()
+}
+
+/// What a shift leaves to draw: `area` less where its content lands, one
+/// rect per axis that moved.
+fn exposed(crate::Shift { area: a, by }: crate::Shift) -> impl Iterator<Item = Rect> {
+    let (dx, dy) = (by.x.abs(), by.y.abs());
+    // The rows the copy keeps, top to bottom.
+    let kept_y = if by.y > 0.0 { a.y() } else { a.y() + dy };
+    let rows = (by.y != 0.0).then(|| {
+        let y = if by.y > 0.0 { a.bottom() - dy } else { a.y() };
+        Rect::new(a.x(), y, a.width(), dy)
+    });
+    let side = (by.x != 0.0).then(|| {
+        let x = if by.x > 0.0 { a.right() - dx } else { a.x() };
+        Rect::new(x, kept_y, dx, a.height() - dy)
+    });
+    rows.into_iter().chain(side)
 }
 
 /// The commands whose part inside their clip touches any scissor rect,

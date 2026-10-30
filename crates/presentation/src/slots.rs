@@ -27,11 +27,16 @@ fn slot(
     device: &mut Device,
     wl: &mut Wayland,
     dmabuf: ZwpLinuxDmabufV1,
+    alpha: bool,
     modifiers: &[u64],
     width: u32,
     height: u32,
 ) -> Slot {
-    let target = device.target(width, height, modifiers);
+    let target = if alpha {
+        device.target_with_alpha(width, height, modifiers)
+    } else {
+        device.target(width, height, modifiers)
+    };
     let params = dmabuf.create_params(wl);
     let modifier = target.modifier();
     for (i, p) in target.planes().enumerate() {
@@ -62,13 +67,14 @@ fn slot(
 }
 
 impl Slots {
-    /// [`BUFFERS`] slots of `width` by `height` device pixels, laid out by the
-    /// first of `modifiers` the GPU accepts, linear when the list is
-    /// empty.
+    /// [`BUFFERS`] slots of `width` by `height` device pixels, ARGB8888
+    /// with `alpha` and XRGB8888 without, laid out by the first of
+    /// `modifiers` the GPU accepts, linear when the list is empty.
     pub(crate) fn create(
         device: &mut Device,
         wl: &mut Wayland,
         dmabuf: ZwpLinuxDmabufV1,
+        alpha: bool,
         modifiers: &[u64],
         width: u32,
         height: u32,
@@ -76,7 +82,9 @@ impl Slots {
         Slots {
             width,
             height,
-            slots: std::array::from_fn(|_| slot(device, wl, dmabuf, modifiers, width, height)),
+            slots: std::array::from_fn(|_| {
+                slot(device, wl, dmabuf, alpha, modifiers, width, height)
+            }),
         }
     }
 
@@ -90,5 +98,37 @@ impl Slots {
             s.buffer.destroy(wl);
             device.destroy(s.target);
         }
+    }
+}
+
+/// The slot holding the frame presented last, `frames - 1`, as a shift's
+/// source: `None` before any frame, after the slots were reset, or when
+/// that slot is `target` itself.
+pub(crate) fn previous(drawn: &[Option<u64>], target: usize, frames: u64) -> Option<usize> {
+    let last = frames.checked_sub(1)?;
+    drawn
+        .iter()
+        .position(|d| *d == Some(last))
+        .filter(|&j| j != target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_previous_slot_is_the_one_drawn_last_frame() {
+        assert_eq!(previous(&[Some(4), Some(5)], 0, 6), Some(1));
+    }
+
+    #[test]
+    fn no_previous_slot_when_it_is_the_target() {
+        assert_eq!(previous(&[Some(4), Some(5)], 1, 6), None);
+    }
+
+    #[test]
+    fn no_previous_slot_after_a_reset_or_before_any_frame() {
+        assert_eq!(previous(&[None, None], 0, 6), None);
+        assert_eq!(previous(&[None, None], 0, 0), None);
     }
 }

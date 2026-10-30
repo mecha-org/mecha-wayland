@@ -118,7 +118,7 @@ fn zs(commands: &[Command]) -> Vec<f32> {
 // ── 1, 2: passes, z and order ───────────────────────────────────────────
 
 #[test]
-fn a_rounded_quad_under_the_black_window_is_one_opaque_command() {
+fn a_rounded_quad_under_the_black_window_is_an_opaque_box_and_its_interior() {
     let mut app = app();
     let win = app.spawn(app.root(), a_window());
     app.spawn_with(
@@ -142,8 +142,27 @@ fn a_rounded_quad_under_the_black_window_is_one_opaque_command() {
     assert_eq!(q.opaque.scissor, vec![window_rect()]);
     assert!(q.translucent.commands.is_empty());
     assert!(q.translucent.scissor.is_empty());
-    assert_eq!(q.opaque.commands.len(), 1);
-    let c = q.opaque.commands[0];
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![3.0, 2.0],
+        "the interior is nearer"
+    );
+    let inner = q.opaque.commands[0];
+    assert_eq!(
+        inner.rect,
+        Rect::new(4.0, 4.0, 42.0, 12.0),
+        "inset by the radius"
+    );
+    assert_eq!(
+        (inner.radii, inner.border),
+        (Corners::all(0.0), Insets::all(0.0))
+    );
+    assert_eq!(
+        (inner.color, inner.border_color, inner.background),
+        (RED, RED, RED)
+    );
+    assert!(inner.is_opaque());
+    let c = q.opaque.commands[1];
     assert_eq!(c.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
     assert_eq!(c.z, 2.0);
     assert_eq!(c.color, RED);
@@ -153,6 +172,37 @@ fn a_rounded_quad_under_the_black_window_is_one_opaque_command() {
     assert_eq!(c.kind(), Command::QUAD);
     assert!(c.is_opaque());
     assert_eq!(c.opacity(), 1.0);
+}
+
+#[test]
+fn a_transparent_window_is_a_solid_its_content_composites_onto() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window().clear(Color::TRANSPARENT));
+    app.spawn_with(
+        win,
+        Leaf,
+        (boxed(50.0, 20.0), Paint::Quad(Quad::new(RED).radius(4.0))),
+    );
+    app.tick();
+
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(q.clear, Color::TRANSPARENT);
+    assert!(
+        q.translucent.commands.is_empty(),
+        "nothing blends: the transparent clear is known behind the quad"
+    );
+    assert_eq!(zs(&q.opaque.commands), vec![3.0, 2.0], "box and interior");
+    let inner = q.opaque.commands[0];
+    assert_eq!(inner.rect, Rect::new(4.0, 4.0, 42.0, 12.0));
+    assert_eq!(inner.background, RED, "the interior covers itself");
+    let c = q.opaque.commands[1];
+    assert_eq!(c.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
+    assert_eq!(
+        c.background,
+        Color::TRANSPARENT,
+        "the rim composites onto the clear"
+    );
+    assert!(c.is_opaque());
 }
 
 #[test]
@@ -291,7 +341,7 @@ fn a_border_alone_blends_and_an_invisible_quad_only_takes_a_z() {
 }
 
 #[test]
-fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
+fn inside_a_solid_a_quad_is_opaque_whatever_its_edges_or_alpha() {
     let mut app = app();
     let win = app.spawn(app.root(), a_window());
     app.spawn_with(
@@ -311,8 +361,13 @@ fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
 
     let q = queue(&mut app, win.id(), 1);
     assert!(q.translucent.commands.is_empty());
-    assert_eq!(zs(&q.opaque.commands), vec![4.0, 2.0]);
-    let rounded = q.opaque.commands[1];
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![4.0, 3.0, 2.0],
+        "the flat half-blue has no interior; the rounded red has one at 3"
+    );
+    assert_eq!(q.opaque.commands[1].rect, Rect::new(6.0, 6.0, 88.0, 38.0));
+    let rounded = q.opaque.commands[2];
     assert_eq!(
         (rounded.radii, rounded.border),
         (Corners::all(6.0), Insets::all(2.0))
@@ -324,6 +379,25 @@ fn inside_a_solid_a_quad_is_one_opaque_command_whatever_its_edges_or_alpha() {
     let half = q.opaque.commands[0];
     assert_eq!((half.color, half.background), (HALF_BLUE, Color::BLACK));
     assert!(half.is_opaque());
+}
+
+#[test]
+fn a_pill_inside_a_solid_has_no_interior_command() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    app.spawn_with(
+        win,
+        Leaf,
+        (boxed(100.0, 20.0), Paint::Quad(Quad::new(RED).radius(10.0))),
+    );
+    app.tick();
+
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![2.0],
+        "nothing is flat inside a pill"
+    );
 }
 
 #[test]
@@ -352,10 +426,11 @@ fn a_borderless_quad_carries_its_fill_as_border_colour_and_zero_widths() {
     let q = queue(&mut app, win.id(), 1);
     assert_eq!(
         zs(&q.opaque.commands),
-        vec![4.0, 2.0],
-        "the bordered, then the borderless"
+        vec![5.0, 4.0, 2.0],
+        "the bordered's interior, the bordered, then the borderless"
     );
-    let bare = q.opaque.commands[1];
+    assert_eq!(q.opaque.commands[0].rect, Rect::new(2.0, 22.0, 46.0, 16.0));
+    let bare = q.opaque.commands[2];
     assert_eq!(
         (bare.color, bare.border_color),
         (RED, RED),
@@ -363,7 +438,7 @@ fn a_borderless_quad_carries_its_fill_as_border_colour_and_zero_widths() {
     );
     assert_eq!(bare.border, Insets::all(0.0), "and no width either");
     assert_eq!(bare.background, Color::BLACK);
-    let ringed = q.opaque.commands[0];
+    let ringed = q.opaque.commands[1];
     assert_eq!((ringed.color, ringed.border_color), (RED, BLUE));
     assert_eq!(ringed.border, Insets::all(2.0), "a visible border is kept");
 }
@@ -534,7 +609,11 @@ fn a_sprite_over_a_rounded_corner_or_opted_out_blends() {
         Rect::new(6.0, 47.0, 8.0, 8.0),
         "opted out"
     );
-    assert_eq!(zs(&q.opaque.commands), vec![6.0, 2.0], "the two panels");
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![6.0, 3.0, 2.0],
+        "the two panels and the rounded one's interior"
+    );
 }
 
 // ── 5: scale ────────────────────────────────────────────────────────────
@@ -569,10 +648,20 @@ fn scale_two_doubles_every_rect_radius_and_width_and_the_window() {
     );
     let g = q.opaque.commands[0];
     assert_eq!(g.rect, Rect::new(12.0, 14.0, 16.0, 16.0));
-    let p = q.opaque.commands[1];
+    let inner = q.opaque.commands[1];
+    assert_eq!(
+        inner.rect,
+        Rect::new(6.0, 6.0, 188.0, 68.0),
+        "inset by the scaled radius"
+    );
+    let p = q.opaque.commands[2];
     assert_eq!(p.rect, Rect::new(0.0, 0.0, 200.0, 80.0));
     assert_eq!((p.radii, p.border), (Corners::all(6.0), Insets::all(2.0)));
-    assert_eq!(zs(&q.opaque.commands), vec![4.0, 2.0], "z does not scale");
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![4.0, 3.0, 2.0],
+        "z does not scale"
+    );
 }
 
 // ── 10: images ──────────────────────────────────────────────────────────
@@ -1261,4 +1350,573 @@ fn viewport_change_requests_a_frame() {
     scroll_to(&mut app, list, 0.0, 5.0);
     app.tick();
     assert_eq!(take_requested(), vec![win.id()]);
+}
+
+#[test]
+fn a_half_pixel_scroll_moves_a_row_by_whole_device_pixels_and_keeps_its_height() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 2);
+    app.tick();
+    // Row 0's top lands on -0.5: rounded per edge it would grow to 21.
+    scroll_to(&mut app, list, 0.0, 2.5);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        at_z(&q, 4.0)[0].rect,
+        Rect::new(2.0, -1.0, 96.0, 20.0),
+        "the scroll rounds to 3 device pixels, the row keeps its height"
+    );
+}
+
+#[test]
+fn a_scroll_snaps_in_device_pixels_at_scale_two() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 2);
+    app.tick();
+    app.emit(ScaleFactorChanged { scale: 2.0 }, win);
+    app.flush();
+    // 2.25 logical is 4.5 device, rounded to 5.
+    scroll_to(&mut app, list, 0.0, 2.25);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, -1.0, 192.0, 40.0));
+    // Overscroll: -0.25 logical is -0.5 device, rounded away from zero.
+    scroll_to(&mut app, list, 0.0, -0.25);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, 5.0, 192.0, 40.0));
+}
+
+const WHITE: Color = Color::rgb(1.0, 1.0, 1.0);
+
+/// The rows of a white list scrolled 5 down: each half under its top edge.
+fn rows_under_the_edge(rows: &[Paint]) -> (App, Handle<Window>) {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::Quad(Quad::new(WHITE)), true, 0);
+    for p in rows {
+        app.spawn_with(list, Leaf, (boxed(96.0, 20.0).shrink(0.0), p.clone()));
+    }
+    app.tick();
+    scroll_to(&mut app, list, 0.0, 5.0);
+    app.tick();
+    (app, win)
+}
+
+#[test]
+fn a_rounded_row_half_under_the_viewport_edge_stays_in_the_opaque_pass() {
+    let (mut app, win) = rows_under_the_edge(&[Paint::Quad(Quad::new(RED).radius(4.0))]);
+    let q = queue(&mut app, win.id(), 0);
+    // z: window 0, list 2, row 4.
+    let row: Vec<_> = q.opaque.commands.iter().filter(|c| c.z == 4.0).collect();
+    assert_eq!(row.len(), 1, "the row's box is opaque");
+    assert_eq!(row[0].background, WHITE);
+    assert!(q.translucent.commands.iter().all(|c| c.z != 4.0));
+}
+
+#[test]
+fn a_glyph_and_an_image_half_under_the_edge_stay_opaque() {
+    let opaque_image = PolychromeSprite::new(tile(2)).radius(3.0);
+    for row in [
+        Paint::Monochrome(vec![glyph(0.0, 0.0, RED)]),
+        Paint::Polychrome(opaque_image),
+    ] {
+        let (mut app, win) = rows_under_the_edge(&[row.clone()]);
+        let q = queue(&mut app, win.id(), 0);
+        let c = q.opaque.commands.iter().find(|c| c.z == 4.0);
+        assert_eq!(c.map(|c| c.background), Some(WHITE), "{row:?}");
+        assert!(q.translucent.commands.is_empty(), "{row:?}");
+    }
+}
+
+#[test]
+fn a_scroll_damages_the_rows_that_moved_not_the_viewport() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::Quad(Quad::new(WHITE)), true, 3);
+    app.tick();
+    scroll_to(&mut app, list, 0.0, 10.0);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    let padding_box = Rect::new(2.0, 2.0, 96.0, 46.0);
+    assert!(!q.scissor.is_empty());
+    assert!(
+        q.scissor.iter().all(|r| rect_within(*r, padding_box)),
+        "only what moved inside the list: {:?}",
+        q.scissor
+    );
+}
+
+fn rect_within(r: Rect, outer: Rect) -> bool {
+    r.x() >= outer.x()
+        && r.y() >= outer.y()
+        && r.right() <= outer.right()
+        && r.bottom() <= outer.bottom()
+}
+
+// ── 12: shifting a scroll ───────────────────────────────────────────────
+
+const GREY: Color = Color::rgb(0.5, 0.5, 0.5);
+
+fn at(x: f32, y: f32, w: f32, h: f32) -> LayoutStyle {
+    LayoutStyle::default()
+        .absolute()
+        .inset(Insets {
+            top: px(y),
+            left: px(x),
+            right: auto(),
+            bottom: auto(),
+        })
+        .size(px(w), px(h))
+}
+
+/// A black 200 by 220 window and a clipping 200 by 200 list at its top,
+/// painted `list`, holding ten 200 by 40 rows of alternating colours.
+/// `extra` runs once the list exists, before the rows and the first frame.
+struct Shifting {
+    app: App,
+    win: NodeId,
+    list: NodeId,
+    rows: Vec<NodeId>,
+}
+
+fn shifting_with(list: Paint, extra: impl FnOnce(&mut App, NodeId, NodeId)) -> Shifting {
+    let mut app = app();
+    let win = app
+        .spawn(
+            app.root(),
+            window().layout(LayoutStyle::default().column().size(px(200.0), px(220.0))),
+        )
+        .id();
+    let l = app
+        .spawn_with(
+            win,
+            Leaf,
+            (
+                boxed(200.0, 200.0).column().shrink(0.0),
+                list,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        )
+        .id();
+    extra(&mut app, win, l);
+    let rows = (0..10)
+        .map(|i| {
+            let c = if i % 2 == 0 { RED } else { GREEN };
+            app.spawn_with(
+                l,
+                Leaf,
+                (boxed(200.0, 40.0).shrink(0.0), Paint::Quad(Quad::new(c))),
+            )
+            .id()
+        })
+        .collect();
+    app.tick();
+    Shifting {
+        app,
+        win,
+        list: l,
+        rows,
+    }
+}
+
+fn shifting() -> Shifting {
+    shifting_with(Paint::Quad(Quad::new(GREY)), |_, _, _| {})
+}
+
+impl Shifting {
+    fn scroll(&mut self, x: f32, y: f32) {
+        scroll_to(&mut self.app, self.list, x, y);
+        // A paint written beside the scroll reaches render a walk later;
+        // let it land.
+        self.app.tick();
+        self.app.tick();
+    }
+    fn presented(&mut self) {
+        self.app.resource_mut::<Scenes>().presented(self.win);
+    }
+    fn shift(&self) -> Option<Shift> {
+        self.app.resource::<Scenes>().shift(self.win)
+    }
+    fn repaint(&mut self, id: NodeId, c: Color) {
+        *self.app.component_mut::<Paint>(id).unwrap() = Paint::Quad(Quad::new(c));
+    }
+}
+
+fn whole() -> Rect {
+    Rect::new(0.0, 0.0, 200.0, 200.0)
+}
+
+#[test]
+fn a_pure_scroll_offers_a_shift_of_the_move() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(
+        s.shift(),
+        Some(Shift {
+            area: whole(),
+            by: Point::new(0.0, 12.0)
+        })
+    );
+}
+
+#[test]
+fn the_move_accumulates_over_walks_that_were_not_presented() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 5.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, 12.0)));
+}
+
+#[test]
+fn nothing_is_offered_before_the_first_presented_frame() {
+    let mut s = shifting();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn presented_resets_the_baseline() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    s.presented();
+    s.scroll(0.0, 20.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, 8.0)));
+}
+
+#[test]
+fn a_row_repainted_in_the_same_frame_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    let row = s.rows[1];
+    s.repaint(row, BLUE);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_change_in_a_walk_that_was_not_presented_still_counts() {
+    let mut s = shifting();
+    s.presented();
+    let row = s.rows[1];
+    s.repaint(row, BLUE);
+    s.app.tick();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_change_outside_the_viewport_takes_the_normal_path() {
+    let mut outside = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, win, _| {
+        outside = Some(
+            app.spawn_with(
+                win,
+                Leaf,
+                (at(0.0, 205.0, 10.0, 10.0), Paint::Quad(Quad::new(RED))),
+            )
+            .id(),
+        );
+    });
+    s.presented();
+    s.repaint(outside.unwrap(), BLUE);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn an_overlay_over_the_list_takes_the_normal_path() {
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, win, _| {
+        app.spawn_with(
+            win,
+            Leaf,
+            (at(50.0, 50.0, 50.0, 50.0), Paint::Quad(Quad::new(BLUE))),
+        );
+    });
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_sibling_under_the_list_takes_the_normal_path() {
+    let mut app = app();
+    let win = app
+        .spawn(
+            app.root(),
+            window().layout(LayoutStyle::default().size(px(200.0), px(200.0))),
+        )
+        .id();
+    app.spawn_with(
+        win,
+        Leaf,
+        (at(0.0, 0.0, 200.0, 50.0), Paint::Quad(Quad::new(BLUE))),
+    );
+    let list = app
+        .spawn_with(
+            win,
+            Leaf,
+            (
+                at(0.0, 0.0, 200.0, 200.0).column(),
+                Paint::None,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        )
+        .id();
+    app.spawn_with(
+        list,
+        Leaf,
+        (
+            boxed(200.0, 400.0).shrink(0.0),
+            Paint::Quad(Quad::new(RED).radius(4.0)),
+        ),
+    );
+    app.tick();
+    app.resource_mut::<Scenes>().presented(win);
+    scroll_to(&mut app, list, 0.0, 12.0);
+    app.tick();
+    assert_eq!(app.resource::<Scenes>().shift(win), None);
+}
+
+#[test]
+fn a_list_on_an_image_or_a_rounded_card_takes_the_normal_path() {
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY).radius(8.0)), |_, _, _| {});
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None, "a rounded card");
+
+    let mut s = shifting_with(
+        Paint::Polychrome(PolychromeSprite::new(tile(2))),
+        |_, _, _| {},
+    );
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None, "an image");
+}
+
+#[test]
+fn two_viewports_moving_take_the_normal_path() {
+    let mut inner = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, _, list| {
+        let v = app.spawn_with(
+            list,
+            Leaf,
+            (
+                boxed(200.0, 40.0).column().shrink(0.0),
+                Paint::None,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        );
+        app.spawn_with(
+            v,
+            Leaf,
+            (boxed(200.0, 80.0).shrink(0.0), Paint::Quad(Quad::new(BLUE))),
+        );
+        inner = Some(v.id());
+    });
+    s.presented();
+    scroll_to(&mut s.app, inner.unwrap(), 0.0, 3.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_move_as_big_as_the_area_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(0.0, 200.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_horizontal_and_a_negative_move_are_offered() {
+    let mut s = shifting();
+    s.presented();
+    s.scroll(-7.0, 0.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(-7.0, 0.0)));
+    s.presented();
+    s.scroll(-7.0, -9.0);
+    assert_eq!(s.shift().map(|x| x.by), Some(Point::new(0.0, -9.0)));
+}
+
+#[test]
+fn a_fractional_scale_never_shifts() {
+    let mut s = shifting();
+    let win = s.win;
+    s.app.emit(ScaleFactorChanged { scale: 1.5 }, win);
+    s.app.flush();
+    s.presented();
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_shift_at_scale_two_is_in_device_pixels() {
+    let mut s = shifting();
+    let win = s.win;
+    s.app.emit(ScaleFactorChanged { scale: 2.0 }, win);
+    s.app.flush();
+    s.presented();
+    s.scroll(0.0, 12.25);
+    assert_eq!(
+        s.shift(),
+        Some(Shift {
+            area: Rect::new(0.0, 0.0, 400.0, 400.0),
+            by: Point::new(0.0, 25.0)
+        })
+    );
+}
+
+fn shifted_scissor(by: Point) -> Vec<Rect> {
+    let mut s = shifting();
+    let win = s.win;
+    s.app
+        .resource_mut::<Scenes>()
+        .queue_shifted(win, Shift { area: whole(), by }, 0)
+        .expect("a scene")
+        .scissor
+        .clone()
+}
+
+#[test]
+fn a_shifted_queue_draws_only_the_exposed_strip() {
+    assert_eq!(
+        shifted_scissor(Point::new(0.0, 30.0)),
+        vec![Rect::new(0.0, 170.0, 200.0, 30.0)]
+    );
+    assert_eq!(
+        shifted_scissor(Point::new(0.0, -30.0)),
+        vec![Rect::new(0.0, 0.0, 200.0, 30.0)]
+    );
+    assert_eq!(
+        shifted_scissor(Point::new(-10.0, 0.0)),
+        vec![Rect::new(0.0, 0.0, 10.0, 200.0)]
+    );
+}
+
+#[test]
+fn a_diagonal_shift_exposes_an_l() {
+    assert_eq!(
+        shifted_scissor(Point::new(10.0, 30.0)),
+        vec![
+            Rect::new(0.0, 170.0, 200.0, 30.0),
+            Rect::new(190.0, 0.0, 10.0, 170.0),
+        ]
+    );
+}
+
+#[test]
+fn a_glyph_on_a_half_pixel_moves_rigidly_with_the_scroll() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 0);
+    app.spawn_with(
+        list,
+        Leaf,
+        (
+            boxed(96.0, 20.0).shrink(0.0),
+            Paint::Monochrome(vec![glyph(0.0, 0.5, RED)]),
+        ),
+    );
+    app.tick();
+    let before = queue(&mut app, win.id(), 0).opaque.commands[0].rect;
+    // The glyph's top is 2.5 logical: device 3 unscrolled. Scrolled by 3
+    // it must sit at 0, as the copied pixels do, not at round(-0.5) = -1.
+    scroll_to(&mut app, list, 0.0, 3.0);
+    app.tick();
+    let after = queue(&mut app, win.id(), 0).opaque.commands[0].rect;
+    assert_eq!(before.y(), 3.0);
+    assert_eq!(
+        after,
+        Rect::new(before.x(), 0.0, before.width(), before.height())
+    );
+}
+
+#[test]
+fn a_row_appearing_in_view_without_scrolling_in_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    // Row 1 (y 40) loses its paint without a dirty mark landing first:
+    // the walk sees it vanish mid-list, which no scroll explains.
+    let row = s.rows[1];
+    *s.app.component_mut::<Layout>(row).unwrap() = Layout {
+        rect: Rect::new(0.0, 40.0, 0.0, 0.0),
+        ..*s.app.component::<Layout>(row).unwrap()
+    };
+    // The walk runs in the same flush as the writes, before any mark.
+    s.app.component_mut::<Viewport>(s.list).unwrap().scroll = Point::new(0.0, 12.0);
+    let win = s.win;
+    frame(&mut s.app, win);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_non_clipping_viewport_scrolling_inside_the_list_takes_the_normal_path() {
+    let mut inner = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, _, list| {
+        let v = app.spawn_with(
+            list,
+            Leaf,
+            (
+                boxed(200.0, 40.0).column().shrink(0.0),
+                Paint::None,
+                Viewport {
+                    clip: false,
+                    scroll: Point::default(),
+                },
+            ),
+        );
+        app.spawn_with(
+            v,
+            Leaf,
+            (boxed(200.0, 40.0).shrink(0.0), Paint::Quad(Quad::new(BLUE))),
+        );
+        inner = Some(v.id());
+    });
+    s.presented();
+    scroll_to(&mut s.app, inner.unwrap(), 0.0, 3.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_shifted_queue_copies_what_the_buffer_lacks_outside_the_area() {
+    // The list is 200 by 200 at the top of a 200 by 220 window: the band
+    // below it is outside the area.
+    let mut s = shifting();
+    let win = s.win;
+    let shift = Shift {
+        area: whole(),
+        by: Point::new(0.0, 12.0),
+    };
+    let band = Rect::new(0.0, 200.0, 200.0, 20.0);
+    let copy = |s: &mut Shifting, age| {
+        s.app
+            .resource_mut::<Scenes>()
+            .queue_shifted(win, shift, age)
+            .unwrap()
+            .copy
+            .clone()
+    };
+    // A buffer with nothing in it, or older than the history: all of it.
+    assert_eq!(copy(&mut s, 0), vec![band]);
+    assert_eq!(copy(&mut s, 3), vec![band]);
+    // Scrolling changed nothing outside: a recent buffer needs no copy.
+    s.scroll(0.0, 12.0);
+    s.scroll(0.0, 24.0);
+    assert_eq!(copy(&mut s, 2), vec![]);
 }

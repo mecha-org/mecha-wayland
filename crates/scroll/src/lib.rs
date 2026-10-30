@@ -15,6 +15,13 @@
 //!   render and the hit test shift the children by it and cut them to
 //!   the padding box. It grows as the content moves toward its end.
 //!   Nothing relays out while scrolling. There is no API to read or set it.
+//! - A frame where only the offset moved reuses the last one: the
+//!   backend copies it shifted and draws just the strip that came into
+//!   view. That holds only while the `Scrollable` sits on one flat colour
+//!   with nothing drawn over or under its box by anything outside it;
+//!   otherwise every scroll frame redraws the box, correct but slower. A
+//!   header, scrim or popup that floats over a big scroll belongs in a
+//!   separate window.
 //! - The range is `0 ..= max(0, extent - viewport)`: the extent runs from
 //!   the padding box's start to the furthest end of a direct child plus
 //!   the end padding, and the viewport is the padding box's length, both

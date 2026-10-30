@@ -8,7 +8,7 @@ use glow::HasContext;
 
 use crate::Budget;
 use crate::egl::Gpu;
-use crate::program::Program;
+use crate::program::Programs;
 
 /// Levels every layer has; glyph layers fill only the first.
 const LEVELS: i32 = 5;
@@ -110,7 +110,7 @@ impl Textures {
     /// New pages get a layer; then every dirty cell goes up in runs. A new
     /// `Atlas::generation` scrapped every page and reused ids, so layers
     /// are assigned afresh: the rebuilt pages are all dirty and go up whole.
-    pub(crate) fn upload(&mut self, gpu: &Gpu, program: &Program, atlas: &Atlas) {
+    pub(crate) fn upload(&mut self, gpu: &Gpu, programs: &Programs, atlas: &Atlas) {
         if atlas.externals().next().is_some() {
             todo!("gles: Class::External (dmabuf import) is not implemented yet");
         }
@@ -169,11 +169,12 @@ impl Textures {
             added = true;
         }
         if added {
-            // SAFETY: the program is the device's.
+            // SAFETY: the programs are the device's.
             unsafe {
-                gpu.gl.use_program(Some(program.program));
-                gpu.gl
-                    .uniform_4_i32_slice(program.u_page.as_ref(), &self.table);
+                for v in programs.all() {
+                    gpu.gl.use_program(Some(v.program));
+                    gpu.gl.uniform_4_i32_slice(v.u_page.as_ref(), &self.table);
+                }
             }
         }
 

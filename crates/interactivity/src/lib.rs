@@ -13,7 +13,9 @@
 //! # Model — contacts
 //!
 //! - Every event dispatches deepest/frontmost-first, the contact's window
-//!   last: a preorder walk's matches, reversed.
+//!   last: a preorder walk's matches, reversed. The walk honours
+//!   `layout::Viewport`: descendants are tested at their layout position
+//!   minus the accumulated scroll, and only inside the accumulated clip.
 //! - [`Enter`]/[`Exit`] come from a fresh hit test on every `Moved`,
 //!   independent of any capture in progress — unless the contact is
 //!   claimed (below).

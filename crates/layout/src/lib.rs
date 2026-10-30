@@ -20,6 +20,8 @@
 //!   `OnChanged<LayoutRoot>` never fire while [`LayoutModule`] is
 //!   installed. A spawn or removal dirties the parent's root. Only dirty
 //!   roots are recomputed; taffy's cache skips unchanged subtrees.
+//! - [`Viewport`] shifts and clips how descendants are drawn and hit. It
+//!   is read by render and the hit test, never by the pass.
 //! - [`LayoutDone`] is signalled once per tick, after the pass, naming
 //!   the roots recomputed; empty when none was.
 //!
@@ -71,7 +73,7 @@ mod tree;
 use std::fmt;
 
 use app::{App, Component, Module, NodeId, PostTick, Removed, Resource, Signal, Spawned};
-use geometry::{Insets, Rect, Size};
+use geometry::{Insets, Point, Rect, Size};
 use taffy::AvailableSpace;
 use taffy::geometry::Size as TSize;
 use taffy::style_helpers::TaffyMaxContent;
@@ -87,8 +89,8 @@ use tree::{LayoutTree, taffy_id};
 pub mod prelude {
     pub use crate::{
         Align, Available, ComputedLayout, Constraints, Direction, Display, Justify, LayoutDone,
-        LayoutModule, LayoutRoot, LayoutStyle, Measure, Position, StyleContext, Val, Wrap, auto,
-        percent, px,
+        LayoutModule, LayoutRoot, LayoutStyle, Measure, Position, StyleContext, Val, Viewport,
+        Wrap, auto, percent, px,
     };
 }
 
@@ -256,6 +258,20 @@ impl ComputedLayout {
     }
 }
 
+/// A scrolling window onto a node's descendants. They are drawn and hit
+/// at their layout position minus `scroll`, accumulated through nested
+/// viewports; the node itself is not shifted. With `clip`, descendants
+/// are drawn and hit only inside this node's padding box (the rect inside
+/// its border), intersected with any outer clip. Layout ignores it, so
+/// writing it never relays out anything.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Viewport {
+    pub clip: bool,
+    pub scroll: Point,
+}
+
+impl Component for Viewport {}
+
 // ---------------------------------------------------------------------------
 // Private state
 // ---------------------------------------------------------------------------
@@ -329,6 +345,7 @@ impl Module for LayoutModule {
             .register_component::<Measure>()
             .register_component::<LayoutRoot>()
             .register_component::<ComputedLayout>()
+            .register_component::<Viewport>()
             .register_component::<Scratch>()
             .init_resource::<DirtyRoots>()
             .system(on_spawned)

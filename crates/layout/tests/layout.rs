@@ -909,3 +909,34 @@ fn set_width_moves_the_box_once_and_a_repeat_call_writes_nothing() {
         "the same width again writes nothing, so nothing to lay out"
     );
 }
+
+#[test]
+fn viewport_does_not_change_layout() {
+    let mut app = app();
+    let r = root(&mut app, 100.0, 100.0);
+    let a = child(&mut app, r, fixed(40.0, 40.0));
+    let b = child(&mut app, a, fixed(10.0, 10.0));
+    app.tick();
+    let before: Vec<_> = [r, a, b]
+        .iter()
+        .map(|&id| *app.component::<ComputedLayout>(id).unwrap())
+        .collect();
+    take_done();
+    take_moved();
+    *app.component_mut::<Viewport>(a).unwrap() = Viewport {
+        clip: true,
+        scroll: geometry::Point::new(3.0, 7.0),
+    };
+    app.tick();
+    assert_eq!(
+        take_done(),
+        vec![Vec::<NodeId>::new()],
+        "no root recomputed"
+    );
+    assert!(take_moved().is_empty());
+    let after: Vec<_> = [r, a, b]
+        .iter()
+        .map(|&id| *app.component::<ComputedLayout>(id).unwrap())
+        .collect();
+    assert_eq!(before, after);
+}

@@ -258,7 +258,14 @@ pub(crate) fn walk(
                 // Whole device pixels, so every edge moves by the same
                 // amount and a row keeps its height while it scrolls.
                 let device = Point::new((v.scroll.x * scale).round(), (v.scroll.y * scale).round());
-                let moved = scrolled(scene, id, v.clip, device, clip, child_solid, moved);
+                // Every node has a `Viewport`; only one that clips can be
+                // the shift's, and one that does not and scrolls fails its
+                // descendants' carry instead. So only clipping ones are kept.
+                let moved = if v.clip {
+                    scrolled(scene, id, device, clip, child_solid, moved)
+                } else {
+                    moved
+                };
                 (shift + device, clip, moved)
             }
             None => (shift, clip, moved),
@@ -290,29 +297,33 @@ fn moved_by(r: Rect, shift: Point) -> Rect {
 /// Note a viewport's device `scroll` and visible `area` for the next walk
 /// and judge its move since the last one. Returns what its descendants
 /// carry: `moved` from above, or this viewport's move if it is the one
-/// that scrolled. A move fails the pure scroll when the
-/// viewport does not clip, sits inside another that moved, follows
-/// another mover, changed its area, or has anything but one colour behind
-/// its area.
-#[allow(clippy::too_many_arguments)]
+/// that scrolled. A move fails the pure scroll when the viewport sits
+/// inside another that moved, follows another mover, changed its area, or
+/// has anything but one colour behind its area. For a clipping viewport.
 fn scrolled(
     scene: &mut Scene,
     id: NodeId,
-    clips: bool,
     scroll: Point,
     area: Rect,
     behind: Option<Solid>,
     moved: Option<Mover>,
 ) -> Option<Mover> {
+    // Viewports come in the same preorder walk after walk, so the record
+    // at this one's index is nearly always its own.
+    let k = scene.viewing.len();
     scene.viewing.push(Scrolled { id, scroll, area });
-    let Some(last) = scene.viewed.iter().find(|s| s.id == id).copied() else {
+    let last = match scene.viewed.get(k) {
+        Some(s) if s.id == id => Some(*s),
+        _ => scene.viewed.iter().find(|s| s.id == id).copied(),
+    };
+    let Some(last) = last else {
         return moved;
     };
     if last.scroll == scroll {
         return moved;
     }
     let flat = behind.is_some_and(|s| rect::contains(s.rect, area));
-    if !clips || moved.is_some() || scene.mover.is_some() || last.area != area || !flat {
+    if moved.is_some() || scene.mover.is_some() || last.area != area || !flat {
         scene.pure = false;
     }
     let m = Mover {

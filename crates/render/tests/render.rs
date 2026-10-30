@@ -1832,3 +1832,32 @@ fn a_row_appearing_in_view_without_scrolling_in_takes_the_normal_path() {
     frame(&mut s.app, win);
     assert_eq!(s.shift(), None);
 }
+
+#[test]
+fn a_non_clipping_viewport_scrolling_inside_the_list_takes_the_normal_path() {
+    let mut inner = None;
+    let mut s = shifting_with(Paint::Quad(Quad::new(GREY)), |app, _, list| {
+        let v = app.spawn_with(
+            list,
+            Leaf,
+            (
+                boxed(200.0, 40.0).column().shrink(0.0),
+                Paint::None,
+                Viewport {
+                    clip: false,
+                    scroll: Point::default(),
+                },
+            ),
+        );
+        app.spawn_with(
+            v,
+            Leaf,
+            (boxed(200.0, 40.0).shrink(0.0), Paint::Quad(Quad::new(BLUE))),
+        );
+        inner = Some(v.id());
+    });
+    s.presented();
+    scroll_to(&mut s.app, inner.unwrap(), 0.0, 3.0);
+    s.scroll(0.0, 12.0);
+    assert_eq!(s.shift(), None);
+}

@@ -550,6 +550,69 @@ mod tests {
     }
 
     #[test]
+    fn a_walk_records_only_the_clipping_viewports() {
+        use layout::prelude::*;
+        use window::prelude::*;
+        struct Leaf;
+        impl Build for Leaf {
+            type Widget = Leaf;
+        }
+        impl Widget for Leaf {
+            type Builder = Leaf;
+            fn build(b: Leaf, _: Handle<Self>, _: &mut Spawner<'_, Self>) -> Self {
+                b
+            }
+        }
+        fn answer(app: &mut App, r: &FrameRequested) {
+            app.signal(Frame(r.0));
+        }
+        let mut app = App::new();
+        app.add_module(LayoutModule)
+            .add_module(paint::PaintModule)
+            .add_module(WindowModule)
+            .add_module(animation::AnimationModule)
+            .add_module(RenderModule { buffers: 2 })
+            .system(answer);
+        let win = app
+            .spawn(
+                app.root(),
+                window().layout(LayoutStyle::default().size(px(200.0), px(200.0))),
+            )
+            .id();
+        let list = app
+            .spawn_with(
+                win,
+                Leaf,
+                (
+                    LayoutStyle::default().column().size(px(200.0), px(200.0)),
+                    Viewport {
+                        clip: true,
+                        scroll: geometry::Point::default(),
+                    },
+                ),
+            )
+            .id();
+        for _ in 0..100 {
+            app.spawn_with(
+                list,
+                Leaf,
+                (
+                    LayoutStyle::default().size(px(200.0), px(4.0)).shrink(0.0),
+                    paint::Paint::Quad(paint::Quad::new(Color::WHITE)),
+                ),
+            );
+        }
+        app.tick();
+        app.component_mut::<Viewport>(list).unwrap().scroll = geometry::Point::new(0.0, 8.0);
+        app.tick();
+        // Every node has a `Viewport`; only the list clips. Recording the
+        // rest made each walk quadratic in the node count.
+        let scenes = app.resource::<Scenes>();
+        let (_, scene) = scenes.scenes.iter().find(|(w, _)| *w == win).unwrap();
+        assert_eq!(scene.viewed.len(), 1);
+    }
+
+    #[test]
     fn flags_round_trip() {
         let f = Command::pack(Command::IMAGE, true, true, 0.5);
         let c = Command {

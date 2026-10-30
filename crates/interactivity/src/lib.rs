@@ -5,7 +5,8 @@
 //! (or a test, until `presentation` exists) reduces `wl_pointer`,
 //! `wl_touch` and `wl_keyboard` to two signals, [`ContactInput`] and
 //! [`KeyboardInput`], and this crate turns those into per-node events:
-//! [`Press`], [`Release`], [`Enter`], [`Exit`] and [`Clicked`] at the
+//! [`Press`], [`PressMoved`], [`PressCancelled`], [`Release`], [`Enter`],
+//! [`Exit`] and [`Clicked`] at the
 //! nodes under a contact's position, and [`KeyPress`], [`KeyRepeat`],
 //! [`KeyRelease`] at the node holding the keyboard focus.
 //!
@@ -18,6 +19,10 @@
 //! - [`Press`] locks in ("captures") the hit-set under the contact for
 //!   that press; [`Release`] and [`Clicked`] route to that captured set,
 //!   never to a fresh hit test, even if the contact moved in between.
+//! - [`PressMoved`] fires on every `Moved` of a contact with a capture,
+//!   to the captured set, after that move's `Exit`/`Enter`.
+//!   [`PressCancelled`] goes to the captured set on a `Cancelled`, before
+//!   the teardown `Exit`; that set then never gets `Release`/`Clicked`.
 //! - A `Touch` contact's state is torn down right after its `Released`
 //!   (with a final `Exit` for whatever it is over at that point), since a
 //!   finger has no idle position to keep hovering at. A `Mouse` contact's
@@ -96,7 +101,10 @@ mod module;
 
 pub use contact::{ContactId, ContactInput, ContactPhase};
 pub use contacts::Contacts;
-pub use events::{Clicked, Enter, Exit, KeyPress, KeyRelease, KeyRepeat, Press, Release};
+pub use events::{
+    Clicked, Enter, Exit, KeyPress, KeyRelease, KeyRepeat, Press, PressCancelled, PressMoved,
+    Release,
+};
 pub use keyboard::{KeyMeaning, KeyState, KeyboardFocus, KeyboardInput, Modifiers};
 pub use module::InteractivityModule;
 
@@ -104,6 +112,6 @@ pub mod prelude {
     pub use crate::{
         Clicked, ContactId, ContactInput, ContactPhase, Contacts, Enter, Exit, InteractivityModule,
         KeyMeaning, KeyPress, KeyRelease, KeyRepeat, KeyState, KeyboardFocus, KeyboardInput,
-        Modifiers, Press, Release,
+        Modifiers, Press, PressCancelled, PressMoved, Release,
     };
 }

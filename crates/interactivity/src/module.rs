@@ -11,7 +11,10 @@ use app::{App, Module, NodeId};
 
 use crate::contact::{ContactId, ContactInput, ContactPhase};
 use crate::contacts::{Contacts, HitSet};
-use crate::events::{Clicked, Enter, Exit, KeyPress, KeyRelease, KeyRepeat, Press, Release};
+use crate::events::{
+    Clicked, Enter, Exit, KeyPress, KeyRelease, KeyRepeat, Press, PressCancelled, PressMoved,
+    Release,
+};
 use crate::hit_test::hit_test;
 use crate::keyboard::{KeyState, KeyboardFocus, KeyboardInput};
 
@@ -27,8 +30,8 @@ fn trusted_window(app: &App, window: NodeId) {
 }
 
 /// Registers the `Contacts` and `KeyboardFocus` resources and the systems
-/// that turn a `ContactInput` into `Press`/`Release`/`Enter`/`Exit`/
-/// `Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
+/// that turn a `ContactInput` into `Press`/`PressMoved`/`PressCancelled`/
+/// `Release`/`Enter`/`Exit`/`Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
 /// `KeyRelease`. Installs after `WindowModule`.
 pub struct InteractivityModule;
 
@@ -56,13 +59,13 @@ fn on_moved(app: &mut App, input: &ContactInput) {
     }
     trusted_window(app, input.window);
     let hit = hit_test(app, input.window, input.position);
-    let (entered, exited) = {
+    let (entered, exited, captured) = {
         let mut contacts = app.resource_mut::<Contacts>();
         let state = contacts.entry(input.contact, input.window);
         let (entered, exited) = diff(&state.hit, &hit);
         state.hit = hit;
         state.position = input.position;
-        (entered, exited)
+        (entered, exited, state.captured.clone())
     };
     if !exited.is_empty() {
         app.emit(
@@ -80,6 +83,16 @@ fn on_moved(app: &mut App, input: &ContactInput) {
                 position: input.position,
             },
             &entered[..],
+        );
+    }
+    if let Some(captured) = captured.filter(|c| !c.is_empty()) {
+        app.emit(
+            PressMoved {
+                contact: input.contact,
+                position: input.position,
+                time: input.time,
+            },
+            &captured[..],
         );
     }
 }
@@ -167,13 +180,23 @@ fn on_cancelled(app: &mut App, input: &ContactInput) {
     if input.phase != ContactPhase::Cancelled {
         return;
     }
-    let hit = {
+    let state = {
         let mut contacts = app.resource_mut::<Contacts>();
-        contacts.take(input.contact).map(|s| s.hit)
+        contacts.take(input.contact)
     };
-    let Some(hit) = hit else {
+    let Some(state) = state else {
         return;
     };
+    if let Some(captured) = state.captured.filter(|c| !c.is_empty()) {
+        app.emit(
+            PressCancelled {
+                contact: input.contact,
+                position: input.position,
+            },
+            &captured[..],
+        );
+    }
+    let hit = state.hit;
     if !hit.is_empty() {
         app.emit(
             Exit {

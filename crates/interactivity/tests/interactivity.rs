@@ -154,6 +154,19 @@ fn log_order_clicked(_: &mut App, _: &Emitted<Clicked>) {
 fn log_order_exit(_: &mut App, _: &Emitted<Exit>) {
     ORDER.with(|l| l.borrow_mut().push("exit"));
 }
+thread_local! {
+    static PRESS_MOVED: RefCell<Vec<NodeId>> = const { RefCell::new(Vec::new()) };
+}
+fn log_press_moved(_: &mut App, e: &Emitted<PressMoved>) {
+    PRESS_MOVED.with(|l| l.borrow_mut().extend(e.targets.iter().copied()));
+}
+fn take_press_moved() -> Vec<NodeId> {
+    PRESS_MOVED.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+fn log_order_press_cancelled(_: &mut App, _: &Emitted<PressCancelled>) {
+    ORDER.with(|l| l.borrow_mut().push("press_cancelled"));
+}
+
 fn take_order() -> Vec<&'static str> {
     ORDER.with(|l| std::mem::take(&mut *l.borrow_mut()))
 }
@@ -171,7 +184,9 @@ fn app() -> App {
         .system(log_order_press)
         .system(log_order_release)
         .system(log_order_clicked)
-        .system(log_order_exit);
+        .system(log_order_exit)
+        .system(log_press_moved)
+        .system(log_order_press_cancelled);
     app
 }
 
@@ -627,4 +642,56 @@ fn touch_release_teardown_exits_the_current_hit_set_while_release_and_clicked_us
         vec![other.id(), win.id()],
         "the touch-teardown Exit reads the post-move .hit, not .captured"
     );
+}
+
+// ── PressMoved / PressCancelled ─────────────────────────────────────────
+
+#[test]
+fn press_moved_reaches_the_captured_set_not_the_fresh_hit() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let a = app.spawn_with(win, Leaf, (at(10.0, 10.0, 40.0, 40.0),));
+    let b = app.spawn_with(win, Leaf, (at(100.0, 100.0, 40.0, 40.0),));
+    app.tick();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(20.0, 20.0)));
+    app.signal(pressed(win, ContactId::Mouse, Point::new(20.0, 20.0)));
+    app.flush();
+    take_press_moved();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(110.0, 110.0)));
+    app.flush();
+    let targets = take_press_moved();
+    assert_eq!(targets, vec![a.id(), win.id()]);
+    assert!(!targets.contains(&b.id()));
+}
+
+#[test]
+fn no_press_moved_without_a_capture() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let _a = app.spawn_with(win, Leaf, (at(10.0, 10.0, 40.0, 40.0),));
+    app.tick();
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(20.0, 20.0)));
+    app.signal(moved(win, ContactId::Mouse, Point::new(30.0, 30.0)));
+    app.flush();
+    assert!(take_press_moved().is_empty());
+}
+
+#[test]
+fn cancelled_sends_press_cancelled_to_the_captured_set_then_exit() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (_card, _button) = card_and_button(&mut app, win);
+    app.tick();
+
+    app.signal(pressed(win, ContactId::Mouse, Point::new(30.0, 30.0)));
+    app.flush();
+    take_order();
+
+    app.signal(cancelled(win, ContactId::Mouse, Point::new(30.0, 30.0)));
+    app.flush();
+    assert_eq!(take_order(), vec!["press_cancelled", "exit"]);
+    assert!(take_clicked().is_empty());
 }

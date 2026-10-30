@@ -1,6 +1,6 @@
-//! Node-level events dispatched from a `ContactInput`. All five carry the
-//! same two fields; see the crate docs for which nodes receive them and
-//! in what order.
+//! Node-level events dispatched from a `ContactInput`. All carry the
+//! contact and its position; see the crate docs for which nodes receive
+//! them and in what order.
 
 use app::Event;
 use geometry::Point;
@@ -27,6 +27,23 @@ pub struct Release {
     pub position: Point,
     /// The originating `ContactInput`'s timestamp, in milliseconds.
     pub time: u32,
+}
+/// A contact that pressed this node has moved. Reaches the set captured
+/// at `Press`, not a fresh hit test, on every `Moved` while the capture
+/// lasts — after that move's `Exit`/`Enter`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PressMoved {
+    pub contact: ContactId,
+    pub position: Point,
+    /// The originating `ContactInput`'s timestamp, in milliseconds.
+    pub time: u32,
+}
+/// A contact that pressed this node was cancelled: the captured set will
+/// never get `Release` or `Clicked`. Fires before the teardown `Exit`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PressCancelled {
+    pub contact: ContactId,
+    pub position: Point,
 }
 /// A contact's fresh hit-set now includes this node, where it did not on
 /// the previous `Moved`. Independent of any capture in progress.
@@ -57,6 +74,8 @@ pub struct Clicked {
 
 impl Event for Press {}
 impl Event for Release {}
+impl Event for PressMoved {}
+impl Event for PressCancelled {}
 impl Event for Enter {}
 impl Event for Exit {}
 impl Event for Clicked {}

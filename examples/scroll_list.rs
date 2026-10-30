@@ -6,14 +6,13 @@
 //! field: `SCROLL_SLOP`, `SCROLL_MIN_FLING`, `SCROLL_MAX_FLING`,
 //! `SCROLL_FRICTION`, `SCROLL_OVERSCROLL_FRICTION`,
 //! `SCROLL_SPRING_STIFFNESS`, `SCROLL_SPRING_RATIO`,
-//! `SCROLL_RUBBER_HALF_LIFE`. Logs go to stderr: `clicked row N`,
-//! `fling v=... px/s` after a release and `settled at ...` when the glide
-//! ends.
-
-use std::time::Instant;
+//! `SCROLL_RUBBER_HALF_LIFE`; a value out of its field's range is
+//! ignored with a warning. Logs go to stderr: `clicked row N`,
+//! `fling v=... px/s` on releasing a contact that moved past the slop,
+//! and `settled at ...` when the glide after it ends.
 
 use mecha_wayland::prelude::*;
-use scroll::Tuning;
+use scroll::{Tuning, VelocityTracker};
 
 /// A clickable box with a text label. It does nothing on its own;
 /// the caller wires `Clicked` on the handle `button` returns.
@@ -47,32 +46,71 @@ impl Widget for Button {
     }
 }
 
-/// Tuning with any `SCROLL_*` variable that parses applied over the default.
+/// Tuning with any `SCROLL_*` variable that parses and is in range
+/// applied over the default.
 fn tuning_from_env() -> Tuning {
-    fn var(name: &str, field: &mut f64) {
-        if let Some(v) = std::env::var(name).ok().and_then(|v| v.parse().ok()) {
+    fn var(name: &str, field: &mut f64, valid: fn(f64) -> bool, range: &str) {
+        let Some(v) = std::env::var(name).ok().and_then(|v| v.parse().ok()) else {
+            return;
+        };
+        if valid(v) {
             *field = v;
+        } else {
+            eprintln!("ignoring {name}={v}: must be {range}");
         }
     }
+    let any = |_: f64| true;
+    let positive = |v: f64| v > 0.0;
     let mut t = Tuning::default();
-    var("SCROLL_SLOP", &mut t.slop);
-    var("SCROLL_MIN_FLING", &mut t.min_fling);
-    var("SCROLL_MAX_FLING", &mut t.max_fling);
-    var("SCROLL_FRICTION", &mut t.friction_drag);
-    var("SCROLL_OVERSCROLL_FRICTION", &mut t.overscroll_friction);
-    var("SCROLL_SPRING_STIFFNESS", &mut t.spring_stiffness);
-    var("SCROLL_SPRING_RATIO", &mut t.spring_ratio);
-    var("SCROLL_RUBBER_HALF_LIFE", &mut t.rubber_band_half_life);
+    var("SCROLL_SLOP", &mut t.slop, any, "a number");
+    var("SCROLL_MIN_FLING", &mut t.min_fling, positive, "> 0");
+    var("SCROLL_MAX_FLING", &mut t.max_fling, positive, "> 0");
+    var(
+        "SCROLL_FRICTION",
+        &mut t.friction_drag,
+        |v| v > 0.0 && v < 1.0,
+        "in (0, 1)",
+    );
+    var(
+        "SCROLL_OVERSCROLL_FRICTION",
+        &mut t.overscroll_friction,
+        any,
+        "a number",
+    );
+    var(
+        "SCROLL_SPRING_STIFFNESS",
+        &mut t.spring_stiffness,
+        positive,
+        "> 0",
+    );
+    var("SCROLL_SPRING_RATIO", &mut t.spring_ratio, positive, "> 0");
+    var(
+        "SCROLL_RUBBER_HALF_LIFE",
+        &mut t.rubber_band_half_life,
+        positive,
+        "> 0",
+    );
     t
 }
 
-/// What the logger saw of the list on the last frame. The `Scrollable`
-/// has no offset or event API, so motion is read off its `Viewport`.
+/// What the logger saw of the list. The `Scrollable` has no offset or
+/// velocity API, so the release speed is estimated here from the same
+/// events with the same tracker, and the rest read off its `Viewport`.
 #[derive(Default)]
 struct Motion {
-    last: Option<(Instant, f32)>,
+    /// Each contact down on the list.
+    strokes: Vec<Stroke>,
+    /// A release that flung was seen; the next frames watch the glide.
     released: bool,
-    moving: bool,
+    gliding: bool,
+    last: Option<f32>,
+}
+
+struct Stroke {
+    contact: ContactId,
+    origin: f32,
+    moved: bool,
+    tracker: VelocityTracker,
 }
 
 impl Resource for Motion {}
@@ -81,31 +119,80 @@ fn list(app: &mut App) -> Option<NodeId> {
     app.widgets::<Scrollable>().map(|(id, _)| id).next()
 }
 
-fn on_release(app: &mut App, _: &Emitted<Release>) {
-    app.resource_mut::<Motion>().released = true;
+/// Whether `targets` reached the list.
+fn on_list(app: &mut App, targets: &[NodeId]) -> bool {
+    list(app).is_some_and(|id| targets.contains(&id))
 }
 
-/// Speed between frames stands in for the release velocity: the first
-/// frame after a release logs it, and a glide that has all but stopped
-/// logs where it rests.
+fn on_press(app: &mut App, e: &Emitted<Press>) {
+    if !on_list(app, &e.targets) {
+        return;
+    }
+    let mut tracker = VelocityTracker::default();
+    tracker.add(e.event.time, f64::from(e.event.position.y));
+    let mut m = app.resource_mut::<Motion>();
+    m.strokes.retain(|s| s.contact != e.event.contact);
+    m.strokes.push(Stroke {
+        contact: e.event.contact,
+        origin: e.event.position.y,
+        moved: false,
+        tracker,
+    });
+}
+
+fn on_press_moved(app: &mut App, e: &Emitted<PressMoved>) {
+    if !on_list(app, &e.targets) {
+        return;
+    }
+    let slop = app.resource::<Tuning>().slop;
+    let mut m = app.resource_mut::<Motion>();
+    let Some(s) = m.strokes.iter_mut().find(|s| s.contact == e.event.contact) else {
+        return;
+    };
+    let y = e.event.position.y;
+    s.tracker.add(e.event.time, f64::from(y));
+    s.moved |= f64::from((y - s.origin).abs()) > slop;
+}
+
+/// A contact that moved past the slop logs its release speed as the
+/// list's offset velocity: the offset moves against the finger.
+fn on_release(app: &mut App, e: &Emitted<Release>) {
+    let mut m = app.resource_mut::<Motion>();
+    let Some(i) = m.strokes.iter().position(|s| s.contact == e.event.contact) else {
+        return;
+    };
+    let s = m.strokes.swap_remove(i);
+    if s.moved {
+        let v = -s.tracker.velocity(e.event.time);
+        eprintln!("fling v={v:.0} px/s");
+        m.released = true;
+    }
+}
+
+fn on_press_cancelled(app: &mut App, e: &Emitted<PressCancelled>) {
+    if on_list(app, &e.targets) {
+        let contact = e.event.contact;
+        app.resource_mut::<Motion>()
+            .strokes
+            .retain(|s| s.contact != contact);
+    }
+}
+
+/// After a release that flung, a glide that has all but stopped logs
+/// where it rests.
 fn on_frame(app: &mut App, _: &Frame) {
     let Some(id) = list(app) else { return };
     let y = app.component::<Viewport>(id).map_or(0.0, |v| v.scroll.y);
-    let now = Instant::now();
     let mut m = app.resource_mut::<Motion>();
-    if let Some((then, prev)) = m.last {
-        let dt = now.duration_since(then).as_secs_f32();
-        let v = if dt > 0.0 { (y - prev) / dt } else { 0.0 };
-        if m.released {
-            m.released = false;
-            m.moving = true;
-            eprintln!("fling v={v:.0} px/s");
-        } else if m.moving && (y - prev).abs() < 0.05 {
-            m.moving = false;
-            eprintln!("settled at {y:.1}");
-        }
+    if m.released {
+        // The glide starts timing on this frame; it moves from the next.
+        m.released = false;
+        m.gliding = true;
+    } else if m.gliding && m.last.is_some_and(|prev| (y - prev).abs() < 0.05) {
+        m.gliding = false;
+        eprintln!("settled at {y:.1}");
     }
-    m.last = Some((now, y));
+    m.last = Some(y);
 }
 
 /// Spawns the window and the list; stops the app on close.
@@ -162,7 +249,11 @@ fn main() {
         .add_module(RenderModule::default())
         .insert_resource(Atlas::new());
     app.insert_resource(Motion::default());
-    app.system(on_release).system(on_frame);
+    app.system(on_press)
+        .system(on_press_moved)
+        .system(on_release)
+        .system(on_press_cancelled)
+        .system(on_frame);
     app.add_module(RingModule::default())
         .add_module(
             WaylandModule::new()

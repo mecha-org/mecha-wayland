@@ -11,9 +11,11 @@ const STOPPED_MS: u32 = 40;
 /// Port of `IOSScrollViewFlingVelocityTracker`
 /// (`references/flutter/packages/flutter/lib/src/gestures/velocity_tracker.dart`)
 /// along one axis. Times are compositor milliseconds, compared with
-/// `wrapping_sub` so the 32-bit clock may wrap mid-drag.
+/// `wrapping_sub` so the 32-bit clock may wrap mid-drag. Public only so
+/// the example can log the release speed a `Scrollable` reads.
+#[doc(hidden)]
 #[derive(Clone, Debug, Default)]
-pub(crate) struct VelocityTracker {
+pub struct VelocityTracker {
     samples: [Option<Sample>; SAMPLES],
     /// The newest sample.
     index: usize,
@@ -26,17 +28,17 @@ struct Sample {
 }
 
 impl VelocityTracker {
-    pub(crate) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         *self = Self::default();
     }
 
-    pub(crate) fn add(&mut self, time_ms: u32, position: f64) {
+    pub fn add(&mut self, time_ms: u32, position: f64) {
         self.index = (self.index + 1) % SAMPLES;
         self.samples[self.index] = Some(Sample { time_ms, position });
     }
 
     /// Px/s at `now_ms`; `0` with no samples or when the newest is stale.
-    pub(crate) fn velocity(&self, now_ms: u32) -> f64 {
+    pub fn velocity(&self, now_ms: u32) -> f64 {
         let Some(newest) = self.samples[self.index] else {
             return 0.0;
         };

@@ -106,6 +106,8 @@ pub use module::ScrollModule;
 #[doc(hidden)]
 pub use physics::Tuning;
 pub use scrollable::{Axis, Scrollable, ScrollableBuilder, scrollable};
+#[doc(hidden)]
+pub use velocity::VelocityTracker;
 
 pub mod prelude {
     pub use crate::{Axis, ScrollModule, Scrollable, ScrollableBuilder, scrollable};

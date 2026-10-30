@@ -1158,6 +1158,21 @@ fn set_keyboard_interactivity_on_a_toplevel_does_nothing() {
     );
 }
 
+#[test]
+fn layer_surface_of_returns_the_windows_layer_surface() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    let ls = f.app.resource::<Surfaces>().layer_surface_of(win);
+    assert_eq!(ls.map(|l| l.id()), Some(ObjectId(XDG)));
+}
+
+#[test]
+fn layer_surface_of_a_toplevel_is_none() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    assert_eq!(f.app.resource::<Surfaces>().layer_surface_of(win), None);
+}
+
 fn set_input_region(f: &mut Fake, win: NodeId, region: Option<&[Rect]>) {
     {
         let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();

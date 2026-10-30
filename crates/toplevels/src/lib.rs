@@ -11,11 +11,17 @@
 //!
 //! Install after `WaylandModule`, which must bind `WlSeat`. A compositor
 //! without the manager yields an empty, unavailable [`Toplevels`].
+//!
+//! `phosh_private` (version 8 or later) is bound too, when offered, for
+//! live window previews: see [`Thumbnail`](prelude::Thumbnail).
 
 use app::prelude::*;
 use wayland::prelude::*;
 
+mod thumbnail;
+
 pub mod prelude {
+    pub use crate::thumbnail::Thumbnail;
     pub use crate::{ToplevelId, ToplevelInfo, Toplevels, ToplevelsChanged, ToplevelsModule};
 }
 
@@ -71,6 +77,8 @@ struct Entry {
 /// The open windows. See the module docs.
 pub struct Toplevels {
     manager: Option<ZwlrForeignToplevelManagerV1>,
+    /// `phosh_private`, bound only when it is version 8 or later.
+    phosh: Option<PhoshPrivate>,
     entries: Vec<Entry>,
     stamp: u64,
     /// The list changed since the last `ToplevelsChanged`.
@@ -125,8 +133,18 @@ impl Module for ToplevelsModule {
             globals.bind::<ZwlrForeignToplevelManagerV1>(&global, &mut wl)
         });
         let available = manager.is_some();
+        let phosh = app
+            .resource::<Globals>()
+            .find(PhoshPrivate::NAME)
+            .filter(|g| g.version >= thumbnail::MIN_VERSION)
+            .cloned()
+            .map(|global| {
+                let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
+                globals.bind::<PhoshPrivate>(&global, &mut wl)
+            });
         app.insert_resource(Toplevels {
             manager,
+            phosh,
             entries: Vec::new(),
             stamp: 0,
             dirty: false,

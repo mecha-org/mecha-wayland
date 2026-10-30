@@ -263,6 +263,15 @@ impl Surfaces {
         self.entries.get(&window).map(|e| e.surface)
     }
 
+    /// `window`'s `zwlr_layer_surface_v1`, or `None` for a toplevel or an
+    /// unknown window.
+    pub fn layer_surface_of(&self, window: NodeId) -> Option<ZwlrLayerSurfaceV1> {
+        match self.entries.get(&window)?.shell {
+            Shell::Layer(ls) => Some(ls),
+            _ => None,
+        }
+    }
+
     /// Re-send `set_size` on `window`'s `zwlr_layer_surface_v1`, requesting a
     /// new width/height. `0` defers to the compositor on that axis (e.g. a
     /// width of `0` with left+right anchored stretches full-width). The

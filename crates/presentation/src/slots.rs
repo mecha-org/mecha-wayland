@@ -92,3 +92,35 @@ impl Slots {
         }
     }
 }
+
+/// The slot holding the frame presented last, `frames - 1`, as a shift's
+/// source: `None` before any frame, after the slots were reset, or when
+/// that slot is `target` itself.
+pub(crate) fn previous(drawn: &[Option<u64>], target: usize, frames: u64) -> Option<usize> {
+    let last = frames.checked_sub(1)?;
+    drawn
+        .iter()
+        .position(|d| *d == Some(last))
+        .filter(|&j| j != target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_previous_slot_is_the_one_drawn_last_frame() {
+        assert_eq!(previous(&[Some(4), Some(5)], 0, 6), Some(1));
+    }
+
+    #[test]
+    fn no_previous_slot_when_it_is_the_target() {
+        assert_eq!(previous(&[Some(4), Some(5)], 1, 6), None);
+    }
+
+    #[test]
+    fn no_previous_slot_after_a_reset_or_before_any_frame() {
+        assert_eq!(previous(&[None, None], 0, 6), None);
+        assert_eq!(previous(&[None, None], 0, 0), None);
+    }
+}

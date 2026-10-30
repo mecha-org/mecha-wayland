@@ -35,6 +35,13 @@
 //!   down are cut to it. So scrolling damages what moved through the
 //!   bounds alone, and a row scrolled out of sight costs a visit and
 //!   nothing else.
+//! - When every walk since the last [`Scenes::presented`] moved only one
+//!   clipping viewport's scroll, [`Scenes::shift`] says so, and the
+//!   backend may copy the presented frame shifted and draw
+//!   [`Scenes::queue_shifted`]: only the exposed strip. It needs the
+//!   viewport's area to sit wholly on one solid colour with nothing outside
+//!   its subtree, ancestors aside, drawn over or under it, and a whole
+//!   scale; anything else takes the full path.
 //! - `Layout` and `AnimatedPaint` changes, and removals, mark the nodes
 //!   and raise `RequestFrame` for their window; a `Viewport` change only
 //!   raises it, since what it moves damages itself; animation

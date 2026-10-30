@@ -950,7 +950,16 @@ fn on_frame(app: &mut App, f: &Frame) {
         .drawn
         .map(|d| (entry.frames - d) as usize)
         .unwrap_or(0);
-    let Some(queue) = scenes.queue(w, age) else {
+    // Only a scroll moved since the frame in the other slot: copy that
+    // frame shifted and draw the strip it leaves.
+    let drawn = slots.slots.each_ref().map(|s| s.drawn);
+    let shifted =
+        slots::previous(&drawn, i, entry.frames).and_then(|j| scenes.shift(w).map(|sh| (sh, j)));
+    let queue = match shifted {
+        Some((sh, _)) => scenes.queue_shifted(w, sh),
+        None => scenes.queue(w, age),
+    };
+    let Some(queue) = queue else {
         return;
     };
     if queue.scissor.is_empty() {
@@ -974,15 +983,21 @@ fn on_frame(app: &mut App, f: &Frame) {
         entry.wanting = true;
         return;
     }
-    let slot = &mut slots.slots[i];
     s.device.upload(&atlas);
+    if let Some((sh, j)) = shifted {
+        s.device
+            .shift(&slots.slots[j].target, &slots.slots[i].target, sh);
+    }
+    let slot = &mut slots.slots[i];
     s.device.draw(&slot.target, queue);
     if entry.scale != entry.scale_sent {
         entry.surface.set_buffer_scale(&mut wl, entry.scale);
         entry.scale_sent = entry.scale;
     }
     entry.surface.attach(&mut wl, Some(slot.buffer), 0, 0);
-    for &r in &queue.scissor {
+    // A shift moved everything in its area; a redraw changed its scissor.
+    let shifted_area = shifted.map(|(sh, _)| [sh.area]);
+    for &r in shifted_area.as_ref().map_or(&queue.scissor[..], |a| &a[..]) {
         let (x, y, dw, dh) = outward(r);
         entry.surface.damage_buffer(&mut wl, x, y, dw, dh);
     }
@@ -993,6 +1008,7 @@ fn on_frame(app: &mut App, f: &Frame) {
     slot.held = true;
     slot.drawn = Some(entry.frames);
     entry.frames += 1;
+    scenes.presented(w);
 }
 
 /// A device-pixel rect rounded outward: `(x, y, width, height)` as

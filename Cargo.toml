@@ -25,6 +25,7 @@ widgets.workspace = true
 window.workspace = true
 theme.workspace = true
 text-input.workspace = true
+toplevels.workspace = true
 mechanix-widgets.workspace = true
 
 [dev-dependencies]
@@ -51,6 +52,7 @@ members = [
     "crates/window",
     "crates/theme",
     "crates/text-input",
+    "crates/toplevels",
     "crates/mechanix-widgets",
 ]
 resolver = "3"
@@ -75,6 +77,7 @@ widgets = { path = "crates/widgets" }
 window = { path = "crates/window" }
 theme = { path = "crates/theme" }
 text-input = { path = "crates/text-input" }
+toplevels = { path = "crates/toplevels" }
 mechanix-widgets = { path = "crates/mechanix-widgets" }
 bitflags = "2"
 fontdue = "0.9"

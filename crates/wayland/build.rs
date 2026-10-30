@@ -22,5 +22,6 @@ fn main() {
         "protocols/virtual-keyboard-unstable-v1.xml",
         "protocols/input-method-unstable-v2.xml",
         "protocols/text-input-unstable-v3.xml",
+        "protocols/wlr-foreign-toplevel-management-unstable-v1.xml",
     ]);
 }

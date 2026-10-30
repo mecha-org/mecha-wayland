@@ -405,6 +405,7 @@ dependencies = [
  "text-input",
  "theme",
  "timer",
+ "toplevels",
  "wayland",
  "widgets",
  "window",
@@ -831,6 +832,14 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
+]
+
+[[package]]
+name = "toplevels"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "wayland",
 ]
 
 [[package]]

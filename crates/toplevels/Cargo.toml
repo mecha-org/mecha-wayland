@@ -1,0 +1,11 @@
+[package]
+name = "toplevels"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app.workspace = true
+wayland.workspace = true
+
+[dev-dependencies]
+wayland = { workspace = true, features = ["fake"] }

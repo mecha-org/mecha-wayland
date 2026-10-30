@@ -48,6 +48,7 @@
 //!     clear: Color::rgb(0.1, 0.2, 0.3),
 //!     depth: 2.0,
 //!     scissor: vec![Rect::new(0.0, 0.0, 320.0, 200.0)],
+//!     copy: Vec::new(),
 //!     opaque: Pass::default(),
 //!     translucent: Pass::default(),
 //! };
@@ -194,16 +195,23 @@ impl Device {
         self.textures.calls
     }
 
-    /// Copies the presented frame in `from` into `to` for a scroll:
-    /// outside `shift.area` as it is, inside it moved by `-shift.by`. The
-    /// strip that leaves is drawn next with [`render::Scenes::queue_shifted`].
-    /// `from` and `to` are different targets of one size.
-    pub fn shift(&mut self, from: &Target, to: &Target, shift: render::Shift) {
+    /// Copies the presented frame in `from` into `to` for a scroll: each
+    /// of `copy` (the shifted queue's [`render::Queue::copy`]) as it is,
+    /// then `shift.area` moved by `-shift.by`. The strip that leaves is
+    /// drawn next with [`render::Scenes::queue_shifted`]. `from` and `to`
+    /// are different targets of one size.
+    pub fn shift(
+        &mut self,
+        from: &Target,
+        to: &Target,
+        shift: render::Shift,
+        copy: &[geometry::Rect],
+    ) {
         debug_assert!(
             (from.width(), from.height()) == (to.width(), to.height()),
             "gles: a shift copies between targets of one size"
         );
-        copy::shift(&self.gpu, from, to, shift);
+        copy::shift(&self.gpu, from, to, shift, copy);
     }
 
     /// Executes one queue on one target: the clears, the opaque pass,

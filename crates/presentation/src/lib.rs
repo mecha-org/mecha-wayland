@@ -956,7 +956,7 @@ fn on_frame(app: &mut App, f: &Frame) {
     let shifted =
         slots::previous(&drawn, i, entry.frames).and_then(|j| scenes.shift(w).map(|sh| (sh, j)));
     let queue = match shifted {
-        Some((sh, _)) => scenes.queue_shifted(w, sh),
+        Some((sh, _)) => scenes.queue_shifted(w, sh, age),
         None => scenes.queue(w, age),
     };
     let Some(queue) = queue else {
@@ -985,8 +985,12 @@ fn on_frame(app: &mut App, f: &Frame) {
     }
     s.device.upload(&atlas);
     if let Some((sh, j)) = shifted {
-        s.device
-            .shift(&slots.slots[j].target, &slots.slots[i].target, sh);
+        s.device.shift(
+            &slots.slots[j].target,
+            &slots.slots[i].target,
+            sh,
+            &queue.copy,
+        );
     }
     let slot = &mut slots.slots[i];
     s.device.draw(&slot.target, queue);

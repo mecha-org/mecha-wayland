@@ -13,6 +13,7 @@ fn queue(w: f32, h: f32, clear: Color, scissor: Vec<Rect>) -> Queue {
         clear,
         depth: 2.0,
         scissor,
+        copy: Vec::new(),
         opaque: Pass::default(),
         translucent: Pass::default(),
     }

@@ -261,6 +261,10 @@ pub struct Queue {
     /// range.
     pub depth: f32,
     pub scissor: Vec<Rect>,
+    /// For a shifted queue only: the rects outside the shift's area that
+    /// the buffer lacks, copied from the presented frame as they are
+    /// before the area is copied moved. Empty otherwise.
+    pub copy: Vec<Rect>,
     /// Front to back: z descending.
     pub opaque: Pass,
     /// Back to front: z ascending.
@@ -350,14 +354,16 @@ impl Scenes {
             .and_then(|(_, s)| s.shift())
     }
 
-    /// The commands for a buffer that already holds the presented frame
-    /// shifted by `shift`, as a backend copies it: only the strip the
-    /// move exposed is drawn. `None` if `window` has no scene.
-    pub fn queue_shifted(&mut self, window: NodeId, shift: Shift) -> Option<&Queue> {
+    /// The commands for a buffer of `age` (as [`Scenes::queue`]) that a
+    /// backend fills from the presented frame: first `copy`, the rects
+    /// outside `shift.area` the buffer lacks, as they are; then the area,
+    /// moved by `-shift.by`; then only the strip the move exposed is
+    /// drawn. `None` if `window` has no scene.
+    pub fn queue_shifted(&mut self, window: NodeId, shift: Shift, age: usize) -> Option<&Queue> {
         self.scenes
             .iter_mut()
             .find(|(w, _)| *w == window)
-            .map(|(_, s)| s.queue_shifted(shift))
+            .map(|(_, s)| s.queue_shifted(shift, age))
     }
 
     /// The last walk of `window` is what the backend just drew and

@@ -260,18 +260,54 @@ impl Scene {
     /// The commands for a buffer that holds the presented frame shifted
     /// by `shift`: the scissor is the strip the move exposed, the edge
     /// the content left first, then the side, cut to the rows it kept.
-    pub(crate) fn queue_shifted(&mut self, shift: crate::Shift) -> &Queue {
+    pub(crate) fn queue_shifted(&mut self, shift: crate::Shift, age: usize) -> &Queue {
+        let window = self.window_rect();
         let q = &mut self.queue;
         q.size = self.size;
         q.scale = self.scale;
         q.clear = self.clear;
         q.depth = self.depth;
+        // What the buffer lacks, as `queue` unions it, less the area.
+        q.copy.clear();
+        let held = age >= 1 && age <= self.history.len();
+        let whole = (!held).then_some(window);
+        let lacks = self
+            .history
+            .iter()
+            .take(if held { age } else { 0 })
+            .flatten()
+            .copied();
+        for r in lacks.chain(whole) {
+            for part in around(r, shift.area) {
+                if !q.copy.iter().any(|kept| rect::contains(*kept, part)) {
+                    q.copy.push(part);
+                }
+            }
+        }
         q.scissor.clear();
         q.scissor.extend(exposed(shift));
         fill(&mut q.opaque, &self.opaque, &q.scissor);
         fill(&mut q.translucent, &self.translucent, &q.scissor);
         q
     }
+}
+
+/// `r` less `hole`: up to four rects, the bands above and below the hole
+/// across `r`, then the sides beside it.
+fn around(r: Rect, hole: Rect) -> impl Iterator<Item = Rect> {
+    let cut = rect::intersection(r, hole);
+    let parts = if cut.is_empty() {
+        [Some(r), None, None, None]
+    } else {
+        [
+            Rect::new(r.x(), r.y(), r.width(), cut.y() - r.y()),
+            Rect::new(r.x(), cut.bottom(), r.width(), r.bottom() - cut.bottom()),
+            Rect::new(r.x(), cut.y(), cut.x() - r.x(), cut.height()),
+            Rect::new(cut.right(), cut.y(), r.right() - cut.right(), cut.height()),
+        ]
+        .map(|p| (p.width() > 0.0 && p.height() > 0.0).then_some(p))
+    };
+    parts.into_iter().flatten()
 }
 
 /// What a shift leaves to draw: `area` less where its content lands, one

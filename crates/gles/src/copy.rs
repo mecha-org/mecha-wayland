@@ -9,11 +9,10 @@ use crate::draw::scissor;
 use crate::egl::Gpu;
 use crate::target::Target;
 
-/// `from` into `to`: outside `shift.area` as it is, inside it moved by
+/// `from` into `to`: each of `copy` as it is, then `shift.area` moved by
 /// `-shift.by`. The strip the move exposed is left as it was in `to`.
-pub(crate) fn shift(gpu: &Gpu, from: &Target, to: &Target, shift: render::Shift) {
+pub(crate) fn shift(gpu: &Gpu, from: &Target, to: &Target, shift: render::Shift, copy: &[Rect]) {
     let gl = &gpu.gl;
-    let window = Rect::new(0.0, 0.0, from.width() as f32, from.height() as f32);
     let (ax, ay, aw, ah) = scissor(shift.area);
     let (bx, by) = (shift.by.x as i32, shift.by.y as i32);
     // SAFETY: the context is current; both FBOs are live targets'.
@@ -37,14 +36,12 @@ pub(crate) fn shift(gpu: &Gpu, from: &Target, to: &Target, shift: render::Shift)
                 );
             }
         };
-        // The rest of the window: the bands above and below the area,
-        // then beside it.
-        if shift.area != window {
-            let (ww, wh) = (from.width() as i32, from.height() as i32);
-            blit(0, 0, ww, ay, 0, 0);
-            blit(0, ay + ah, ww, wh - ay - ah, 0, 0);
-            blit(0, ay, ax, ah, 0, 0);
-            blit(ax + aw, ay, ww - ax - aw, ah, 0, 0);
+        // Only what the buffer lacks outside the area: each blit costs
+        // about as much as its size on the Comet, so copying the rest of
+        // the window every frame cost a fifth of the frame.
+        for &r in copy {
+            let (x, y, w, h) = scissor(r);
+            blit(x, y, w, h, 0, 0);
         }
         // What stays in sight: where it lands, read from where it was.
         let x = if bx > 0 { ax } else { ax - bx };

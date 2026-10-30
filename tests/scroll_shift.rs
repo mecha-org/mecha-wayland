@@ -223,12 +223,12 @@ impl Case {
         let strip = self
             .app
             .resource_mut::<Scenes>()
-            .queue_shifted(self.win, shift)
+            .queue_shifted(self.win, shift, 0)
             .expect("a scene")
             .clone();
         let whole = self.queue();
         d.upload(&self.app.resource::<Atlas>());
-        d.shift(&a, &b, shift);
+        d.shift(&a, &b, shift, &strip.copy);
         d.draw(&b, &strip);
         d.draw(&c, &whole);
         let (got, want) = (d.read(&b), d.read(&c));

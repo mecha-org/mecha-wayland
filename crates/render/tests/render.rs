@@ -1755,7 +1755,7 @@ fn shifted_scissor(by: Point) -> Vec<Rect> {
     let win = s.win;
     s.app
         .resource_mut::<Scenes>()
-        .queue_shifted(win, Shift { area: whole(), by })
+        .queue_shifted(win, Shift { area: whole(), by }, 0)
         .expect("a scene")
         .scissor
         .clone()
@@ -1860,4 +1860,32 @@ fn a_non_clipping_viewport_scrolling_inside_the_list_takes_the_normal_path() {
     scroll_to(&mut s.app, inner.unwrap(), 0.0, 3.0);
     s.scroll(0.0, 12.0);
     assert_eq!(s.shift(), None);
+}
+
+#[test]
+fn a_shifted_queue_copies_what_the_buffer_lacks_outside_the_area() {
+    // The list is 200 by 200 at the top of a 200 by 220 window: the band
+    // below it is outside the area.
+    let mut s = shifting();
+    let win = s.win;
+    let shift = Shift {
+        area: whole(),
+        by: Point::new(0.0, 12.0),
+    };
+    let band = Rect::new(0.0, 200.0, 200.0, 20.0);
+    let copy = |s: &mut Shifting, age| {
+        s.app
+            .resource_mut::<Scenes>()
+            .queue_shifted(win, shift, age)
+            .unwrap()
+            .copy
+            .clone()
+    };
+    // A buffer with nothing in it, or older than the history: all of it.
+    assert_eq!(copy(&mut s, 0), vec![band]);
+    assert_eq!(copy(&mut s, 3), vec![band]);
+    // Scrolling changed nothing outside: a recent buffer needs no copy.
+    s.scroll(0.0, 12.0);
+    s.scroll(0.0, 24.0);
+    assert_eq!(copy(&mut s, 2), vec![]);
 }

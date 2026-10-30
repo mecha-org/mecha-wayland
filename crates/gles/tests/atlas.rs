@@ -521,3 +521,126 @@ fn a_reused_id_that_changes_class_draws_from_the_right_array() {
     }
     assert!(brightest > 200, "the glyph has ink: {brightest}");
 }
+
+/// A 16 by 16 icon of full coverage.
+fn full_icon() -> Bitmap {
+    Bitmap {
+        width: 16,
+        height: 16,
+        format: Format::R8,
+        pixels: vec![255; 16 * 16],
+    }
+}
+
+#[test]
+fn a_page_uploaded_after_a_draw_reaches_sprite_and_image_programs() {
+    let Some((_g, mut d)) = device() else { return };
+    let mut atlas = Atlas::new();
+    d.upload(&atlas);
+    let r = Rect::new(0.0, 0.0, 32.0, 32.0);
+    let q = queue(32.0, 32.0, Color::BLACK);
+    let mut fill = q.clone();
+    fill.translucent = Pass {
+        scissor: q.scissor.clone(),
+        commands: vec![Command {
+            rect: r,
+            z: 0.0,
+            color: Color::rgb(0.0, 0.0, 1.0),
+            border_color: Color::rgb(0.0, 0.0, 1.0),
+            background: Color::TRANSPARENT,
+            radii: Corners::all(0.0),
+            border: Insets::all(0.0),
+            tile: AtlasTile {
+                atlas: AtlasId::default(),
+                bounds: Rect::ZERO,
+            },
+            flags: Command::pack(Command::QUAD, false, false, 1.0),
+            clip: r,
+        }],
+    };
+    draw_one(&mut d, 32, 32, &fill, "a_page_uploaded_after_a_draw_fill");
+
+    let icon = atlas.insert(Class::Icon, &full_icon()).unwrap(); // mono page
+    let img = atlas.insert(Class::Image, &halves()).unwrap(); // color page
+    d.upload(&atlas);
+    let mut later = q.clone();
+    later.translucent = Pass {
+        scissor: q.scissor.clone(),
+        commands: vec![
+            image(r, atlas.sprite(img).tile, false, 1.0),
+            sprite(
+                Rect::new(16.0, 16.0, 16.0, 16.0),
+                atlas.sprite(icon).tile,
+                Color::rgb(0.0, 0.0, 1.0),
+                None,
+            ),
+        ],
+    };
+    let px = draw_one(
+        &mut d,
+        32,
+        32,
+        &later,
+        "a_page_uploaded_after_a_draw_reaches_sprite_and_image_programs",
+    );
+    assert!(near(pixel(&px, 32, 4, 4), rgb(1.0, 0.0, 0.0), 2), "image");
+    assert!(near(pixel(&px, 32, 24, 24), rgb(0.0, 0.0, 1.0), 2), "icon");
+}
+
+#[test]
+fn a_translucent_pass_alternating_kinds_keeps_paint_order() {
+    let Some((_g, mut d)) = device() else { return };
+    let mut atlas = Atlas::new();
+    let icon = atlas.insert(Class::Icon, &full_icon()).unwrap();
+    let img = atlas.insert(Class::Image, &halves()).unwrap();
+    d.upload(&atlas);
+    let r = Rect::new(0.0, 0.0, 32.0, 32.0);
+    let half_blue = Color::rgba(0.0, 0.0, 1.0, 0.5);
+    let mut q = queue(32.0, 32.0, Color::BLACK);
+    q.translucent = Pass {
+        scissor: q.scissor.clone(),
+        commands: vec![
+            image(r, atlas.sprite(img).tile, false, 1.0),
+            Command {
+                rect: r,
+                z: 0.0,
+                color: half_blue,
+                border_color: half_blue,
+                background: Color::TRANSPARENT,
+                radii: Corners::all(4.0),
+                border: Insets::all(0.0),
+                tile: AtlasTile {
+                    atlas: AtlasId::default(),
+                    bounds: Rect::ZERO,
+                },
+                flags: Command::pack(Command::QUAD, false, false, 1.0),
+                clip: r,
+            },
+            sprite(
+                Rect::new(0.0, 0.0, 16.0, 16.0),
+                atlas.sprite(icon).tile,
+                Color::rgba(0.0, 1.0, 0.0, 0.5),
+                None,
+            ),
+        ],
+    };
+    let px = draw_one(
+        &mut d,
+        32,
+        32,
+        &q,
+        "a_translucent_pass_alternating_kinds_keeps_paint_order",
+    );
+    // Red, then half blue over it, then half green over that.
+    assert!(
+        near(pixel(&px, 32, 8, 8), rgb(0.25, 0.5, 0.25), 3),
+        "{:?}",
+        pixel(&px, 32, 8, 8)
+    );
+    // Outside the sprite: red under half blue.
+    assert!(
+        near(pixel(&px, 32, 8, 24), rgb(0.5, 0.0, 0.5), 3),
+        "{:?}",
+        pixel(&px, 32, 8, 24)
+    );
+}

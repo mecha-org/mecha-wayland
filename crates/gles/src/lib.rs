@@ -21,8 +21,11 @@
 //! - [`Device::draw`] uploads both passes' commands as the bytes they
 //!   are, clears each damage rect, then draws the opaque pass with depth
 //!   write and no blending and the translucent pass with depth test and
-//!   premultiplied blending: one instanced draw of the whole pass per
-//!   damage rect. No texture is bound inside a frame. The vertex shader
+//!   premultiplied blending. Each kind of command has its own small
+//!   program (fill, box, sprite, image) carrying only that kind's work;
+//!   the opaque pass is grouped by program, cheapest first, and the
+//!   translucent pass keeps its order. Each run of one program is one
+//!   instanced draw per damage rect. No texture is bound inside a frame. The vertex shader
 //!   clamps each command's corners to its `clip` and shades from where
 //!   they land, so a clipped command draws only its kept part, unchanged.
 //! - Everything is device pixels, y included: GL row 0 is the buffer's
@@ -103,11 +106,13 @@ pub enum Error {
 /// device's life. Not `Send`.
 ///
 /// `gpu` is declared last so it drops last: [`Drop for Device`](#impl-Drop-for-Device)
-/// frees the atlas textures and the program's GL objects first, while
+/// frees the atlas textures and the programs' GL objects first, while
 /// the context is still current.
 pub struct Device {
     budget: Budget,
-    program: program::Program,
+    programs: program::Programs,
+    /// The opaque pass in program order, reused by every draw.
+    sorted: Vec<render::Command>,
     textures: textures::Textures,
     gpu: egl::Gpu,
 }
@@ -117,12 +122,13 @@ impl Device {
     /// [`Error::NoDevice`].
     pub fn try_open(budget: Budget) -> Result<Device, Error> {
         let gpu = egl::Gpu::open()?;
-        let program = program::Program::new(&gpu);
+        let programs = program::Programs::new(&gpu);
         let textures = textures::Textures::new(&gpu, budget);
         Ok(Device {
             gpu,
             budget,
-            program,
+            programs,
+            sorted: Vec::new(),
             textures,
         })
     }
@@ -179,7 +185,7 @@ impl Device {
     /// Uploads what changed in the atlas: new pages get a layer, dirty
     /// cells go up as runs. Takes `&Atlas`, so the drain is not a write.
     pub fn upload(&mut self, atlas: &atlas::Atlas) {
-        self.textures.upload(&self.gpu, &self.program, atlas);
+        self.textures.upload(&self.gpu, &self.programs, atlas);
     }
 
     /// How many sub-image uploads `upload` has issued so far. For tests.
@@ -204,7 +210,7 @@ impl Device {
             }
         }
         draw::clear(&self.gpu, target, queue);
-        draw::passes(&self.gpu, &self.program, target, queue);
+        draw::passes(&self.gpu, &self.programs, target, queue, &mut self.sorted);
         draw::finish(&self.gpu);
     }
 }
@@ -220,6 +226,6 @@ fn q_commands(q: &render::Queue) -> impl Iterator<Item = &render::Command> {
 impl Drop for Device {
     fn drop(&mut self) {
         self.textures.drop_with(&self.gpu);
-        self.program.drop_with(&self.gpu);
+        self.programs.drop_with(&self.gpu);
     }
 }

@@ -172,6 +172,7 @@ fn quad(rect: Rect, z: f32, color: Color, background: Option<Color>) -> Command 
         border: Insets::all(0.0),
         tile: NO_TILE,
         flags: Command::pack(Command::QUAD, background.is_some(), false, 1.0),
+        clip: rect,
     }
 }
 
@@ -281,6 +282,45 @@ fn rounded_corners_match_the_cpu_reference() {
             "at {x},{y}: got {got}, want {want}"
         );
     }
+    d.destroy(t);
+}
+
+#[test]
+fn clip_crops_a_quad() {
+    let Some((_g, mut d)) = device() else { return };
+    let t = d.target(40, 40, &[]);
+    let blue = Color::rgb(0.0, 0.0, 1.0);
+    let mut c = quad(Rect::new(0.0, 0.0, 40.0, 40.0), 0.0, Color::WHITE, None);
+    c.radii = Corners::all(8.0);
+    let q = queue(40.0, 40.0, blue, whole(40.0, 40.0));
+    d.draw(&t, &translucent(q.clone(), vec![c]));
+    let whole_quad = d.read(&t);
+    let clipped = Command {
+        clip: Rect::new(0.0, 0.0, 20.0, 40.0),
+        ..c
+    };
+    d.draw(&t, &translucent(q, vec![clipped]));
+    let px = d.read(&t);
+    png("clip_crops_a_quad", 40, 40, &px);
+    assert_eq!(pixel(&px, 40, 10, 20), rgb(1.0, 1.0, 1.0), "the quad");
+    for y in 0..40 {
+        for x in 0..40 {
+            let got = pixel(&px, 40, x, y);
+            if x >= 20 {
+                assert_eq!(got, rgb(0.0, 0.0, 1.0), "cut away at {x},{y}");
+            } else {
+                // The kept half, its rounded corners included, is the
+                // unclipped draw's.
+                let want = pixel(&whole_quad, 40, x, y);
+                assert!(near(got, want, 1), "at {x},{y}: {got:?}, want {want:?}");
+            }
+        }
+    }
+    assert_eq!(
+        pixel(&px, 40, 0, 0),
+        rgb(0.0, 0.0, 1.0),
+        "the top-left corner is still rounded"
+    );
     d.destroy(t);
 }
 

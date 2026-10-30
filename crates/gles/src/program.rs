@@ -20,6 +20,7 @@ layout(location = 6) in vec4 a_border;
 layout(location = 7) in uint a_atlas;
 layout(location = 8) in vec4 a_tile;
 layout(location = 9) in uint a_flags;
+layout(location = 10) in vec4 a_clip;
 
 uniform vec2 u_size;
 uniform float u_depth;
@@ -40,15 +41,19 @@ flat out int v_layer;
 
 void main() {
     vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
-    vec2 p = a_rect.xy + corner * a_rect.zw;
+    // The corner is pulled inside the clip and everything per pixel is
+    // derived from where it lands, so a clipped quad rasterises only its
+    // kept part and each kept pixel shades as it would unclipped.
+    vec2 p = clamp(a_rect.xy + corner * a_rect.zw, a_clip.xy, a_clip.xy + a_clip.zw);
+    vec2 f = (p - a_rect.xy) / a_rect.zw;
     gl_Position = vec4(
         p.x / u_size.x * 2.0 - 1.0,
         p.y / u_size.y * 2.0 - 1.0,
         1.0 - 2.0 * (a_z + 0.5) / u_depth,
         1.0);
     v_half = a_rect.zw * 0.5;
-    v_local = corner * a_rect.zw - v_half;
-    v_uv = (a_tile.xy + corner * a_tile.zw) * u_inv_page;
+    v_local = p - a_rect.xy - v_half;
+    v_uv = (a_tile.xy + f * a_tile.zw) * u_inv_page;
     v_color = a_color;
     v_border_color = a_border_color;
     v_background = a_background;
@@ -171,7 +176,7 @@ impl Program {
     /// The attribute offsets below are written against this number, so
     /// the `const _` under this `impl` refuses to compile if `Command`
     /// ever grows or shrinks.
-    pub(crate) const STRIDE: i32 = 124;
+    pub(crate) const STRIDE: i32 = 140;
 
     pub(crate) fn new(gpu: &Gpu) -> Program {
         let gl = &gpu.gl;
@@ -202,7 +207,7 @@ impl Program {
             gl.bind_vertex_array(Some(vao));
             let vbo = gl.create_buffer().expect("glGenBuffers");
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-            for i in 0..10 {
+            for i in 0..11 {
                 gl.enable_vertex_attrib_array(i);
                 gl.vertex_attrib_divisor(i, 1);
             }
@@ -220,7 +225,7 @@ impl Program {
         }
     }
 
-    /// Points the ten attributes at the instance that starts `base` bytes
+    /// Points the eleven attributes at the instance that starts `base` bytes
     /// into the VBO. GLES 3.0 has no base instance, so each pass calls
     /// this once with its offset.
     pub(crate) fn point(&self, gl: &glow::Context, base: i32) {
@@ -235,6 +240,7 @@ impl Program {
                 (5, 68),
                 (6, 84),
                 (8, 104),
+                (10, 124),
             ] {
                 gl.vertex_attrib_pointer_f32(loc, 4, glow::FLOAT, false, S, base + off);
             }

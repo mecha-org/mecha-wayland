@@ -22,7 +22,9 @@
 //!   are, clears each damage rect, then draws the opaque pass with depth
 //!   write and no blending and the translucent pass with depth test and
 //!   premultiplied blending: one instanced draw of the whole pass per
-//!   damage rect. No texture is bound inside a frame.
+//!   damage rect. No texture is bound inside a frame. The vertex shader
+//!   clamps each command's corners to its `clip` and shades from where
+//!   they land, so a clipped command draws only its kept part, unchanged.
 //! - Everything is device pixels, y included: GL row 0 is the buffer's
 //!   first row, which is the row the compositor reads as the top, so
 //!   nothing is flipped anywhere — not in the vertex shader, not in the

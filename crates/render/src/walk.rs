@@ -1,11 +1,12 @@
 //! The walk: one window's subtree in preorder, `Layout` and `AnimatedPaint` read
-//! into commands in device pixels, the solid behind each node carried
-//! down, and the damage of dirty nodes collected. Nothing here is a
-//! system; `on_frame` calls [`walk`] once per `Frame`.
+//! into commands in device pixels, the solid, the scroll and the clip
+//! above each node carried down, and the damage of dirty nodes collected.
+//! Nothing here is a system; `on_frame` calls [`walk`] once per `Frame`.
 
 use animation::{AnimatedPaint, Layout};
 use app::{Comps, CompsMut, NodeId, Tree};
-use geometry::{Color, Corners, Insets, Rect};
+use geometry::{Color, Corners, Insets, Point, Rect};
+use layout::Viewport;
 use paint::{MonochromeSprite, Paint, PolychromeSprite, Quad};
 
 use crate::{Command, Drawn, NO_TILE, rect, scene::Scene};
@@ -16,6 +17,18 @@ use crate::{Command, Drawn, NO_TILE, rect, scene::Scene};
 pub(crate) struct Solid {
     pub(crate) color: Color,
     pub(crate) rect: Rect,
+}
+
+/// A node still to visit: what its ancestors hand it. `shift` is the
+/// sum of their `Viewport` scrolls, logical pixels, taken off the node's
+/// layout; `clip` is the device rect its pixels are kept to, the window
+/// when no ancestor clips.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Visit {
+    pub(crate) id: NodeId,
+    pub(crate) solid: Option<Solid>,
+    pub(crate) shift: Point,
+    pub(crate) clip: Rect,
 }
 
 /// Logical to device: both edges scaled and rounded, so rects that touch
@@ -90,15 +103,20 @@ pub(crate) fn hand_down(
 }
 
 /// Preorder over `window`'s subtree. Every visited node takes a z; a
-/// visible paint in a non-empty box emits its commands into `scene`; a
-/// dirty node, or a clean one whose bounds or layout changed since last
-/// frame, adds its old and its new bounds to `scene.damage`, one rect when
-/// they coincide; every node that drew is recorded in `scene.drawing`.
+/// visible paint in a non-empty box emits its commands into `scene`,
+/// each at its layout less the shift above it and carrying the clip
+/// above it, unless the command lies wholly outside that clip; a dirty
+/// node, or a clean one whose bounds or layout changed since last frame,
+/// adds its old and its new bounds to `scene.damage`, one rect when they
+/// coincide; every node that drew is recorded in `scene.drawing`. Bounds
+/// are cut to the clip. A `Viewport` adds its scroll to the shift its
+/// descendants get and, with `clip`, cuts their clip to its padding box.
 /// Returns how many nodes were visited.
 pub(crate) fn walk(
     tree: Tree<'_>,
     layouts: &Comps<'_, Layout>,
     paints: &Comps<'_, AnimatedPaint>,
+    viewports: &Comps<'_, Viewport>,
     drawn: &mut CompsMut<'_, Drawn>,
     window: NodeId,
     scale: f32,
@@ -113,15 +131,34 @@ pub(crate) fn walk(
     // loop body needs the rest of the scene mutably, hence the take.
     let mut stack = std::mem::take(&mut scene.stack);
     stack.clear();
-    stack.push((window, root_solid));
+    stack.push(Visit {
+        id: window,
+        solid: root_solid,
+        shift: Point::default(),
+        clip: scene.window_rect(),
+    });
     let mut visited = 0u32;
-    while let Some((id, solid)) = stack.pop() {
+    while let Some(Visit {
+        id,
+        solid,
+        shift,
+        clip,
+    }) = stack.pop()
+    {
         let z = 2.0 * visited as f32;
         visited += 1;
         let (Some(layout), Some(animated)) = (layouts.get(id), paints.get(id)) else {
             continue;
         };
         let paint = &animated.0;
+        // Where the node is displayed: its layout less the scroll above it.
+        let layout = Layout {
+            rect: Rect {
+                origin: layout.rect.origin - shift,
+                size: layout.rect.size,
+            },
+            ..*layout
+        };
         let r = scale_rect(layout.rect, scale);
         let mut bounds: Option<Rect> = None;
         let mut child_solid = solid;
@@ -129,26 +166,34 @@ pub(crate) fn walk(
             match paint {
                 Paint::None => {}
                 Paint::Quad(q) => {
-                    child_solid = emit_quad(q, r, z, solid, scale, scene);
+                    child_solid = emit_quad(q, r, z, solid, clip, scale, scene);
                     bounds = Some(r);
                 }
                 Paint::Monochrome(run) => {
-                    bounds = emit_run(run, layout.content(), z, solid, scale, scene);
+                    bounds = emit_run(run, layout.content(), z, solid, clip, scale, scene);
                 }
                 Paint::Polychrome(p) => {
                     let content = scale_rect(layout.content(), scale);
                     if !content.is_empty() {
-                        emit_image(p, content, z, solid, scale, scene);
+                        emit_image(p, content, z, solid, clip, scale, scene);
                         bounds = Some(content);
                         child_solid = None;
                     }
                 }
             }
         }
+        let bounds = bounds
+            .map(|b| rect::intersection(b, clip))
+            .filter(|b| !b.is_empty());
+        // A node that drew nothing keeps no layout: its moves cannot
+        // damage, so a hidden row scrolling past writes no record.
+        let kept = bounds.map(|_| layout);
         if let Some(mut d) = drawn.get_mut(id) {
             // Layout may be written at frame time, after the last drain,
             // and affect pixels even when the emitted bounds stay equal.
-            if d.dirty || d.rect != bounds || d.layout != Some(*layout) {
+            // The shift is in it, so a scroll that keeps the clipped
+            // bounds equal still damages them.
+            if d.dirty || d.rect != bounds || d.layout != kept {
                 if let Some(old) = d.rect {
                     scene.damage.push(old);
                 }
@@ -162,16 +207,33 @@ pub(crate) fn walk(
             }
             d.set_if_neq(Drawn {
                 rect: bounds,
-                layout: Some(*layout),
+                layout: kept,
                 dirty: false,
             });
         }
         if let Some(b) = bounds {
             scene.drawing.push((id, b));
         }
+        let (shift, clip) = match viewports.get(id) {
+            Some(v) => {
+                let clip = if v.clip {
+                    let padding_box = scale_rect(layout.rect.inset(layout.border), scale);
+                    rect::intersection(clip, padding_box)
+                } else {
+                    clip
+                };
+                (shift + v.scroll, clip)
+            }
+            None => (shift, clip),
+        };
         if let Some(children) = tree.children(id) {
             for &child in children.iter().rev() {
-                stack.push((child, child_solid));
+                stack.push(Visit {
+                    id: child,
+                    solid: child_solid,
+                    shift,
+                    clip,
+                });
             }
         }
     }
@@ -179,12 +241,13 @@ pub(crate) fn walk(
     visited
 }
 
-/// The quad's three routes, and what it hands down.
+/// The quad's three routes, and what it hands down, cut to the clip.
 fn emit_quad(
     q: &Quad,
     r: Rect,
     z: f32,
     solid: Option<Solid>,
+    clip: Rect,
     scale: f32,
     scene: &mut Scene,
 ) -> Option<Solid> {
@@ -208,42 +271,64 @@ fn emit_quad(
         border: if visible { border } else { Insets::all(0.0) },
         tile: NO_TILE,
         flags: Command::pack(Command::QUAD, false, false, 1.0),
+        clip,
     };
     let opaque = Command::pack(Command::QUAD, true, false, 1.0);
     if q.is_opaque && inside {
         // The shader composites the whole quad, edges and border included,
         // onto the solid.
         let s = solid.expect("inside implies a solid");
-        scene.opaque.push(Command {
-            background: s.color,
-            flags: opaque,
-            ..base
-        });
+        push(
+            &mut scene.opaque,
+            Command {
+                background: s.color,
+                flags: opaque,
+                ..base
+            },
+        );
     } else if q.is_opaque && edge_free && q.color.a >= 1.0 {
         // A plain fill.
-        scene.opaque.push(Command {
-            background: q.color,
-            flags: opaque,
-            ..base
-        });
+        push(
+            &mut scene.opaque,
+            Command {
+                background: q.color,
+                flags: opaque,
+                ..base
+            },
+        );
     } else {
-        scene.translucent.push(base);
+        push(&mut scene.translucent, base);
         // The interior split: an opaque fill with edges and nothing known
         // behind it writes depth for its flat middle.
         if q.is_opaque && q.color.a >= 1.0 && !inner.is_empty() {
-            scene.opaque.push(Command {
-                rect: inner,
-                z: z + 1.0,
-                border_color: q.color,
-                background: q.color,
-                radii: Corners::all(0.0),
-                border: Insets::all(0.0),
-                flags: opaque,
-                ..base
-            });
+            push(
+                &mut scene.opaque,
+                Command {
+                    rect: inner,
+                    z: z + 1.0,
+                    border_color: q.color,
+                    background: q.color,
+                    radii: Corners::all(0.0),
+                    border: Insets::all(0.0),
+                    flags: opaque,
+                    ..base
+                },
+            );
         }
     }
-    hand_down(q, solid, inside, inner)
+    // Nothing of the quad shows outside the clip, so nothing is known
+    // there.
+    hand_down(q, solid, inside, inner).map(|s| Solid {
+        color: s.color,
+        rect: rect::intersection(s.rect, clip),
+    })
+}
+
+/// Into `list`, unless the command has no pixel inside its clip.
+fn push(list: &mut Vec<Command>, c: Command) {
+    if rect::intersects(c.rect, c.clip) {
+        list.push(c);
+    }
 }
 
 /// One command per visible sprite, from the content box's corner. Returns
@@ -253,6 +338,7 @@ fn emit_run(
     content: Rect,
     z: f32,
     solid: Option<Solid>,
+    clip: Rect,
     scale: f32,
     scene: &mut Scene,
 ) -> Option<Rect> {
@@ -286,11 +372,12 @@ fn emit_run(
             border: Insets::all(0.0),
             tile: s.tile,
             flags: Command::pack(Command::SPRITE, over.is_some(), false, 1.0),
+            clip,
         };
         if over.is_some() {
-            scene.opaque.push(cmd);
+            push(&mut scene.opaque, cmd);
         } else {
-            scene.translucent.push(cmd);
+            push(&mut scene.translucent, cmd);
         }
         bounds = Some(bounds.map_or(sr, |b| rect::union(b, sr)));
     }
@@ -304,6 +391,7 @@ fn emit_image(
     content: Rect,
     z: f32,
     solid: Option<Solid>,
+    clip: Rect,
     scale: f32,
     scene: &mut Scene,
 ) {
@@ -322,11 +410,12 @@ fn emit_image(
         border: Insets::all(0.0),
         tile: p.tile,
         flags: Command::pack(Command::IMAGE, over.is_some(), p.grayscale, p.opacity),
+        clip,
     };
     if over.is_some() {
-        scene.opaque.push(cmd);
+        push(&mut scene.opaque, cmd);
     } else {
-        scene.translucent.push(cmd);
+        push(&mut scene.translucent, cmd);
     }
 }
 

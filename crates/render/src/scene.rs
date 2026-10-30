@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use app::NodeId;
 use geometry::{Color, Rect, Size};
 
-use crate::{Command, Pass, Queue, rect, walk::Solid};
+use crate::{Command, Pass, Queue, rect, walk::Visit};
 
 /// Past this many rects a damage list collapses to its bounding rect.
 const MAX_RECTS: usize = 16;
@@ -33,8 +33,8 @@ pub(crate) struct Scene {
     /// yet clamped.
     pub(crate) damage: Vec<Rect>,
     /// The walk's preorder stack, kept so a frame does not allocate one:
-    /// each node still to visit with the solid behind it.
-    pub(crate) stack: Vec<(NodeId, Option<Solid>)>,
+    /// each node still to visit with what its ancestors hand it.
+    pub(crate) stack: Vec<Visit>,
     /// The last `buffers` frames' damage, newest first, each clamped and
     /// collapsed.
     history: VecDeque<Vec<Rect>>,
@@ -152,8 +152,8 @@ impl Scene {
     }
 }
 
-/// The commands that touch any scissor rect, in order, and the rects one
-/// of them touched. `scissor` holds at most `MAX_RECTS` entries after
+/// The commands whose part inside their clip touches any scissor rect,
+/// in order, and the rects one of them touched. `scissor` holds at most `MAX_RECTS` entries after
 /// `collapse`, so a word of bits tracks which were touched.
 fn fill(pass: &mut Pass, commands: &[Command], scissor: &[Rect]) {
     debug_assert!(scissor.len() <= MAX_RECTS);
@@ -161,9 +161,10 @@ fn fill(pass: &mut Pass, commands: &[Command], scissor: &[Rect]) {
     pass.scissor.clear();
     let mut touched: u32 = 0;
     for c in commands {
+        let shown = rect::intersection(c.rect, c.clip);
         let mut hit = false;
         for (i, s) in scissor.iter().enumerate() {
-            if rect::intersects(c.rect, *s) {
+            if rect::intersects(shown, *s) {
                 touched |= 1 << i;
                 hit = true;
             }
@@ -214,6 +215,7 @@ mod tests {
             border: Insets::all(0.0),
             tile: NO_TILE,
             flags: 0,
+            clip: WINDOW,
         }
     }
 

@@ -34,6 +34,7 @@ fn sprite(rect: Rect, tile: AtlasTile, color: Color, background: Option<Color>) 
         border: Insets::all(0.0),
         tile,
         flags: Command::pack(Command::SPRITE, background.is_some(), false, 1.0),
+        clip: rect,
     }
 }
 
@@ -48,6 +49,7 @@ fn image(rect: Rect, tile: AtlasTile, grayscale: bool, opacity: f32) -> Command 
         border: Insets::all(0.0),
         tile,
         flags: Command::pack(Command::IMAGE, false, grayscale, opacity),
+        clip: rect,
     }
 }
 

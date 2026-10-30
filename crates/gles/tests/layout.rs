@@ -6,8 +6,8 @@ use std::mem::{offset_of, size_of};
 use render::Command;
 
 #[test]
-fn a_command_is_124_bytes_at_the_offsets_the_attributes_use() {
-    assert_eq!(size_of::<Command>(), 124);
+fn a_command_is_140_bytes_at_the_offsets_the_attributes_use() {
+    assert_eq!(size_of::<Command>(), 140);
     assert_eq!(offset_of!(Command, rect), 0);
     assert_eq!(offset_of!(Command, z), 16);
     assert_eq!(offset_of!(Command, color), 20);
@@ -17,4 +17,5 @@ fn a_command_is_124_bytes_at_the_offsets_the_attributes_use() {
     assert_eq!(offset_of!(Command, border), 84);
     assert_eq!(offset_of!(Command, tile), 100);
     assert_eq!(offset_of!(Command, flags), 120);
+    assert_eq!(offset_of!(Command, clip), 124);
 }

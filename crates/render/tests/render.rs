@@ -1071,3 +1071,194 @@ fn a_removed_window_loses_its_scene_and_odd_frames_are_ignored() {
         "a frame never asks for another"
     );
 }
+
+// ── 11: viewports ───────────────────────────────────────────────────────
+
+/// A 100 by 50 list with a 2 px border at the window's corner, its
+/// `Viewport` set to `clip` and no scroll, and `rows` 96 by 20 green rows
+/// stacked from its content box at (2, 2). The list paints `list`.
+/// Returns the list and its rows.
+fn a_list(
+    app: &mut App,
+    win: Handle<Window>,
+    list: Paint,
+    clip: bool,
+    rows: usize,
+) -> (Handle<Leaf>, Vec<Handle<Leaf>>) {
+    let l = app.spawn_with(
+        win,
+        Leaf,
+        (
+            boxed(100.0, 50.0)
+                .column()
+                .shrink(0.0)
+                .border(Insets::all(px(2.0))),
+            list,
+            Viewport {
+                clip,
+                scroll: Point::default(),
+            },
+        ),
+    );
+    let rows = (0..rows)
+        .map(|_| {
+            app.spawn_with(
+                l,
+                Leaf,
+                (boxed(96.0, 20.0).shrink(0.0), Paint::Quad(Quad::new(GREEN))),
+            )
+        })
+        .collect();
+    (l, rows)
+}
+
+fn scroll_to(app: &mut App, id: impl Into<NodeId>, x: f32, y: f32) {
+    app.component_mut::<Viewport>(id).unwrap().scroll = Point::new(x, y);
+}
+
+/// Every command of both passes with that z.
+fn at_z(q: &Queue, z: f32) -> Vec<Command> {
+    q.opaque
+        .commands
+        .iter()
+        .chain(&q.translucent.commands)
+        .filter(|c| c.z == z)
+        .copied()
+        .collect()
+}
+
+#[test]
+fn scroll_shifts_children_commands() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::Quad(Quad::new(RED)), false, 3);
+    app.tick();
+    app.emit(ScaleFactorChanged { scale: 2.0 }, win);
+    app.flush();
+    scroll_to(&mut app, list, 0.0, 10.0);
+    app.tick();
+
+    let q = queue(&mut app, win.id(), 1);
+    let window = Rect::new(0.0, 0.0, 400.0, 200.0);
+    let l = at_z(&q, 2.0);
+    assert_eq!(l.len(), 1);
+    assert_eq!(
+        l[0].rect,
+        Rect::new(0.0, 0.0, 200.0, 100.0),
+        "the list itself is not shifted"
+    );
+    assert_eq!(l[0].clip, window, "no clip in effect: the window");
+    // Row 1's layout is (2, 22, 96, 20); less the scroll, times two.
+    let r = at_z(&q, 6.0);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].rect, Rect::new(4.0, 24.0, 192.0, 40.0));
+    assert_eq!(
+        r[0].clip, window,
+        "an unclipped viewport hands down its clip"
+    );
+    // Row 0 is shifted above the list and, unclipped, still drawn there.
+    assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, -16.0, 192.0, 40.0));
+}
+
+#[test]
+fn clip_is_the_padding_box_and_intersects() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, rows) = a_list(&mut app, win, Paint::Quad(Quad::new(RED)), true, 2);
+    // Row 0 clips too, around a 10 by 20 child at its corner.
+    *app.component_mut::<Viewport>(rows[0]).unwrap() = Viewport {
+        clip: true,
+        scroll: Point::default(),
+    };
+    app.spawn_with(
+        rows[0],
+        Leaf,
+        (boxed(10.0, 20.0), Paint::Quad(Quad::new(BLUE))),
+    );
+    app.tick();
+
+    // z: window 0, list 2, row 0 4, its child 6, row 1 8.
+    let padding_box = Rect::new(2.0, 2.0, 96.0, 46.0);
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        at_z(&q, 2.0)[0].clip,
+        window_rect(),
+        "the list is not clipped"
+    );
+    assert_eq!(at_z(&q, 4.0)[0].clip, padding_box, "inside the border");
+    assert_eq!(at_z(&q, 8.0)[0].clip, padding_box);
+    assert_eq!(
+        at_z(&q, 6.0)[0].clip,
+        Rect::new(2.0, 2.0, 96.0, 20.0),
+        "row 0's box, inside the list's"
+    );
+
+    // Scrolled 10 down, row 0 sits at (2, -8): its box and the list's
+    // overlap in (2, 2, 96, 10).
+    scroll_to(&mut app, list, 0.0, 10.0);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    let row = at_z(&q, 4.0)[0];
+    assert_eq!(
+        (row.rect, row.clip),
+        (Rect::new(2.0, -8.0, 96.0, 20.0), padding_box)
+    );
+    let child = at_z(&q, 6.0)[0];
+    assert_eq!(child.rect, Rect::new(2.0, -8.0, 10.0, 20.0));
+    assert_eq!(
+        child.clip,
+        Rect::new(2.0, 2.0, 96.0, 10.0),
+        "the intersection"
+    );
+}
+
+#[test]
+fn fully_clipped_nodes_emit_nothing_and_damage_their_old_bounds() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    // The list paints nothing, so only the rows damage anything.
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 4);
+    app.tick();
+
+    // z: window 0, list 2, rows 4, 6, 8, 10 at y 2, 22, 42, 62.
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![8.0, 6.0, 4.0],
+        "row 3 starts below the clip and emits nothing"
+    );
+    assert!(q.translucent.commands.is_empty());
+
+    take_requested();
+    scroll_to(&mut app, list, 0.0, 40.0);
+    app.tick();
+    let q = queue(&mut app, win.id(), 1);
+    assert_eq!(
+        zs(&q.opaque.commands),
+        vec![10.0, 8.0],
+        "rows 0 and 1 are above the clip now"
+    );
+    assert_eq!(
+        q.scissor,
+        vec![
+            Rect::new(2.0, 2.0, 96.0, 20.0),
+            Rect::new(2.0, 22.0, 96.0, 20.0),
+            Rect::new(2.0, 42.0, 96.0, 6.0),
+        ],
+        "rows 0 and 1's old bounds, and row 2's old, clipped; \
+         the new bounds of rows 2 and 3 lie inside the first two"
+    );
+}
+
+#[test]
+fn viewport_change_requests_a_frame() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 1);
+    app.tick();
+    take_requested();
+
+    scroll_to(&mut app, list, 0.0, 5.0);
+    app.tick();
+    assert_eq!(take_requested(), vec![win.id()]);
+}

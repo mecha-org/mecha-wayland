@@ -78,6 +78,7 @@ impl Build for ScrollableBuilder {
 pub struct Scrollable {
     pub(crate) axis: Axis,
     pub(crate) state: State,
+    /// The driving contact's recent positions, for the release speed.
     tracker: VelocityTracker,
     /// The offsets the content rests in, as of the last layout.
     pub(crate) range: Range,
@@ -89,10 +90,10 @@ pub struct Scrollable {
 #[derive(Debug, Clone)]
 pub(crate) enum State {
     Idle,
-    /// A contact is down and has not yet moved past the slop.
+    /// Contacts are down and none has yet moved past the slop; the first
+    /// that does drives.
     Tracking {
-        contact: ContactId,
-        origin: f64,
+        pending: Vec<Pending>,
         start_offset: f64,
     },
     /// The contact claimed and moves the content.
@@ -105,6 +106,26 @@ pub(crate) enum State {
         sim: Ballistic,
         start: Option<Instant>,
     },
+}
+
+/// A contact pressed on the `Scrollable` while tracking.
+#[derive(Debug, Clone)]
+pub(crate) struct Pending {
+    contact: ContactId,
+    origin: f64,
+    tracker: VelocityTracker,
+}
+
+impl Pending {
+    fn new(e: &Press, origin: f64) -> Self {
+        let mut tracker = VelocityTracker::default();
+        tracker.add(e.time, origin);
+        Pending {
+            contact: e.contact,
+            origin,
+            tracker,
+        }
+    }
 }
 
 impl Widget for Scrollable {
@@ -164,30 +185,40 @@ fn set_grab(ctx: &mut Context<'_, Scrollable>, grab: bool) {
     *ctx.component_mut::<GrabPresses>().unwrap() = GrabPresses(grab);
 }
 
-/// Idle: start tracking. Gliding: the press was grabbed, so it stops the
-/// glide and drags from where it is, with no tap underneath.
+/// Idle or tracking: track the contact too. Gliding: the press was
+/// grabbed, so it stops the glide and drags from where it is, with no tap
+/// underneath.
 fn on_press(ctx: &mut Context<'_, Scrollable>, e: &Press) {
     let offset = current_offset(ctx);
     let me = ctx.me();
     let position = me.axis.of(e.position);
-    me.state = match me.state {
-        State::Idle => State::Tracking {
-            contact: e.contact,
-            origin: position,
-            start_offset: offset,
-        },
-        State::Ballistic { .. } => State::Dragging {
-            contact: e.contact,
-            last: position,
-        },
+    match &mut me.state {
+        State::Idle => {
+            me.state = State::Tracking {
+                pending: vec![Pending::new(e, position)],
+                start_offset: offset,
+            }
+        }
+        State::Tracking { pending, .. } => {
+            if pending.iter().all(|p| p.contact != e.contact) {
+                pending.push(Pending::new(e, position));
+            }
+        }
+        State::Ballistic { .. } => {
+            me.state = State::Dragging {
+                contact: e.contact,
+                last: position,
+            };
+            me.tracker.reset();
+            me.tracker.add(e.time, position);
+        }
         // Another contact drives.
-        State::Tracking { .. } | State::Dragging { .. } => return,
-    };
-    me.tracker.reset();
-    me.tracker.add(e.time, position);
+        State::Dragging { .. } => {}
+    }
 }
 
-/// Past the slop the contact becomes a drag; a drag moves the content.
+/// Past the slop a tracked contact becomes the drag, and every tracked
+/// contact is claimed; a drag moves the content.
 fn on_press_moved(ctx: &mut Context<'_, Scrollable>, e: &PressMoved) {
     let tuning = ctx.resource::<Tuning>().clone();
     let offset = current_offset(ctx);
@@ -195,22 +226,31 @@ fn on_press_moved(ctx: &mut Context<'_, Scrollable>, e: &PressMoved) {
     let position = me.axis.of(e.position);
     match &mut me.state {
         State::Tracking {
-            contact,
-            origin,
+            pending,
             start_offset,
-        } if *contact == e.contact => {
-            me.tracker.add(e.time, position);
-            if (position - *origin).abs() <= tuning.slop {
+        } => {
+            let Some(i) = pending.iter().position(|p| p.contact == e.contact) else {
+                return;
+            };
+            let p = &mut pending[i];
+            p.tracker.add(e.time, position);
+            if (position - p.origin).abs() <= tuning.slop {
                 return;
             }
             // The drag starts from the crossing point: no jump by the slop.
-            let (contact, start_offset) = (*contact, *start_offset);
+            let start_offset = *start_offset;
+            let pending = std::mem::take(pending);
+            me.tracker = pending[i].tracker.clone();
             me.state = State::Dragging {
-                contact,
+                contact: e.contact,
                 last: position,
             };
             let axis = me.axis;
-            ctx.claim_contact(contact);
+            // The rows under every finger get `PressCancelled`; the others'
+            // moves and releases then reach only this, and are ignored.
+            for p in &pending {
+                ctx.claim_contact(p.contact);
+            }
             set_grab(ctx, true);
             set_offset(ctx.component_mut::<Viewport>().unwrap(), axis, start_offset);
         }
@@ -230,8 +270,9 @@ fn on_press_moved(ctx: &mut Context<'_, Scrollable>, e: &PressMoved) {
     }
 }
 
-/// The tracked contact went up (`time`) or was cancelled (`None`, as a
-/// release that does not fling). A drag hands over to the ballistic.
+/// A contact went up (`time`) or was cancelled (`None`, as a release
+/// that does not fling). Tracking ends with the last tracked contact; the
+/// driving one ends a drag, which hands over to the ballistic.
 fn finish(ctx: &mut Context<'_, Scrollable>, contact: ContactId, time: Option<u32>) {
     let tuning = ctx.resource::<Tuning>().clone();
     let offset = current_offset(ctx);
@@ -240,9 +281,14 @@ fn finish(ctx: &mut Context<'_, Scrollable>, contact: ContactId, time: Option<u3
         .and_then(|w| ctx.widget::<Window>(w))
         .map_or(1.0, |w| f64::from(w.scale()));
     let me = ctx.me();
-    match me.state {
-        State::Tracking { contact: c, .. } if c == contact => me.state = State::Idle,
-        State::Dragging { contact: c, .. } if c == contact => {
+    match &mut me.state {
+        State::Tracking { pending, .. } => {
+            pending.retain(|p| p.contact != contact);
+            if pending.is_empty() {
+                me.state = State::Idle;
+            }
+        }
+        State::Dragging { contact: c, .. } if *c == contact => {
             let velocity = match time {
                 Some(time) if !me.fits() => {
                     // The tracker follows the finger; the offset moves against it.

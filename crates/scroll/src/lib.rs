@@ -21,11 +21,13 @@
 //!   along the axis, both taken on each `LayoutDone` for a window that
 //!   was laid out. Content that fits does not move or bounce.
 //! - A press starts tracking; the row under it gets its `Press` as usual.
-//!   Once the contact moves past the slop along the axis the `Scrollable`
-//!   claims it (the rows get `PressCancelled`, so a swipe never clicks)
-//!   and the content follows it 1:1 from there, with resistance past
-//!   either end. Motion across the axis never starts a drag. Contacts
-//!   other than the one tracked are ignored.
+//!   Every contact that lands before a drag starts is tracked. The first
+//!   to move past the slop along the axis drives: the `Scrollable` claims
+//!   every tracked contact (their rows get `PressCancelled`, so neither a
+//!   swipe nor a finger it moved from under clicks) and the content
+//!   follows the driver 1:1 from there, with resistance past either end.
+//!   Motion across the axis never starts a drag. The other contacts are
+//!   ignored from then on.
 //! - On release the finger's speed, read from the input timestamps,
 //!   becomes a fling: it coasts under friction and springs back at an
 //!   end. A release past an end, or a cancel, springs back with no

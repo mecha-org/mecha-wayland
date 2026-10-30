@@ -359,3 +359,40 @@ fn removed_while_gliding_is_skipped() {
     }
     f.app.tick();
 }
+
+#[test]
+fn resting_finger_does_not_let_a_second_finger_swipe_click() {
+    let mut f = fixture(20, Axis::Vertical);
+    f.down(1, 100.0, 110.0, 0);
+    f.down(2, 100.0, 310.0, 8);
+    f.to(2, 100.0, 290.0, 16);
+    f.to(2, 100.0, 250.0, 24);
+    assert_eq!(
+        f.scroll(),
+        Point::new(0.0, 40.0),
+        "the second finger drives"
+    );
+    f.up(2, 100.0, 250.0, 200);
+    f.up(1, 100.0, 110.0, 210);
+    assert!(f.log().cancels.contains(&f.rows[6]));
+    assert!(
+        f.log().cancels.contains(&f.rows[2]),
+        "the resting finger too"
+    );
+    assert!(f.rows.iter().all(|r| !f.log().clicks.contains(r)));
+}
+
+#[test]
+fn a_moved_row_does_not_click_on_a_second_fingers_release() {
+    let mut f = fixture(20, Axis::Vertical);
+    f.down(1, 100.0, 300.0, 0);
+    f.down(2, 100.0, 110.0, 4);
+    f.to(1, 100.0, 289.0, 8);
+    f.to(1, 100.0, 189.0, 16);
+    assert_eq!(f.scroll(), Point::new(0.0, 100.0));
+    f.up(2, 100.0, 110.0, 20);
+    assert!(f.log().cancels.contains(&f.rows[2]));
+    assert!(!f.log().clicks.contains(&f.rows[2]));
+    f.to(1, 100.0, 179.0, 24);
+    assert_eq!(f.scroll(), Point::new(0.0, 110.0), "the first still drives");
+}

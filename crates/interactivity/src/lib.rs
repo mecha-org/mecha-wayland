@@ -34,7 +34,10 @@
 //!   [`Press`], and the rest of the hit-set gets [`Exit`].
 //! - While claimed, a `Moved` does no hover tracking and sends
 //!   [`PressMoved`] to the claimer alone; `Release`/`Clicked` go to the
-//!   claimer alone. The claim ends with the capture.
+//!   claimer alone. The claim ends with the capture. A mouse that has
+//!   not moved since gets no [`Enter`] until its next `Moved`.
+//! - A `Pressed` on a contact that already holds a capture (a second
+//!   mouse button) is a no-op: the capture and any claim stay as they are.
 //! - A `Touch` contact's state is torn down right after its `Released`
 //!   (with a final `Exit` for whatever it is over at that point), since a
 //!   finger has no idle position to keep hovering at. A `Mouse` contact's

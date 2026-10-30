@@ -27,6 +27,10 @@ pub trait ContextClaim {
     /// behind the signal being handled goes to the claimer alone.
     /// Returns `false`, doing nothing, if `contact` has no capture or the
     /// target is not in it.
+    ///
+    /// A claim made from a `PressMoved` handler does not shorten that
+    /// event's own target list: nodes dispatched after the claimer still
+    /// get that one `PressMoved`.
     fn claim_contact(&mut self, contact: ContactId) -> bool;
 }
 

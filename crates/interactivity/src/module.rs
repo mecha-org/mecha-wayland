@@ -127,6 +127,11 @@ fn on_pressed(app: &mut App, input: &ContactInput) {
         return;
     }
     trusted_window(app, input.window);
+    // One capture per contact: a further `Pressed` while one is held (a
+    // second mouse button) leaves the capture, and any claim, untouched.
+    if app.resource::<Contacts>().is_pressed(input.contact) {
+        return;
+    }
     let hit = hit_test(app, input.window, input.position);
     // The outermost grabber: the hit-set runs window last.
     let grabber = hit

@@ -927,3 +927,32 @@ fn claim_without_capture_is_false() {
     );
     assert!(!app.resource::<Contacts>().is_pressed(ContactId::Mouse));
 }
+
+#[test]
+fn a_second_press_during_a_claim_keeps_the_claim() {
+    let mut app = claim_app();
+    let win = app.spawn(app.root(), a_window());
+    let (claimer, button) = claimer_and_button(&mut app, win);
+    app.tick();
+
+    let p = Point::new(20.0, 20.0);
+    let q = Point::new(40.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.signal(moved(win, ContactId::Mouse, q));
+    app.flush();
+    assert!(app.widget::<Claimer>(claimer).unwrap().claimed);
+    clear_logs();
+
+    // A second button goes down on the same pointer.
+    app.signal(pressed(win, ContactId::Mouse, q));
+    app.flush();
+    assert!(take_press().is_empty(), "the second press is a no-op");
+
+    app.signal(released(win, ContactId::Mouse, q));
+    app.flush();
+    let clicked = take_clicked();
+    assert!(!clicked.contains(&button.id()));
+    assert_eq!(clicked, vec![claimer.id()]);
+    assert_eq!(take_release(), vec![claimer.id()]);
+}

@@ -48,7 +48,8 @@
 //!   no check that the contact is still within the captured set's bounds
 //!   at release time.
 //! - Every [`ContactInput`] carries the Wayland event's millisecond
-//!   `time`; [`Press`] and [`Release`] pass it on unchanged. It wraps at
+//!   `time`; [`Press`], [`PressMoved`] and [`Release`] pass it on
+//!   unchanged. It wraps at
 //!   `u32::MAX`.
 //!
 //! # Model — keyboard

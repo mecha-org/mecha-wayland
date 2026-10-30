@@ -22,25 +22,26 @@
 //!   known, so a later sibling inside the solid composites onto the
 //!   parent's colour and its depth write covers the earlier one where
 //!   their rects overlap.
-//! - The walk also carries a shift and a clip down. A node with a
-//!   `layout::Viewport` adds its `scroll` to the shift its descendants
-//!   are drawn at, less their layout, and with `clip` cuts their clip,
-//!   which starts as the window, to its padding box; the node itself is
-//!   neither moved nor cut, as in the hit test. Every command carries
+//! - The walk also carries a shift and a clip down. Below a node with a
+//!   `layout::Viewport`, descendants are drawn at their layout less the
+//!   scroll accumulated from every such ancestor; with `clip` it also
+//!   cuts their clip, which starts as the window, to its padding box. The
+//!   node itself is neither moved nor cut, as in the hit test. Every command carries
 //!   its clip for the backend to cut it by; one wholly outside it is not
 //!   emitted, and a node's bounds, its damage, and the solid a quad hands
 //!   down are cut to it. So scrolling damages what moved through the
 //!   bounds alone, and a row scrolled out of sight costs a visit and
 //!   nothing else.
-//! - `Layout`, `AnimatedPaint` and `Viewport` changes, and removals, mark the nodes and raise
-//!   `RequestFrame` for their window; animation can request frames too. Nothing
-//!   runs on `Tick`. The walk damages a marked node's old and new bounds, a
-//!   removed node's last bounds, and the whole window on the first frame
-//!   or a new size or scale. A write that lands between the drain and a
-//!   `Frame` is drawn by that frame. Layout changes are damaged then even
-//!   if the emitted bounds stay the same; their late change notifications
-//!   still mark them dirty and request another frame. Same-bounds paint changes,
-//!   such as a colour, are still damaged one frame late.
+//! - `Layout`, `AnimatedPaint` and `Viewport` changes, and removals,
+//!   mark the nodes and raise `RequestFrame` for their window; animation
+//!   can request frames too. Nothing runs on `Tick`. The walk damages a
+//!   marked node's old and new bounds, a removed node's last bounds, and
+//!   the whole window on the first frame or a new size or scale. A write
+//!   that lands between the drain and a `Frame` is drawn by that frame.
+//!   Layout changes are damaged then even if the emitted bounds stay the
+//!   same; their late change notifications still mark them dirty and
+//!   request another frame. Same-bounds paint changes, such as a colour,
+//!   are still damaged one frame late.
 //! - [`Scenes`] keeps the last few frames' damage per window, as many as
 //!   [`RenderModule::buffers`] says. A backend asks [`Scenes::queue`] for
 //!   the buffer it will draw into by its age and gets a [`Queue`]: the
@@ -260,10 +261,10 @@ pub struct Queue {
 /// The bounds and the displayed layout, shift included, from the last
 /// frame this node was walked (`None` for both if nothing was emitted
 /// inside the clip), and whether a `Layout`, `AnimatedPaint` or
-/// `Viewport` change was noted since. Written by the change systems and the walk;
-/// its `OnChanged` drain has no
-/// listener, and `on_frame` takes the record after the walk so the drain
-/// sees only what the change systems marked between frames.
+/// `Viewport` change was noted since. Written by the change systems and
+/// the walk; its `OnChanged` drain has no listener, and `on_frame` takes
+/// the record after the walk so the drain sees only what the change
+/// systems marked between frames.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Drawn {
     pub(crate) rect: Option<Rect>,
@@ -428,8 +429,8 @@ fn on_removed(app: &mut App, r: &Removed) {
     }
 }
 
-/// Rebuild the window's scene from the live `Layout` and `AnimatedPaint`. A stale
-/// id or a non-window is ignored. Nothing here raises `RequestFrame`.
+/// Rebuild the window's scene from the live `Layout` and
+/// `AnimatedPaint`. A stale id or a non-window is ignored. Nothing here raises `RequestFrame`.
 fn on_frame(app: &mut App, f: &Frame) {
     let w = f.0;
     let Some(win) = app.widget::<Window>(w) else {

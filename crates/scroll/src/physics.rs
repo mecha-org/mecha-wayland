@@ -73,10 +73,13 @@ impl Range {
 /// further out it is, and eases back with less resistance.
 ///
 /// Port of `BouncingScrollPhysics.applyPhysicsToUserOffset` and
-/// `_applyFriction` (`widgets/scroll_physics.dart`), with two changes:
+/// `_applyFriction` (`widgets/scroll_physics.dart`), with three changes:
 /// a delta that leaves the range is split at the end, so only the part
-/// beyond it resists (Flutter moves the whole delta 1:1), and Flutter's
-/// `offset` is a pixel decrease where `delta` here is an increase.
+/// beyond it resists (Flutter moves the whole delta 1:1); pulling further
+/// out moves `delta * γ` outright, where Flutter also runs it through
+/// `_applyFriction`'s limit, as it does easing back; and
+/// Flutter's `offset` is a pixel decrease where `delta` here is an
+/// increase.
 pub(crate) fn drag(t: &Tuning, offset: f64, delta: f64, range: Range, viewport: f64) -> f64 {
     if delta == 0.0 {
         return offset;

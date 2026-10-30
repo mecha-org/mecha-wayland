@@ -32,9 +32,9 @@ fn trusted_window(app: &App, window: NodeId) {
 }
 
 /// Registers the `Contacts` and `KeyboardFocus` resources, the
-/// `GrabPresses` component, and the systems
-/// that turn a `ContactInput` into `Press`/`PressMoved`/`PressCancelled`/
-/// `Release`/`Enter`/`Exit`/`Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
+/// `GrabPresses` component, and the systems that turn a `ContactInput`
+/// into `Press`/`PressMoved`/`PressCancelled`/`Release`/`Enter`/`Exit`/
+/// `Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
 /// `KeyRelease`. Installs after `WindowModule`.
 pub struct InteractivityModule;
 

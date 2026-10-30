@@ -30,9 +30,10 @@
 //!   ignored from then on.
 //! - On release the finger's speed, read from the input timestamps,
 //!   becomes a fling: it coasts under friction and springs back at an
-//!   end. A release past an end, or a cancel, springs back with no
-//!   fling. Each `Frame` of its window advances the glide and asks for
-//!   the next; once settled it rests exactly at its end and asks for none.
+//!   end. A release past an end springs back at once, carrying the
+//!   finger's speed; a cancel never flings. Each `Frame` of its window
+//!   advances the glide and asks for the next; once settled it rests
+//!   exactly at its end and asks for none.
 //! - While dragging or gliding the `Scrollable` sets
 //!   `interactivity::GrabPresses`: a contact landing on it then stops the
 //!   glide dead and drags from there, and taps nothing underneath, and a

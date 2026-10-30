@@ -153,8 +153,9 @@ impl Scene {
 }
 
 /// The commands whose part inside their clip touches any scissor rect,
-/// in order, and the rects one of them touched. `scissor` holds at most `MAX_RECTS` entries after
-/// `collapse`, so a word of bits tracks which were touched.
+/// in order, and the rects one of them touched. `scissor` holds at most
+/// `MAX_RECTS` entries after `collapse`, so a word of bits tracks which
+/// were touched.
 fn fill(pass: &mut Pass, commands: &[Command], scissor: &[Rect]) {
     debug_assert!(scissor.len() <= MAX_RECTS);
     pass.commands.clear();

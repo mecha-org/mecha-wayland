@@ -1357,3 +1357,45 @@ fn a_scroll_snaps_in_device_pixels_at_scale_two() {
     let q = queue(&mut app, win.id(), 1);
     assert_eq!(at_z(&q, 4.0)[0].rect, Rect::new(4.0, 5.0, 192.0, 40.0));
 }
+
+const WHITE: Color = Color::rgb(1.0, 1.0, 1.0);
+
+/// The rows of a white list scrolled 5 down: each half under its top edge.
+fn rows_under_the_edge(rows: &[Paint]) -> (App, Handle<Window>) {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::Quad(Quad::new(WHITE)), true, 0);
+    for p in rows {
+        app.spawn_with(list, Leaf, (boxed(96.0, 20.0).shrink(0.0), p.clone()));
+    }
+    app.tick();
+    scroll_to(&mut app, list, 0.0, 5.0);
+    app.tick();
+    (app, win)
+}
+
+#[test]
+fn a_rounded_row_half_under_the_viewport_edge_stays_in_the_opaque_pass() {
+    let (mut app, win) = rows_under_the_edge(&[Paint::Quad(Quad::new(RED).radius(4.0))]);
+    let q = queue(&mut app, win.id(), 0);
+    // z: window 0, list 2, row 4.
+    let row: Vec<_> = q.opaque.commands.iter().filter(|c| c.z == 4.0).collect();
+    assert_eq!(row.len(), 1, "the row's box is opaque");
+    assert_eq!(row[0].background, WHITE);
+    assert!(q.translucent.commands.iter().all(|c| c.z != 4.0));
+}
+
+#[test]
+fn a_glyph_and_an_image_half_under_the_edge_stay_opaque() {
+    let opaque_image = PolychromeSprite::new(tile(2)).radius(3.0);
+    for row in [
+        Paint::Monochrome(vec![glyph(0.0, 0.0, RED)]),
+        Paint::Polychrome(opaque_image),
+    ] {
+        let (mut app, win) = rows_under_the_edge(&[row.clone()]);
+        let q = queue(&mut app, win.id(), 0);
+        let c = q.opaque.commands.iter().find(|c| c.z == 4.0);
+        assert_eq!(c.map(|c| c.background), Some(WHITE), "{row:?}");
+        assert!(q.translucent.commands.is_empty(), "{row:?}");
+    }
+}

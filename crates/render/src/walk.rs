@@ -257,7 +257,10 @@ fn emit_quad(
     scale: f32,
     scene: &mut Scene,
 ) -> Option<Solid> {
-    let inside = solid.is_some_and(|s| rect::contains(s.rect, r));
+    // Judged on the part the clip keeps, so a row sliding under a
+    // viewport's edge takes the same route all the way.
+    let kept = rect::intersection(r, clip);
+    let inside = solid.is_some_and(|s| rect::contains(s.rect, kept));
     let radii = q.radii.map(|v| v * scale);
     let border = q.border.map(|v| v * scale);
     let visible = border_visible(q);
@@ -383,7 +386,7 @@ fn emit_run(
             continue;
         }
         let over = if s.is_opaque {
-            solid.filter(|so| rect::contains(so.rect, sr))
+            solid.filter(|so| rect::contains(so.rect, rect::intersection(sr, clip)))
         } else {
             None
         };
@@ -421,7 +424,7 @@ fn emit_image(
     scene: &mut Scene,
 ) {
     let over = if p.is_opaque {
-        solid.filter(|so| rect::contains(so.rect, content))
+        solid.filter(|so| rect::contains(so.rect, rect::intersection(content, clip)))
     } else {
         None
     };

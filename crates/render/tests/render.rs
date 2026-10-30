@@ -1787,3 +1787,48 @@ fn a_diagonal_shift_exposes_an_l() {
         ]
     );
 }
+
+#[test]
+fn a_glyph_on_a_half_pixel_moves_rigidly_with_the_scroll() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (list, _) = a_list(&mut app, win, Paint::None, true, 0);
+    app.spawn_with(
+        list,
+        Leaf,
+        (
+            boxed(96.0, 20.0).shrink(0.0),
+            Paint::Monochrome(vec![glyph(0.0, 0.5, RED)]),
+        ),
+    );
+    app.tick();
+    let before = queue(&mut app, win.id(), 0).opaque.commands[0].rect;
+    // The glyph's top is 2.5 logical: device 3 unscrolled. Scrolled by 3
+    // it must sit at 0, as the copied pixels do, not at round(-0.5) = -1.
+    scroll_to(&mut app, list, 0.0, 3.0);
+    app.tick();
+    let after = queue(&mut app, win.id(), 0).opaque.commands[0].rect;
+    assert_eq!(before.y(), 3.0);
+    assert_eq!(
+        after,
+        Rect::new(before.x(), 0.0, before.width(), before.height())
+    );
+}
+
+#[test]
+fn a_row_appearing_in_view_without_scrolling_in_takes_the_normal_path() {
+    let mut s = shifting();
+    s.presented();
+    // Row 1 (y 40) loses its paint without a dirty mark landing first:
+    // the walk sees it vanish mid-list, which no scroll explains.
+    let row = s.rows[1];
+    *s.app.component_mut::<Layout>(row).unwrap() = Layout {
+        rect: Rect::new(0.0, 40.0, 0.0, 0.0),
+        ..*s.app.component::<Layout>(row).unwrap()
+    };
+    // The walk runs in the same flush as the writes, before any mark.
+    s.app.component_mut::<Viewport>(s.list).unwrap().scroll = Point::new(0.0, 12.0);
+    let win = s.win;
+    frame(&mut s.app, win);
+    assert_eq!(s.shift(), None);
+}

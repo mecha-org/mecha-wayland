@@ -644,6 +644,9 @@ dependencies = [
  "geometry",
  "interactivity",
  "layout",
+ "paint",
+ "render",
+ "widgets",
  "window",
 ]
 

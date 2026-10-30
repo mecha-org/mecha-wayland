@@ -10,3 +10,8 @@ layout.workspace = true
 interactivity.workspace = true
 window.workspace = true
 animation.workspace = true
+
+[dev-dependencies]
+paint.workspace = true
+render.workspace = true
+widgets.workspace = true

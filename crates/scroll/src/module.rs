@@ -7,6 +7,7 @@ use animation::Time;
 use app::prelude::*;
 use interactivity::prelude::*;
 use layout::prelude::*;
+use render::Scenes;
 use window::{Frame, InWindow, RequestFrame, Window};
 
 use crate::physics::{Ballistic, Range, Tuning};
@@ -37,6 +38,10 @@ impl Module for ScrollModule {
         assert!(
             app.has_resource::<Time>(),
             "ScrollModule installs after AnimationModule"
+        );
+        assert!(
+            !app.has_resource::<Scenes>(),
+            "ScrollModule installs before RenderModule"
         );
         app.init_resource::<Tuning>()
             .init_resource::<ScrollClock>()

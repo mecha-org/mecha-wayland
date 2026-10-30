@@ -223,6 +223,12 @@ enum Source {
         bytes: Cow<'static, [u8]>,
         size: u32,
     },
+    /// Like `Svg`, but kept in colour as a `Class::Image`.
+    #[cfg(feature = "svg")]
+    SvgImage {
+        bytes: Cow<'static, [u8]>,
+        size: u32,
+    },
     /// Device pixels, re-packed as they are.
     Bitmap { class: Class, bitmap: Bitmap },
 }
@@ -321,6 +327,14 @@ impl Atlas {
                     Class::Icon,
                     Cow::Owned(
                         Bitmap::from_svg(bytes, self.master(*size)).expect("it parsed at insert"),
+                    ),
+                ),
+                #[cfg(feature = "svg")]
+                Source::SvgImage { bytes, size } => (
+                    Class::Image,
+                    Cow::Owned(
+                        Bitmap::from_svg_rgba(bytes, self.master(*size))
+                            .expect("it parsed at insert"),
                     ),
                 ),
                 Source::Bitmap { class, bitmap } => (*class, Cow::Borrowed(bitmap)),
@@ -468,6 +482,24 @@ impl Atlas {
         let k = size as f32 / bitmap.width.max(bitmap.height) as f32;
         let logical = Size::new(bitmap.width as f32 * k, bitmap.height as f32 * k);
         Ok(self.push(tile, logical, &bitmap, Source::Svg { bytes, size }))
+    }
+
+    /// Insert an SVG as a coloured `Class::Image` whose longer side is
+    /// `size` logical pixels, rasterized with `Bitmap::from_svg_rgba` at
+    /// `ceil(size * scale)` and again on every rebuild. `Error::Svg` if it
+    /// does not parse, `Error::TooLarge` if it cannot fit an empty page.
+    #[cfg(feature = "svg")]
+    pub fn insert_svg_image(
+        &mut self,
+        bytes: impl Into<Cow<'static, [u8]>>,
+        size: u32,
+    ) -> Result<SpriteId, Error> {
+        let bytes = bytes.into();
+        let bitmap = Bitmap::from_svg_rgba(&bytes, self.master(size))?;
+        let tile = self.place(Class::Image, &bitmap)?;
+        let k = size as f32 / bitmap.width.max(bitmap.height) as f32;
+        let logical = Size::new(bitmap.width as f32 * k, bitmap.height as f32 * k);
+        Ok(self.push(tile, logical, &bitmap, Source::SvgImage { bytes, size }))
     }
 
     /// Device pixels on an SVG's longer side for `size` logical.

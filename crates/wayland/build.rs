@@ -34,7 +34,8 @@ fn main() {
 /// (opcodes depend on it); the generator reads a copy with that one
 /// reference fixed.
 fn fixed_phosh_private() -> std::path::PathBuf {
-    let xml = std::fs::read_to_string("protocols/phosh-private.xml").expect("read phosh-private.xml");
+    let xml =
+        std::fs::read_to_string("protocols/phosh-private.xml").expect("read phosh-private.xml");
     let fixed = xml.replace(r#"enum="flags""#, r#"enum="flag""#);
     let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("phosh-private.xml");
     std::fs::write(&out, fixed).expect("write fixed phosh-private.xml");

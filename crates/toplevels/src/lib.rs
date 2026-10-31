@@ -170,7 +170,9 @@ impl Module for ToplevelsModule {
             dirty: false,
         });
         if available {
-            app.system(on_manager).system(on_handle).system(on_post_tick);
+            app.system(on_manager)
+                .system(on_handle)
+                .system(on_post_tick);
         }
     }
 }

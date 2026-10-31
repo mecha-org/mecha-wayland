@@ -44,10 +44,7 @@ fn fake_with(globals: &[(&str, u32)]) -> Fake {
 }
 
 fn fake() -> Fake {
-    fake_with(&[
-        ("wl_seat", 9),
-        ("zwlr_foreign_toplevel_manager_v1", 3),
-    ])
+    fake_with(&[("wl_seat", 9), ("zwlr_foreign_toplevel_manager_v1", 3)])
 }
 
 fn open(f: &mut Fake, id: u32) {

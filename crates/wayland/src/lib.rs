@@ -476,11 +476,28 @@ impl Globals {
     pub fn find(&self, interface: &str) -> Option<&Global> {
         self.list.iter().find(|g| g.interface == interface)
     }
-    /// Bind `global` as `I`, at the lesser of its version and `I::VERSION`.
+    /// Bind `global` as `I`, at [`bind_version`].
     pub fn bind<I: Interface>(&self, global: &Global, wl: &mut Wayland) -> I {
         debug_assert_eq!(global.interface, I::NAME);
-        self.registry
-            .bind::<I>(wl, global.name, global.version.min(I::VERSION))
+        self.registry.bind::<I>(
+            wl,
+            global.name,
+            bind_version(I::NAME, global.version, I::VERSION),
+        )
+    }
+}
+
+/// The version to bind `interface` at: the lesser of the advertised and
+/// the XML version, except `zwp_linux_dmabuf_v1`, held at 3. From version
+/// 4 on, the compositor sends formats and modifiers only through feedback
+/// objects, which nothing here implements; at 3 it sends every modifier
+/// on bind, so buffers can take the GPU's tiled layouts instead of linear.
+pub fn bind_version(interface: &str, advertised: u32, xml: u32) -> u32 {
+    let v = advertised.min(xml);
+    if interface == "zwp_linux_dmabuf_v1" {
+        v.min(3)
+    } else {
+        v
     }
 }
 
@@ -603,6 +620,14 @@ pub mod prelude {
 mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn binds_at_the_lesser_version_and_dmabuf_at_most_3() {
+        assert_eq!(bind_version("wl_compositor", 6, 7), 6);
+        assert_eq!(bind_version("wl_compositor", 7, 5), 5);
+        assert_eq!(bind_version("zwp_linux_dmabuf_v1", 6, 5), 3);
+        assert_eq!(bind_version("zwp_linux_dmabuf_v1", 2, 5), 2);
+    }
 
     #[derive(Clone, Copy)]
     struct Probe(ObjectId);

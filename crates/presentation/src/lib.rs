@@ -209,9 +209,10 @@ pub struct Surfaces {
 }
 impl Resource for Surfaces {}
 
-/// What the compositor said it imports, in the order advertised. Bound at
-/// version 4 or above it says nothing this way, its formats coming by
-/// feedback, which is not read; then nothing is ruled out.
+/// What the compositor said it imports, in the order advertised. The
+/// dmabuf global is bound at version 3 at most (`wayland::bind_version`),
+/// where it names every format and layout this way; a compositor that
+/// names none rules nothing out.
 #[derive(Default)]
 struct Formats {
     /// Some format or layout was named.

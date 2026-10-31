@@ -50,8 +50,11 @@ pub(crate) struct Scene {
     pub(crate) viewed: Vec<Scrolled>,
     pub(crate) viewing: Vec<Scrolled>,
     /// What this walk drew outside the mover's subtree, ancestors
-    /// included: each node with its bounds.
-    pub(crate) outside: Vec<(NodeId, Rect)>,
+    /// included: each node with its bounds and its place in `drawing`.
+    pub(crate) outside: Vec<(NodeId, Rect, usize)>,
+    /// Where in `drawing` the opaque fill under the mover's area was
+    /// drawn: an outside node drawn before it is hidden there.
+    pub(crate) floor: usize,
     /// Since the last presented walk; `None` before the first.
     since: Option<Since>,
 }
@@ -104,6 +107,7 @@ impl Scene {
             viewed: Vec::new(),
             viewing: Vec::new(),
             outside: Vec::new(),
+            floor: 0,
             since: None,
         }
     }
@@ -131,12 +135,14 @@ impl Scene {
         self.mover = None;
         self.viewing.clear();
         self.outside.clear();
+        self.floor = 0;
         full
     }
 
     /// After the walk: the mover's area is overdrawn or underlaid by a
     /// node outside its subtree that is not one of its ancestors, whose
-    /// pixels a shift would drag along.
+    /// pixels a shift would drag along. A node drawn before the opaque
+    /// fill under the area is hidden by it and does not count.
     pub(crate) fn judge(&mut self, tree: app::Tree<'_>) {
         let Some(m) = self.mover else {
             return;
@@ -148,11 +154,9 @@ impl Scene {
             up.push(p);
             at = p;
         }
-        if self
-            .outside
-            .iter()
-            .any(|(id, b)| *id != m.id && !up.contains(id) && rect::intersects(*b, m.area))
-        {
+        if self.outside.iter().any(|&(id, b, at)| {
+            id != m.id && !up.contains(&id) && at >= self.floor && rect::intersects(b, m.area)
+        }) {
             self.pure = false;
         }
     }

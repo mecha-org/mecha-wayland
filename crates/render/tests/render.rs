@@ -1689,6 +1689,76 @@ fn a_sibling_under_the_list_takes_the_normal_path() {
     assert_eq!(app.resource::<Scenes>().shift(win), None);
 }
 
+/// A full-window node drawn first, then a full-window panel of `panel`
+/// holding a transparent list: a drawer over the home screen.
+fn list_on_a_panel_over_a_sibling(panel: Color) -> Option<Shift> {
+    let mut app = app();
+    let win = app
+        .spawn(
+            app.root(),
+            window().layout(LayoutStyle::default().size(px(200.0), px(200.0))),
+        )
+        .id();
+    app.spawn_with(
+        win,
+        Leaf,
+        (at(0.0, 0.0, 200.0, 200.0), Paint::Quad(Quad::new(BLUE))),
+    );
+    let card = app
+        .spawn_with(
+            win,
+            Leaf,
+            (
+                at(0.0, 0.0, 200.0, 200.0).column(),
+                Paint::Quad(Quad::new(panel)),
+            ),
+        )
+        .id();
+    let list = app
+        .spawn_with(
+            card,
+            Leaf,
+            (
+                boxed(200.0, 200.0).column().shrink(0.0),
+                Paint::None,
+                Viewport {
+                    clip: true,
+                    scroll: Point::default(),
+                },
+            ),
+        )
+        .id();
+    app.spawn_with(
+        list,
+        Leaf,
+        (
+            boxed(200.0, 400.0).shrink(0.0),
+            Paint::Quad(Quad::new(RED).radius(4.0)),
+        ),
+    );
+    app.tick();
+    app.resource_mut::<Scenes>().presented(win);
+    scroll_to(&mut app, list, 0.0, 12.0);
+    app.tick();
+    app.resource::<Scenes>().shift(win)
+}
+
+#[test]
+fn a_sibling_hidden_under_an_opaque_panel_does_not_stop_the_shift() {
+    assert_eq!(
+        list_on_a_panel_over_a_sibling(GREY),
+        Some(Shift {
+            area: whole(),
+            by: Point::new(0.0, 12.0)
+        })
+    );
+}
+
+#[test]
+fn a_sibling_showing_through_a_translucent_panel_takes_the_normal_path() {
+    assert_eq!(list_on_a_panel_over_a_sibling(GREY.with_alpha(0.5)), None);
+}
+
 #[test]
 fn a_list_on_an_image_or_a_rounded_card_takes_the_normal_path() {
     let mut s = shifting_with(Paint::Quad(Quad::new(GREY).radius(8.0)), |_, _, _| {});

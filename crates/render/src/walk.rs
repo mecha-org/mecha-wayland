@@ -20,6 +20,9 @@ use crate::{
 pub(crate) struct Solid {
     pub(crate) color: Color,
     pub(crate) rect: Rect,
+    /// Where in the walk's drawing list the opaque fill this colour rests
+    /// on was drawn: inside `rect`, nothing drawn before it shows.
+    pub(crate) floor: usize,
 }
 
 /// A node still to visit: what its ancestors hand it. `shift` is the
@@ -81,6 +84,7 @@ pub(crate) fn hand_down(
     solid: Option<Solid>,
     inside: bool,
     interior: Rect,
+    at: usize,
 ) -> Option<Solid> {
     // A fill that leaves no pixel is asked first: composited onto a solid
     // it reads as opaque, and answering that way would narrow the solid
@@ -90,6 +94,7 @@ pub(crate) fn hand_down(
             solid.map(|s| Solid {
                 color: s.color,
                 rect: rect::intersection(s.rect, interior),
+                floor: s.floor,
             })
         } else {
             solid
@@ -100,9 +105,16 @@ pub(crate) fn hand_down(
         _ => q.color,
     };
     if effective.a >= 1.0 {
+        // An opaque fill hides what came before it; a translucent one
+        // shows the solid it composites over, so it keeps that floor.
+        let floor = match solid {
+            Some(s) if q.color.a < 1.0 => s.floor,
+            _ => at,
+        };
         Some(Solid {
             color: effective,
             rect: interior,
+            floor,
         })
     } else {
         None
@@ -136,6 +148,7 @@ pub(crate) fn walk(
     let root_solid = (clear.a >= 1.0 || clear.is_transparent()).then(|| Solid {
         color: clear,
         rect: scene.window_rect(),
+        floor: 0,
     });
     // The scene lends its stack, so a steady frame allocates nothing; the
     // loop body needs the rest of the scene mutably, hence the take.
@@ -247,7 +260,7 @@ pub(crate) fn walk(
         if let Some(b) = bounds {
             scene.drawing.push((id, b));
             if moved.is_none() {
-                scene.outside.push((id, b));
+                scene.outside.push((id, b, scene.drawing.len() - 1));
             }
         }
         let (shift, clip, moved) = match viewports.get(id) {
@@ -329,6 +342,13 @@ fn scrolled(
     if moved.is_some() || scene.mover.is_some() || last.area != area || !flat {
         scene.pure = false;
     }
+    // What was drawn under the solid behind the area cannot show there,
+    // so a shift cannot drag it along.
+    scene.floor = if flat {
+        behind.map_or(0, |s| s.floor)
+    } else {
+        0
+    };
     let m = Mover {
         id,
         area,
@@ -467,9 +487,11 @@ fn emit_quad(
     }
     // Nothing of the quad shows outside the clip, so nothing is known
     // there.
-    hand_down(q, solid, inside, inner).map(|s| Solid {
+    // The quad's own entry in the drawing list follows its emission.
+    hand_down(q, solid, inside, inner, scene.drawing.len()).map(|s| Solid {
         color: s.color,
         rect: rect::intersection(s.rect, clip),
+        floor: s.floor,
     })
 }
 
@@ -617,39 +639,44 @@ mod tests {
         let black = Some(Solid {
             color: Color::BLACK,
             rect: Rect::new(0.0, 0.0, 100.0, 100.0),
+            floor: 1,
         });
 
-        // An opaque fill: the solid is that colour over the interior.
+        // An opaque fill: the solid is that colour over the interior, and
+        // hides what was drawn before the fill.
         assert_eq!(
-            hand_down(&Quad::new(RED), None, false, inner),
+            hand_down(&Quad::new(RED), None, false, inner, 3),
             Some(Solid {
                 color: RED,
-                rect: inner
+                rect: inner,
+                floor: 3,
             })
         );
         // A translucent fill inside a solid composites to an opaque one.
         let half = Color::rgba(1.0, 0.0, 0.0, 0.5);
         assert_eq!(
-            hand_down(&Quad::new(half), black, true, inner),
+            hand_down(&Quad::new(half), black, true, inner, 3),
             Some(Solid {
                 color: half.over(Color::BLACK),
-                rect: inner
+                rect: inner,
+                floor: 1,
             })
         );
         // A translucent fill with nothing known behind it: nothing known.
-        assert_eq!(hand_down(&Quad::new(half), None, false, inner), None);
-        assert_eq!(hand_down(&Quad::new(half), black, false, inner), None);
+        assert_eq!(hand_down(&Quad::new(half), None, false, inner, 3), None);
+        assert_eq!(hand_down(&Quad::new(half), black, false, inner, 3), None);
         // A transparent fill with a border narrows the solid to the interior.
         let ring = Quad::new(Color::TRANSPARENT).border(2.0, GREEN);
         assert_eq!(
-            hand_down(&ring, black, true, inner),
+            hand_down(&ring, black, true, inner, 3),
             Some(Solid {
                 color: Color::BLACK,
-                rect: inner
+                rect: inner,
+                floor: 1,
             })
         );
-        assert_eq!(hand_down(&ring, None, false, inner), None);
+        assert_eq!(hand_down(&ring, None, false, inner, 3), None);
         // A transparent fill with no border passes the solid through.
-        assert_eq!(hand_down(&Quad::default(), black, true, inner), black);
+        assert_eq!(hand_down(&Quad::default(), black, true, inner, 3), black);
     }
 }

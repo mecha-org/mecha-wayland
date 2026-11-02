@@ -2,8 +2,8 @@
 //! position, in dispatch order.
 
 use app::{App, NodeId};
-use geometry::Point;
-use layout::ComputedLayout;
+use geometry::{Point, Rect};
+use layout::{ComputedLayout, Viewport};
 
 use crate::contacts::HitSet;
 
@@ -13,25 +13,55 @@ use crate::contacts::HitSet;
 /// last. That lines up with `render`'s rule that a later preorder index
 /// paints nearer, without this crate ever reading `render`'s `Scene`.
 ///
+/// The walk carries, per node, the shift and clip its ancestors'
+/// `Viewport`s impose: the node's rect is moved by `-shift` before the
+/// test, and a point outside `clip` matches nothing below the clipping
+/// node. A `Viewport` does not move or clip its own node.
+///
 /// A node whose `ComputedLayout` was never written by `LayoutModule` is
 /// `Rect::default()`, which is zero-sized and so never matches; no
 /// separate filter is needed for it.
 pub(crate) fn hit_test(app: &App, window: NodeId, position: Point) -> HitSet {
-    let contains = |id: NodeId| {
-        app.component::<ComputedLayout>(id)
-            .is_some_and(|l| l.rect.contains(position))
-    };
     let mut matches = HitSet::new();
-    if contains(window) {
-        matches.push(window);
-    }
-    for id in app.tree().descendants(window) {
-        if contains(id) {
+    let mut stack = vec![(window, Point::default(), None::<Rect>)];
+    while let Some((id, shift, clip)) = stack.pop() {
+        let layout = app
+            .component::<ComputedLayout>(id)
+            .copied()
+            .unwrap_or_default();
+        let rect = Rect {
+            origin: layout.rect.origin - shift,
+            size: layout.rect.size,
+        };
+        if rect.contains(position) && clip.is_none_or(|c| c.contains(position)) {
             matches.push(id);
+        }
+        let (shift, clip) = match app.component::<Viewport>(id) {
+            Some(v) => {
+                let clip = if v.clip {
+                    let padding_box = rect.inset(layout.border);
+                    Some(clip.map_or(padding_box, |c| intersect(c, padding_box)))
+                } else {
+                    clip
+                };
+                (shift + v.scroll, clip)
+            }
+            None => (shift, clip),
+        };
+        if let Some(children) = app.tree().children(id) {
+            stack.extend(children.iter().rev().map(|&c| (c, shift, clip)));
         }
     }
     matches.reverse();
     matches
+}
+
+/// The overlap of two rects; zero-sized (so it contains nothing) when
+/// they do not meet.
+fn intersect(a: Rect, b: Rect) -> Rect {
+    let (x, y) = (a.x().max(b.x()), a.y().max(b.y()));
+    let (r, bt) = (a.right().min(b.right()), a.bottom().min(b.bottom()));
+    Rect::new(x, y, (r - x).max(0.0), (bt - y).max(0.0))
 }
 
 #[cfg(test)]
@@ -139,5 +169,86 @@ mod tests {
     fn a_point_outside_the_window_matches_nothing() {
         let (app, win, ..) = scene();
         assert!(hit_test(&app, win, Point::new(250.0, 250.0)).is_empty());
+    }
+
+    fn scroll(app: &mut App, id: NodeId, clip: bool, x: f32, y: f32) {
+        *app.component_mut::<Viewport>(id).unwrap() = Viewport {
+            clip,
+            scroll: Point::new(x, y),
+        };
+    }
+
+    #[test]
+    fn scroll_shifts_descendants_not_the_node() {
+        let (mut app, win, card, button) = scene();
+        scroll(&mut app, card, false, 0.0, 30.0);
+        // the button now sits at (20, -10, 40, 40).
+        assert_eq!(
+            hit_test(&app, win, Point::new(30.0, 30.0)).into_vec(),
+            vec![card, win],
+            "its old place misses"
+        );
+        assert_eq!(
+            hit_test(&app, win, Point::new(30.0, 0.0)).into_vec(),
+            vec![button, win],
+            "30 px higher hits it, even outside the unclipped card"
+        );
+        assert_eq!(
+            hit_test(&app, win, Point::new(100.0, 100.0)).into_vec(),
+            vec![card, win],
+            "the card is still hit at its own rect"
+        );
+    }
+
+    #[test]
+    fn clip_hides_descendants_outside_the_padding_box() {
+        let (mut app, win, card, button) = scene();
+        // push the button to (20, 140): below the card's box (20..140).
+        scroll(&mut app, card, true, 0.0, -120.0);
+        assert_eq!(
+            hit_test(&app, win, Point::new(30.0, 150.0)).into_vec(),
+            vec![win],
+            "outside the clip, the button is not hit"
+        );
+        scroll(&mut app, card, true, 0.0, -50.0);
+        // the button at (20, 70, 40, 40) is inside the clip.
+        assert_eq!(
+            hit_test(&app, win, Point::new(30.0, 80.0)).into_vec(),
+            vec![button, card, win]
+        );
+    }
+
+    #[test]
+    fn nested_shifts_add_and_clips_intersect() {
+        let (mut app, win, card, button) = scene();
+        let deep = app
+            .spawn_with(
+                button,
+                Leaf,
+                (LayoutStyle::default().size(px(10.0), px(10.0)),),
+            )
+            .id();
+        app.tick();
+        // deep's layout rect is (20, 20, 10, 10).
+        scroll(&mut app, card, false, 0.0, 10.0);
+        scroll(&mut app, button, true, 0.0, 5.0);
+        // the button is at (20, 10, 40, 40); deep at (20, 5, 10, 10),
+        // shifts 10 + 5 added, clipped to the button's box (y from 10).
+        assert_eq!(
+            hit_test(&app, win, Point::new(25.0, 12.0)).into_vec(),
+            vec![deep, button, win]
+        );
+        assert_eq!(
+            hit_test(&app, win, Point::new(25.0, 7.0)).into_vec(),
+            vec![win],
+            "deep is shifted there but outside the button's clip"
+        );
+        // an outer clip on the card (box 20..140) intersects the button's.
+        scroll(&mut app, card, true, 0.0, 10.0);
+        assert_eq!(
+            hit_test(&app, win, Point::new(25.0, 12.0)).into_vec(),
+            vec![win],
+            "inside the button's clip, outside the card's"
+        );
     }
 }

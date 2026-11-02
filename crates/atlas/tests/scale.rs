@@ -64,6 +64,22 @@ fn an_svg_icon_follows_the_scale() {
     assert_eq!(s2.tile.bounds.width(), 40.0);
 }
 
+#[cfg(feature = "svg")]
+#[test]
+fn an_svg_image_follows_the_scale() {
+    let mut atlas = Atlas::new();
+    let id = atlas.insert_svg_image(SQUARE_SVG, 20).unwrap();
+    let s1 = atlas.sprite(id);
+    assert_eq!(s1.physical_width, 20);
+    assert_eq!(s1.size, Size::new(20.0, 20.0));
+    assert_eq!(atlas.class(s1.tile.atlas), Class::Image);
+    assert!(atlas.set_scale(2.0));
+    let s2 = atlas.sprite(id);
+    assert_eq!((s2.physical_width, s2.physical_height), (40, 40));
+    assert_eq!(s2.size, Size::new(20.0, 20.0), "the logical size stays");
+    assert_eq!(s2.tile.bounds.width(), 40.0);
+}
+
 #[test]
 fn a_raw_bitmap_keeps_its_logical_size() {
     let mut atlas = Atlas::new();

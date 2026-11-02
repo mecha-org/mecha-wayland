@@ -48,27 +48,61 @@ impl Bitmap {
     /// icon is a shape to be tinted. `Error::Svg` if it does not parse.
     #[cfg(feature = "svg")]
     pub fn from_svg(bytes: &[u8], master: u32) -> Result<Bitmap, Error> {
-        use resvg::{tiny_skia, usvg};
-        let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(Error::Svg)?;
-        let size = tree.size();
-        let (sw, sh) = (size.width(), size.height());
-        let scale = master as f32 / sw.max(sh);
-        let width = ((sw * scale).round() as u32).max(1);
-        let height = ((sh * scale).round() as u32).max(1);
-        let mut pixmap = tiny_skia::Pixmap::new(width, height).expect("a positive size");
-        resvg::render(
-            &tree,
-            tiny_skia::Transform::from_scale(scale, scale),
-            &mut pixmap.as_mut(),
-        );
+        let pixmap = render_svg(bytes, master)?;
         let pixels = pixmap.data().chunks_exact(4).map(|p| p[3]).collect();
         Ok(Bitmap {
-            width,
-            height,
+            width: pixmap.width(),
+            height: pixmap.height(),
             format: Format::R8,
             pixels,
         })
     }
+
+    /// Render an SVG as `from_svg` does, but keep its colour: `Rgba8`
+    /// with straight alpha (tiny-skia's premultiplied pixels are divided
+    /// back out). `Error::Svg` if it does not parse.
+    #[cfg(feature = "svg")]
+    pub fn from_svg_rgba(bytes: &[u8], master: u32) -> Result<Bitmap, Error> {
+        let pixmap = render_svg(bytes, master)?;
+        let mut pixels = Vec::with_capacity(pixmap.data().len());
+        for p in pixmap.data().chunks_exact(4) {
+            let a = p[3] as u32;
+            if a == 0 {
+                pixels.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                for &c in &p[..3] {
+                    pixels.push(((c as u32 * 255 + a / 2) / a).min(255) as u8);
+                }
+                pixels.push(a as u8);
+            }
+        }
+        Ok(Bitmap {
+            width: pixmap.width(),
+            height: pixmap.height(),
+            format: Format::Rgba8,
+            pixels,
+        })
+    }
+}
+
+/// Rasterize an SVG to a premultiplied pixmap, `master` pixels on its
+/// longer side, the aspect kept.
+#[cfg(feature = "svg")]
+fn render_svg(bytes: &[u8], master: u32) -> Result<resvg::tiny_skia::Pixmap, Error> {
+    use resvg::{tiny_skia, usvg};
+    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(Error::Svg)?;
+    let size = tree.size();
+    let (sw, sh) = (size.width(), size.height());
+    let scale = master as f32 / sw.max(sh);
+    let width = ((sw * scale).round() as u32).max(1);
+    let height = ((sh * scale).round() as u32).max(1);
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).expect("a positive size");
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    Ok(pixmap)
 }
 
 #[cfg(test)]
@@ -124,5 +158,17 @@ mod tests {
         assert_eq!(b.pixels[10 * 128 + 10], 255, "inside the rect");
         assert_eq!(b.pixels[10 * 128 + 100], 0, "outside it");
         assert!(matches!(Bitmap::from_svg(b"<svg", 16), Err(Error::Svg(_))));
+    }
+
+    #[cfg(feature = "svg")]
+    #[test]
+    fn svg_rgba_keeps_colour_straight_alpha() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="0" width="10" height="10" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
+        let b = Bitmap::from_svg_rgba(svg, 10).unwrap();
+        assert_eq!((b.width, b.height, b.format), (10, 10, Format::Rgba8));
+        let at = (5 * 10 + 5) * 4;
+        for (got, want) in b.pixels[at..at + 4].iter().zip([255u8, 0, 0, 128]) {
+            assert!(got.abs_diff(want) <= 1, "{:?}", &b.pixels[at..at + 4]);
+        }
     }
 }

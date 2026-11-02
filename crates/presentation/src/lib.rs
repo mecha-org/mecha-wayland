@@ -17,7 +17,8 @@
 //!   asks `Scenes::queue` for the free slot's age, draws the queue into
 //!   the slot's dmabuf through `gles`, attaches, damages each rect of the
 //!   queue's scissor, asks for the callback and commits. An empty scissor
-//!   commits nothing. The callback's `done` and a buffer's `release` each
+//!   commits nothing, unless [`Surfaces::request_commit`] asked for one:
+//!   then it commits bare. The callback's `done` and a buffer's `release` each
 //!   try again.
 //! - A configure settles the size and, when the device size changed,
 //!   replaces the two slots, and always kicks. It must: `window` lets one
@@ -103,7 +104,7 @@ use window::prelude::*;
 mod seat;
 mod slots;
 
-use seat::{Seat, on_keyboard, on_pointer, on_seat, on_touch};
+use seat::{Seat, on_keyboard, on_pointer, on_repeat_timer, on_seat, on_touch};
 use slots::Slots;
 
 pub use wayland::{
@@ -179,6 +180,11 @@ struct Entry {
     /// the layer state when the surface is unmapped, so a remap sends it
     /// again.
     layer: Option<(LayerRole, (u32, u32))>,
+    /// The window clears to transparent, so its slots want alpha.
+    transparent: bool,
+    /// [`Surfaces::request_commit`]: the next `Frame` commits even with
+    /// nothing to draw.
+    commit_wanted: bool,
 }
 
 /// Presentation's own state: one entry per window it put on screen, and
@@ -199,9 +205,44 @@ pub struct Surfaces {
     app_id: String,
     device: Device,
     dmabuf: ZwpLinuxDmabufV1,
-    modifiers: Vec<u64>,
+    formats: Formats,
 }
 impl Resource for Surfaces {}
+
+/// What the compositor said it imports, in the order advertised. The
+/// dmabuf global is bound at version 3 at most (`wayland::bind_version`),
+/// where it names every format and layout this way; a compositor that
+/// names none rules nothing out.
+#[derive(Default)]
+struct Formats {
+    /// Some format or layout was named.
+    listed: bool,
+    /// The layouts for XRGB8888.
+    xrgb: Vec<u64>,
+    /// The layouts for ARGB8888; `None` until the compositor names the
+    /// format at all, which it may do with no explicit layout.
+    argb: Option<Vec<u64>>,
+}
+
+impl Formats {
+    /// Whether a slot is ARGB8888, and the layouts to make it with. A
+    /// transparent window on a compositor that listed formats without
+    /// ARGB8888 is drawn opaque, its clear showing black, rather than not
+    /// at all.
+    fn pick(&self, transparent: bool) -> (bool, &[u64]) {
+        match (&self.argb, transparent) {
+            (Some(m), true) => (true, m),
+            (None, true) if !self.listed => (true, &[]),
+            (None, true) => {
+                eprintln!(
+                    "presentation: the compositor does not import ARGB8888; a transparent window is drawn opaque"
+                );
+                (false, &self.xrgb)
+            }
+            (_, false) => (false, &self.xrgb),
+        }
+    }
+}
 
 /// Where the paint stands against the atlas's last rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -225,6 +266,28 @@ impl Event for Drained {}
 impl Surfaces {
     pub fn surface_of(&self, window: NodeId) -> Option<WlSurface> {
         self.entries.get(&window).map(|e| e.surface)
+    }
+
+    /// Make `window`'s next `Frame` commit its surface even when nothing
+    /// in it needs drawing, so state the compositor applies on commit
+    /// (such as a `phosh_private` thumbnail's placement) is applied then.
+    /// A frame that draws commits anyway; one with no damage sends a bare
+    /// `wl_surface.commit`. Does not itself request the frame: call it
+    /// from a `Frame` system of `window`, or signal `RequestFrame` too.
+    /// Unknown windows are ignored.
+    pub fn request_commit(&mut self, window: NodeId) {
+        if let Some(entry) = self.entries.get_mut(&window) {
+            entry.commit_wanted = true;
+        }
+    }
+
+    /// `window`'s `zwlr_layer_surface_v1`, or `None` for a toplevel or an
+    /// unknown window.
+    pub fn layer_surface_of(&self, window: NodeId) -> Option<ZwlrLayerSurfaceV1> {
+        match self.entries.get(&window)?.shell {
+            Shell::Layer(ls) => Some(ls),
+            _ => None,
+        }
     }
 
     /// Re-send `set_size` on `window`'s `zwlr_layer_surface_v1`, requesting a
@@ -384,6 +447,44 @@ impl Surfaces {
             .map(|(role, _)| role.exclusive_zone)
     }
 
+    /// Change a layer window's keyboard interactivity: sends
+    /// `zwlr_layer_surface_v1.set_keyboard_interactivity` and commits. The
+    /// value is kept, so a remap after [`Surfaces::set_mapped`] sends it
+    /// again; while hidden it is only kept. The same value sends nothing.
+    /// No-op for a toplevel or an unknown window.
+    pub fn set_keyboard_interactivity(
+        &mut self,
+        window: NodeId,
+        ki: KeyboardInteractivity,
+        wl: &mut Wayland,
+    ) {
+        let Some(entry) = self.entries.get_mut(&window) else {
+            return;
+        };
+        let (Shell::Layer(ls), Some((role, _))) = (&entry.shell, entry.layer.as_mut()) else {
+            return;
+        };
+        if role.keyboard_interactivity == ki {
+            return;
+        }
+        role.keyboard_interactivity = ki;
+        if entry.hidden {
+            return;
+        }
+        ls.set_keyboard_interactivity(wl, ki);
+        entry.surface.commit(wl);
+    }
+
+    /// The current keyboard interactivity of a known layer window; `None`
+    /// for a toplevel or an unknown window.
+    pub fn keyboard_interactivity_of(&self, window: NodeId) -> Option<KeyboardInteractivity> {
+        self.entries
+            .get(&window)?
+            .layer
+            .as_ref()
+            .map(|(role, _)| role.keyboard_interactivity)
+    }
+
     /// The current layer of a known layer window; `None` for a toplevel
     /// or an unknown window.
     pub fn layer_of(&self, window: NodeId) -> Option<Layer> {
@@ -518,7 +619,7 @@ impl Module for PresentationModule {
             device,
             compositor,
             dmabuf,
-            modifiers: Vec::new(),
+            formats: Formats::default(),
         });
         app.insert_resource(Seat::new(seat));
         app.system(on_spawned)
@@ -528,6 +629,7 @@ impl Module for PresentationModule {
             .system(on_pointer)
             .system(on_touch)
             .system(on_keyboard)
+            .system(on_repeat_timer)
             .system(on_xdg_surface)
             .system(on_toplevel)
             .system(on_layer_surface)
@@ -544,21 +646,31 @@ impl Module for PresentationModule {
     }
 }
 
-/// The compositor's layouts for XRGB8888, in the order advertised;
-/// `format` events and the implicit modifier are ignored.
+/// The compositor's layouts for XRGB8888 and ARGB8888, in the order
+/// advertised; the implicit modifier is not a layout. Any mention of
+/// ARGB8888 says it is imported.
 fn on_dmabuf(app: &mut App, e: &ZwpLinuxDmabufV1Event) {
-    if let ZwpLinuxDmabufV1Event::Modifier {
-        format,
-        modifier_hi,
-        modifier_lo,
-        ..
-    } = e
-        && *format == gles::XRGB8888
-    {
-        let m = ((*modifier_hi as u64) << 32) | *modifier_lo as u64;
-        if m != MOD_INVALID {
-            app.resource_mut::<Surfaces>().modifiers.push(m);
-        }
+    let (format, m) = match e {
+        ZwpLinuxDmabufV1Event::Format { format, .. } => (*format, None),
+        ZwpLinuxDmabufV1Event::Modifier {
+            format,
+            modifier_hi,
+            modifier_lo,
+            ..
+        } => (
+            *format,
+            Some(((*modifier_hi as u64) << 32) | *modifier_lo as u64),
+        ),
+    };
+    let formats = &mut app.resource_mut::<Surfaces>().formats;
+    formats.listed = true;
+    let list = match format {
+        gles::XRGB8888 => &mut formats.xrgb,
+        gles::ARGB8888 => formats.argb.get_or_insert_default(),
+        _ => return,
+    };
+    if let Some(m) = m.filter(|&m| m != MOD_INVALID) {
+        list.push(m);
     }
 }
 
@@ -579,9 +691,9 @@ fn on_spawned(app: &mut App, s: &Spawned) {
         return;
     }
     let role = app.component::<Role>(s.id).cloned().unwrap_or_default();
-    let title = app
+    let (title, transparent) = app
         .widget::<Window>(s.id)
-        .map(|w| w.title.clone())
+        .map(|w| (w.title.clone(), w.clear().is_transparent()))
         .unwrap_or_default();
     let requested = {
         let style = app
@@ -647,6 +759,8 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             frames: 0,
             hidden,
             layer,
+            transparent,
+            commit_wanted: false,
         },
     );
 }
@@ -684,7 +798,7 @@ fn replace_slots(
     owner: &mut HashMap<ObjectId, NodeId>,
     device: &mut Device,
     dmabuf: ZwpLinuxDmabufV1,
-    modifiers: &[u64],
+    formats: &Formats,
     wl: &mut Wayland,
     w: NodeId,
 ) {
@@ -692,7 +806,8 @@ fn replace_slots(
         teardown_slots(old, owner, device, wl);
     }
     let (dw, dh) = device_size(entry.size, entry.scale);
-    let slots = Slots::create(device, wl, dmabuf, modifiers, dw, dh);
+    let (alpha, modifiers) = formats.pick(entry.transparent);
+    let slots = Slots::create(device, wl, dmabuf, alpha, modifiers, dw, dh);
     for s in &slots.slots {
         owner.insert(s.buffer.id(), w);
     }
@@ -744,7 +859,7 @@ fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
                 &mut s.owner,
                 &mut s.device,
                 s.dmabuf,
-                &s.modifiers,
+                &s.formats,
                 &mut wl,
                 w,
             );
@@ -950,12 +1065,23 @@ fn on_frame(app: &mut App, f: &Frame) {
         .drawn
         .map(|d| (entry.frames - d) as usize)
         .unwrap_or(0);
-    let Some(queue) = scenes.queue(w, age) else {
+    // Only a scroll moved since the frame in the other slot: copy that
+    // frame shifted and draw the strip it leaves.
+    let drawn = slots.slots.each_ref().map(|s| s.drawn);
+    let shifted =
+        slots::previous(&drawn, i, entry.frames).and_then(|j| scenes.shift(w).map(|sh| (sh, j)));
+    let queue = match shifted {
+        Some((sh, _)) => scenes.queue_shifted(w, sh, age),
+        None => scenes.queue(w, age),
+    };
+    let Some(queue) = queue.filter(|q| !q.scissor.is_empty()) else {
+        // Nothing to draw. A requested commit goes out bare: the current
+        // buffer stays, and the compositor applies what was pending.
+        if std::mem::take(&mut entry.commit_wanted) {
+            entry.surface.commit(&mut wl);
+        }
         return;
     };
-    if queue.scissor.is_empty() {
-        return;
-    }
     // Two roundings of the same size must agree: the slots' came from
     // `device_size`, which rounds the logical size times the scale, and
     // the queue's is what `render` walked at. Round here too — truncating
@@ -974,15 +1100,25 @@ fn on_frame(app: &mut App, f: &Frame) {
         entry.wanting = true;
         return;
     }
-    let slot = &mut slots.slots[i];
     s.device.upload(&atlas);
+    if let Some((sh, j)) = shifted {
+        s.device.shift(
+            &slots.slots[j].target,
+            &slots.slots[i].target,
+            sh,
+            &queue.copy,
+        );
+    }
+    let slot = &mut slots.slots[i];
     s.device.draw(&slot.target, queue);
     if entry.scale != entry.scale_sent {
         entry.surface.set_buffer_scale(&mut wl, entry.scale);
         entry.scale_sent = entry.scale;
     }
     entry.surface.attach(&mut wl, Some(slot.buffer), 0, 0);
-    for &r in &queue.scissor {
+    // A shift moved everything in its area; a redraw changed its scissor.
+    let shifted_area = shifted.map(|(sh, _)| [sh.area]);
+    for &r in shifted_area.as_ref().map_or(&queue.scissor[..], |a| &a[..]) {
         let (x, y, dw, dh) = outward(r);
         entry.surface.damage_buffer(&mut wl, x, y, dw, dh);
     }
@@ -990,9 +1126,11 @@ fn on_frame(app: &mut App, f: &Frame) {
     s.owner.insert(callback.id(), w);
     entry.callback = Some(callback);
     entry.surface.commit(&mut wl);
+    entry.commit_wanted = false;
     slot.held = true;
     slot.drawn = Some(entry.frames);
     entry.frames += 1;
+    scenes.presented(w);
 }
 
 /// A device-pixel rect rounded outward: `(x, y, width, height)` as
@@ -1081,7 +1219,7 @@ fn on_surface(app: &mut App, e: &WlSurfaceEvent) {
                     &mut s.owner,
                     &mut s.device,
                     s.dmabuf,
-                    &s.modifiers,
+                    &s.formats,
                     &mut wl,
                     w,
                 );

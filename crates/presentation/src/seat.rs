@@ -8,12 +8,14 @@
 //! protocol event for the same contact arrives.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use app::prelude::*;
 use geometry::Point;
 use interactivity::{
     ContactId, ContactInput, ContactPhase, KeyMeaning, KeyState, KeyboardInput, Modifiers,
 };
+use ring::{IoEvent, Ring, Token};
 use wayland::prelude::*;
 use xkbcommon::xkb;
 
@@ -32,12 +34,19 @@ pub(crate) struct Seat {
     /// arrive on separate `wl_keyboard` events and are joined here, at
     /// the reducer.
     modifiers: Modifiers,
+    /// Client-side key repeat: the compositor only reports press and
+    /// release, and the client repeats a held key per `repeat_info`.
+    repeat: Repeat,
     /// The window the pointer last entered, and its position there.
     /// `None` between a `Leave` and the next `Enter`.
     pointer_focus: Option<(NodeId, Point)>,
     /// Every touch point currently down: `wl_touch`'s id to the window
     /// it started on and its last known position.
     touches: HashMap<i32, (NodeId, Point)>,
+    /// The `time` of the latest pointer or touch event that carried one
+    /// (`0` before any): what `Enter`, `Leave` and touch `Cancel`, which
+    /// have none of their own, report.
+    last_time: u32,
 }
 impl Resource for Seat {}
 
@@ -46,8 +55,39 @@ impl Resource for Seat {}
 /// key and modifier event. `!Send`/`!Sync` — the app is single-threaded.
 struct Xkb {
     _ctx: xkb::Context,
-    _keymap: xkb::Keymap,
+    keymap: xkb::Keymap,
     state: xkb::State,
+}
+
+/// Client-side key repeat state, per `wl_keyboard.repeat_info`.
+struct Repeat {
+    /// Repeats per second; `0` disables repeat.
+    rate: i32,
+    /// Milliseconds from key down to the first repeat.
+    delay: i32,
+    /// The raw keycode held down, if it repeats; cleared on its release
+    /// or on keyboard `Leave`.
+    held: Option<u32>,
+    /// When the held key next repeats.
+    deadline: Instant,
+    /// Ring timeouts in flight. A press or release does not cancel one;
+    /// a stale timer that fires before `deadline` (or with nothing held)
+    /// is finished and ignored.
+    timers: Vec<Token>,
+}
+
+impl Default for Repeat {
+    /// The protocol leaves the rate unset until `repeat_info` (v4+);
+    /// these are the conventional defaults until then.
+    fn default() -> Self {
+        Repeat {
+            rate: 25,
+            delay: 600,
+            held: None,
+            deadline: Instant::now(),
+            timers: Vec::new(),
+        }
+    }
 }
 
 impl Seat {
@@ -59,8 +99,10 @@ impl Seat {
             keyboard: None,
             xkb: None,
             modifiers: Modifiers::default(),
+            repeat: Repeat::default(),
             pointer_focus: None,
             touches: HashMap::new(),
+            last_time: 0,
         }
     }
 }
@@ -104,19 +146,24 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 return;
             };
             let position = Point::new(*surface_x, *surface_y);
-            app.resource_mut::<Seat>().pointer_focus = Some((window, position));
+            let mut seat = app.resource_mut::<Seat>();
+            seat.pointer_focus = Some((window, position));
+            let time = seat.last_time;
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Moved,
                 position,
+                time,
             });
         }
         WlPointerEvent::Motion {
+            time,
             surface_x,
             surface_y,
             ..
         } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, _)) = app.resource::<Seat>().pointer_focus else {
                 return;
             };
@@ -127,9 +174,11 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
         }
-        WlPointerEvent::Button { state, .. } => {
+        WlPointerEvent::Button { time, state, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, position)) = app.resource::<Seat>().pointer_focus else {
                 return;
             };
@@ -142,17 +191,20 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 contact: ContactId::Mouse,
                 phase,
                 position,
+                time: *time,
             });
         }
         WlPointerEvent::Leave { .. } => {
             let Some((window, position)) = app.resource_mut::<Seat>().pointer_focus.take() else {
                 return;
             };
+            let time = app.resource::<Seat>().last_time;
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Cancelled,
                 position,
+                time,
             });
         }
         _ => {}
@@ -168,8 +220,14 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
 pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
     match e {
         WlTouchEvent::Down {
-            surface, id, x, y, ..
+            time,
+            surface,
+            id,
+            x,
+            y,
+            ..
         } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some(window) = app.resource::<Surfaces>().window_of(surface.id()) else {
                 return;
             };
@@ -182,15 +240,18 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Pressed,
                 position,
+                time: *time,
             });
         }
-        WlTouchEvent::Motion { id, x, y, .. } => {
+        WlTouchEvent::Motion { time, id, x, y, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, _)) = app.resource::<Seat>().touches.get(id).copied() else {
                 return;
             };
@@ -203,9 +264,11 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
         }
-        WlTouchEvent::Up { id, .. } => {
+        WlTouchEvent::Up { time, id, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, position)) = app.resource_mut::<Seat>().touches.remove(id) else {
                 return;
             };
@@ -214,16 +277,19 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Released,
                 position,
+                time: *time,
             });
         }
         WlTouchEvent::Cancel { .. } => {
             let touches = std::mem::take(&mut app.resource_mut::<Seat>().touches);
+            let time = app.resource::<Seat>().last_time;
             for (id, (window, position)) in touches {
                 app.signal(ContactInput {
                     window,
                     contact: ContactId::Touch(id as u32),
                     phase: ContactPhase::Cancelled,
                     position,
+                    time,
                 });
             }
         }
@@ -237,8 +303,11 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
 /// modifier events update the xkb state's modifier mask and the
 /// `Modifiers` struct folded into each report; key events decode the
 /// keycode through xkb into a `KeyMeaning` and signal it.
-/// `Enter`/`Leave`/`RepeatInfo` are read and dropped: keyboard focus is
-/// the `interactivity` crate's concern, surfaced as `KeyboardFocus`.
+/// `RepeatInfo` sets the client-side repeat rate; a held key that
+/// repeats per the keymap signals `Repeated` from a ring timer (see
+/// [`on_repeat_timer`]). `Enter` is dropped and `Leave` only stops the
+/// repeat: keyboard focus is the `interactivity` crate's concern,
+/// surfaced as `KeyboardFocus`.
 pub(crate) fn on_keyboard(app: &mut App, e: &WlKeyboardEvent) {
     match e {
         WlKeyboardEvent::Keymap {
@@ -266,7 +335,7 @@ pub(crate) fn on_keyboard(app: &mut App, e: &WlKeyboardEvent) {
                             let state = xkb::State::new(&keymap);
                             app.resource_mut::<Seat>().xkb = Some(Xkb {
                                 _ctx: ctx,
-                                _keymap: keymap,
+                                keymap,
                                 state,
                             });
                         }
@@ -290,42 +359,109 @@ pub(crate) fn on_keyboard(app: &mut App, e: &WlKeyboardEvent) {
             }
         }
         WlKeyboardEvent::Key { key, state, .. } => {
-            let (meaning, modifiers) = {
-                let seat = app.resource::<Seat>();
-                let modifiers = seat.modifiers;
-                let meaning = decode(&seat, *key);
-                (meaning, modifiers)
-            };
             let state = match state {
                 WlKeyboardKeyState::Pressed => KeyState::Pressed,
                 WlKeyboardKeyState::Released => KeyState::Released,
                 WlKeyboardKeyState::Repeated => KeyState::Repeated,
             };
-            // Update the xkb state after decoding, so the keysym reported
-            // for this event is not affected by the event itself (per
-            // xkb docs). Only on press/release — repeats carry no state
-            // change.
-            if matches!(state, KeyState::Pressed | KeyState::Released) {
-                if let Some(xkb) = app.resource_mut::<Seat>().xkb.as_mut() {
-                    let keycode = xkb::Keycode::new(*key + 8);
-                    let dir = if state == KeyState::Pressed {
-                        xkb::KeyDirection::Down
-                    } else {
-                        xkb::KeyDirection::Up
-                    };
-                    xkb.state.update_key(keycode, dir);
+            match state {
+                KeyState::Pressed => start_repeat(app, *key),
+                KeyState::Released => {
+                    let mut seat = app.resource_mut::<Seat>();
+                    if seat.repeat.held == Some(*key) {
+                        seat.repeat.held = None;
+                    }
                 }
+                KeyState::Repeated => {}
             }
-            app.signal(KeyboardInput {
-                meaning,
-                state,
-                modifiers,
-            });
+            signal_key(app, *key, state);
         }
-        // `Enter`/`Leave` (compositor surface focus) and `RepeatInfo`
-        // have nowhere to go.
+        WlKeyboardEvent::RepeatInfo { rate, delay, .. } => {
+            let mut seat = app.resource_mut::<Seat>();
+            seat.repeat.rate = *rate;
+            seat.repeat.delay = *delay;
+        }
+        WlKeyboardEvent::Leave { .. } => {
+            app.resource_mut::<Seat>().repeat.held = None;
+        }
+        // `Enter` (compositor surface focus) has nowhere to go.
         _ => {}
     }
+}
+
+/// Decode `key` and signal it as a `KeyboardInput` in `state`, then
+/// fold a press or release into the xkb state.
+fn signal_key(app: &mut App, key: u32, state: KeyState) {
+    let (meaning, modifiers) = {
+        let seat = app.resource::<Seat>();
+        (decode(&seat, key), seat.modifiers)
+    };
+    // Update the xkb state after decoding, so the keysym reported
+    // for this event is not affected by the event itself (per
+    // xkb docs). Only on press/release — repeats carry no state
+    // change.
+    if matches!(state, KeyState::Pressed | KeyState::Released) {
+        if let Some(xkb) = app.resource_mut::<Seat>().xkb.as_mut() {
+            let keycode = xkb::Keycode::new(key + 8);
+            let dir = if state == KeyState::Pressed {
+                xkb::KeyDirection::Down
+            } else {
+                xkb::KeyDirection::Up
+            };
+            xkb.state.update_key(keycode, dir);
+        }
+    }
+    app.signal(KeyboardInput {
+        meaning,
+        state,
+        modifiers,
+    });
+}
+
+/// A key went down: hold it for repeat if repeat is on and the keymap
+/// says the key repeats (modifiers don't), arming the first timer at
+/// `delay`. A new press replaces any key already held.
+fn start_repeat(app: &mut App, key: u32) {
+    let (mut seat, mut ring) = app.query::<(ResMut<Seat>, ResMut<Ring>)>();
+    let repeats = seat
+        .xkb
+        .as_ref()
+        .is_some_and(|x| x.keymap.key_repeats(xkb::Keycode::new(key + 8)));
+    if !repeats || seat.repeat.rate <= 0 {
+        seat.repeat.held = None;
+        return;
+    }
+    let delay = Duration::from_millis(seat.repeat.delay.max(0) as u64);
+    seat.repeat.held = Some(key);
+    seat.repeat.deadline = Instant::now() + delay;
+    let token = ring.timeout(delay);
+    seat.repeat.timers.push(token);
+}
+
+/// A repeat timer fired: if a key is still held and its deadline has
+/// passed, signal it `Repeated` and arm the next one at `1/rate`.
+pub(crate) fn on_repeat_timer(app: &mut App, e: &IoEvent) {
+    let key = {
+        let (mut seat, mut ring) = app.query::<(ResMut<Seat>, ResMut<Ring>)>();
+        let Some(i) = seat.repeat.timers.iter().position(|&t| t == e.token) else {
+            return;
+        };
+        seat.repeat.timers.swap_remove(i);
+        ring.finish(e.token);
+        let now = Instant::now();
+        let Some(key) = seat.repeat.held else {
+            return;
+        };
+        if now < seat.repeat.deadline || seat.repeat.rate <= 0 {
+            return;
+        }
+        let interval = Duration::from_secs(1) / seat.repeat.rate as u32;
+        seat.repeat.deadline = (seat.repeat.deadline + interval).max(now);
+        let token = ring.timeout(seat.repeat.deadline.saturating_duration_since(now));
+        seat.repeat.timers.push(token);
+        key
+    };
+    signal_key(app, key, KeyState::Repeated);
 }
 
 /// Decode one raw evdev keycode into a [`KeyMeaning`] through the xkb

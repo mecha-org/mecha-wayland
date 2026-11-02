@@ -12,7 +12,9 @@
 //!   exactly that colour behind a node, starting from the window's clear
 //!   colour. A primitive inside a solid goes to the opaque pass whole,
 //!   its `background` set, so the shader composites its edges, border or
-//!   tile onto it and writes depth. An opaque, edge-free quad with an
+//!   tile onto it and writes depth. An opaque-coloured quad with edges
+//!   there also writes its flat interior as a plain fill at `z + 1`, so
+//!   the depth test keeps the edge shading to its rim. An opaque, edge-free quad with an
 //!   opaque colour is a plain fill and goes to the opaque pass wherever
 //!   it is. Anything else with nothing known behind it blends in the
 //!   translucent pass; an opaque-coloured quad with edges also writes its
@@ -22,20 +24,41 @@
 //!   known, so a later sibling inside the solid composites onto the
 //!   parent's colour and its depth write covers the earlier one where
 //!   their rects overlap.
-//! - `Layout` and `AnimatedPaint` changes, and removals, mark the nodes and raise
-//!   `RequestFrame` for their window; animation can request frames too. Nothing
-//!   runs on `Tick`. The walk damages a marked node's old and new bounds, a
-//!   removed node's last bounds, and the whole window on the first frame
-//!   or a new size or scale. A write that lands between the drain and a
-//!   `Frame` is drawn by that frame. Layout changes are damaged then even
-//!   if the emitted bounds stay the same; their late change notifications
-//!   still mark them dirty and request another frame. Same-bounds paint changes,
-//!   such as a colour, are still damaged one frame late.
+//! - The walk also carries a shift and a clip down. Below a node with a
+//!   `layout::Viewport`, descendants are drawn at their layout less the
+//!   scroll accumulated from every such ancestor, each scroll rounded to
+//!   whole device pixels so content moves without changing size; with `clip` it also
+//!   cuts their clip, which starts as the window, to its padding box. The
+//!   node itself is neither moved nor cut, as in the hit test. Every command carries
+//!   its clip for the backend to cut it by; one wholly outside it is not
+//!   emitted, and a node's bounds, its damage, and the solid a quad hands
+//!   down are cut to it. So scrolling damages what moved through the
+//!   bounds alone, and a row scrolled out of sight costs a visit and
+//!   nothing else.
+//! - When every walk since the last [`Scenes::presented`] moved only one
+//!   clipping viewport's scroll, [`Scenes::shift`] says so, and the
+//!   backend may copy the presented frame shifted and draw
+//!   [`Scenes::queue_shifted`]: only the exposed strip. It needs the
+//!   viewport's area to sit wholly on one solid colour with nothing outside
+//!   its subtree, ancestors aside, drawn over or under it, and a whole
+//!   scale; anything else takes the full path.
+//! - `Layout` and `AnimatedPaint` changes, and removals, mark the nodes
+//!   and raise `RequestFrame` for their window; a `Viewport` change only
+//!   raises it, since what it moves damages itself; animation
+//!   can request frames too. Nothing runs on `Tick`. The walk damages a
+//!   marked node's old and new bounds, a removed node's last bounds, and
+//!   the whole window on the first frame or a new size or scale. A write
+//!   that lands between the drain and a `Frame` is drawn by that frame.
+//!   Layout changes are damaged then even if the emitted bounds stay the
+//!   same; their late change notifications still mark them dirty and
+//!   request another frame. Same-bounds paint changes, such as a colour,
+//!   are still damaged one frame late.
 //! - [`Scenes`] keeps the last few frames' damage per window, as many as
 //!   [`RenderModule::buffers`] says. A backend asks [`Scenes::queue`] for
 //!   the buffer it will draw into by its age and gets a [`Queue`]: the
 //!   scissor to clear, and per [`Pass`] the rects it has something to
-//!   draw in and the commands that touch them, already sorted.
+//!   draw in and the commands whose clipped part touches them, already
+//!   sorted.
 //! - [`Command`] is `repr(C)` and uploaded as is. Tiles pass through from
 //!   `paint`; uploading atlas pixels is the backend's business against the
 //!   atlas, not this module's.
@@ -92,7 +115,9 @@
 //! let queue = scenes.queue(win.id(), 1).unwrap();
 //! assert_eq!(queue.scissor, vec![Rect::new(0.0, 0.0, 200.0, 100.0)]);
 //! assert!(queue.translucent.commands.is_empty(), "black behind it: nothing blends");
-//! let quad = queue.opaque.commands[0];
+//! // Nearest first: the flat middle, then the rounded box under it.
+//! assert_eq!(queue.opaque.commands[0].rect, Rect::new(4.0, 4.0, 42.0, 12.0));
+//! let quad = queue.opaque.commands[1];
 //! assert_eq!(quad.rect, Rect::new(0.0, 0.0, 50.0, 20.0));
 //! assert_eq!(quad.background, Color::BLACK);
 //! assert_eq!(quad.kind(), Command::QUAD);
@@ -100,7 +125,8 @@
 
 use animation::{AnimatedPaint, Layout};
 use app::prelude::*;
-use geometry::{Color, Corners, Insets, Rect, Size};
+use geometry::{Color, Corners, Insets, Point, Rect, Size};
+use layout::Viewport;
 use paint::{AtlasId, AtlasTile};
 use window::{Frame, InWindow, RequestFrame, Window};
 
@@ -111,7 +137,7 @@ mod walk;
 use scene::Scene;
 
 pub mod prelude {
-    pub use crate::{Command, Pass, Queue, RenderModule, Scenes};
+    pub use crate::{Command, Pass, Queue, RenderModule, Scenes, Shift};
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +153,10 @@ pub mod prelude {
 /// In the translucent pass the shader computes coverage from the rounded
 /// edge, the border or the tile and blends the primitive's colour with
 /// that coverage times its alpha. In the opaque pass it does the same
-/// arithmetic, composites onto `background`, and writes alpha one and
-/// depth: `rgb = mix(background, primitive, coverage * alpha)`.
+/// arithmetic, composites onto `background`, premultiplied, and writes
+/// depth: `rgb = mix(background, primitive, coverage * alpha)`, alpha one
+/// over an opaque background and `coverage * alpha` over a window's
+/// transparent clear.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Command {
@@ -150,6 +178,10 @@ pub struct Command {
     pub tile: AtlasTile,
     /// Kind, grayscale, opaque and opacity packed; see the constants.
     pub flags: u32,
+    /// Only pixels inside this rect are drawn: the window, or the
+    /// intersection of the padding boxes of the clipping viewports above
+    /// the node.
+    pub clip: Rect,
 }
 
 impl Command {
@@ -231,22 +263,37 @@ pub struct Queue {
     /// range.
     pub depth: f32,
     pub scissor: Vec<Rect>,
+    /// For a shifted queue only: the rects outside the shift's area that
+    /// the buffer lacks, copied from the presented frame as they are
+    /// before the area is copied moved. Empty otherwise.
+    pub copy: Vec<Rect>,
     /// Front to back: z descending.
     pub opaque: Pass,
     /// Back to front: z ascending.
     pub translucent: Pass,
 }
 
+/// One viewport's scroll since the last presented frame, as the backend
+/// can reuse it. Device pixels, whole numbers. `area` is the viewport's
+/// visible padding box; the content in it moved by `-by`, where `by` is
+/// the scroll now less the scroll then.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shift {
+    pub area: Rect,
+    pub by: Point,
+}
+
 // ---------------------------------------------------------------------------
 // Private state
 // ---------------------------------------------------------------------------
 
-/// The bounds and layout from the last frame this node was walked (`None`
-/// for bounds if nothing was emitted), and whether a `Layout` or `AnimatedPaint`
-/// change was noted since. Written by the change systems and the walk;
-/// its `OnChanged` drain has no
-/// listener, and `on_frame` takes the record after the walk so the drain
-/// sees only what the change systems marked between frames.
+/// The bounds and the displayed layout, shift included, from the last
+/// frame this node was walked (`None` for both if nothing was emitted
+/// inside the clip), and whether a `Layout` or `AnimatedPaint` change
+/// was noted since. Written by the change systems and
+/// the walk; its `OnChanged` drain has no listener, and `on_frame` takes
+/// the record after the walk so the drain sees only what the change
+/// systems marked between frames.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Drawn {
     pub(crate) rect: Option<Rect>,
@@ -294,6 +341,39 @@ impl Scenes {
     /// many frames of damage each scene keeps. [`RenderModule::buffers`].
     pub fn buffers(&self) -> usize {
         self.buffers
+    }
+
+    /// How the presented frame can be reused: `Some` when every walk
+    /// since [`Scenes::presented`] changed nothing but one clipping
+    /// viewport's scroll, the viewport sits on one flat colour with
+    /// nothing else over or under its area, the scale is whole, and the
+    /// move leaves part of the area to copy. `None` for a window with no
+    /// scene.
+    pub fn shift(&self, window: NodeId) -> Option<Shift> {
+        self.scenes
+            .iter()
+            .find(|(w, _)| *w == window)
+            .and_then(|(_, s)| s.shift())
+    }
+
+    /// The commands for a buffer of `age` (as [`Scenes::queue`]) that a
+    /// backend fills from the presented frame: first `copy`, the rects
+    /// outside `shift.area` the buffer lacks, as they are; then the area,
+    /// moved by `-shift.by`; then only the strip the move exposed is
+    /// drawn. `None` if `window` has no scene.
+    pub fn queue_shifted(&mut self, window: NodeId, shift: Shift, age: usize) -> Option<&Queue> {
+        self.scenes
+            .iter_mut()
+            .find(|(w, _)| *w == window)
+            .map(|(_, s)| s.queue_shifted(shift, age))
+    }
+
+    /// The last walk of `window` is what the backend just drew and
+    /// presented: the next [`Scenes::shift`] is measured from it.
+    pub fn presented(&mut self, window: NodeId) {
+        if let Some((_, s)) = self.scenes.iter_mut().find(|(w, _)| *w == window) {
+            s.presented();
+        }
     }
 
     pub(crate) fn has(&self, window: NodeId) -> bool {
@@ -344,6 +424,7 @@ impl Module for RenderModule {
         app.insert_resource(Scenes::new(self.buffers));
         app.system(on_layout_changed)
             .system(on_paint_changed)
+            .system(on_viewport_changed)
             .system(on_removed)
             .system(on_frame);
     }
@@ -361,6 +442,24 @@ fn on_layout_changed(app: &mut App, e: &Emitted<OnChanged<Layout>>) {
 /// An `AnimatedPaint` change: note the node and ask for its window.
 fn on_paint_changed(app: &mut App, e: &Emitted<OnChanged<AnimatedPaint>>) {
     note(app, &e.targets);
+}
+
+/// A `Viewport` change: ask for its window, without marking the node. Its
+/// own pixels do not change; its descendants' bounds move or are cut with
+/// it, so the walk damages them without marks. So `dirty` always means a
+/// layout or paint change.
+fn on_viewport_changed(app: &mut App, e: &Emitted<OnChanged<Viewport>>) {
+    let mut windows: Vec<NodeId> = Vec::new();
+    for &id in e.targets.iter() {
+        if let Some(InWindow(Some(w))) = app.component::<InWindow>(id).copied()
+            && !windows.contains(&w)
+        {
+            windows.push(w);
+        }
+    }
+    for w in windows {
+        app.signal(RequestFrame(w));
+    }
 }
 
 /// Mark each target dirty and raise one `RequestFrame` per distinct
@@ -403,8 +502,8 @@ fn on_removed(app: &mut App, r: &Removed) {
     }
 }
 
-/// Rebuild the window's scene from the live `Layout` and `AnimatedPaint`. A stale
-/// id or a non-window is ignored. Nothing here raises `RequestFrame`.
+/// Rebuild the window's scene from the live `Layout` and
+/// `AnimatedPaint`. A stale id or a non-window is ignored. Nothing here raises `RequestFrame`.
 fn on_frame(app: &mut App, f: &Frame) {
     let w = f.0;
     let Some(win) = app.widget::<Window>(w) else {
@@ -417,18 +516,27 @@ fn on_frame(app: &mut App, f: &Frame) {
     let size = walk::scale_rect(layout.rect, scale).size;
 
     let (tree, mut data) = app.split();
-    let (layouts, paints, mut drawn, mut scenes) =
-        data.query::<(&Layout, &AnimatedPaint, &mut Drawn, ResMut<Scenes>)>();
+    let (layouts, paints, viewports, mut drawn, mut scenes) = data.query::<(
+        &Layout,
+        &AnimatedPaint,
+        &Viewport,
+        &mut Drawn,
+        ResMut<Scenes>,
+    )>();
     let scene = scenes.scene_or_new(w);
     let full = scene.begin(size, scale, clear);
-    let visited = walk::walk(tree, &layouts, &paints, &mut drawn, w, scale, clear, scene);
+    let visited = walk::walk(
+        tree, &layouts, &paints, &viewports, &mut drawn, w, scale, clear, scene,
+    );
     // A node drawn last frame and gone now left pixels behind; its
     // `Drawn` was reset by the core, so last frame's list is the record.
     for &(id, rect) in &scene.drawn {
         if !tree.is_live(id) {
             scene.damage.push(rect);
+            scene.pure = false;
         }
     }
+    scene.judge(tree);
     scene.finish(full, visited);
 
     // The walk wrote `Drawn` through flagging guards and `Scenes` through
@@ -443,10 +551,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_command_is_thirty_one_words_with_no_padding() {
+    fn a_command_is_thirty_five_words_with_no_padding() {
         use std::mem::{align_of, size_of};
-        assert_eq!(size_of::<Command>(), 124);
+        assert_eq!(size_of::<Command>(), 140);
         assert_eq!(align_of::<Command>(), 4);
+    }
+
+    #[test]
+    fn a_walk_records_only_the_clipping_viewports() {
+        use layout::prelude::*;
+        use window::prelude::*;
+        struct Leaf;
+        impl Build for Leaf {
+            type Widget = Leaf;
+        }
+        impl Widget for Leaf {
+            type Builder = Leaf;
+            fn build(b: Leaf, _: Handle<Self>, _: &mut Spawner<'_, Self>) -> Self {
+                b
+            }
+        }
+        fn answer(app: &mut App, r: &FrameRequested) {
+            app.signal(Frame(r.0));
+        }
+        let mut app = App::new();
+        app.add_module(LayoutModule)
+            .add_module(paint::PaintModule)
+            .add_module(WindowModule)
+            .add_module(animation::AnimationModule)
+            .add_module(RenderModule { buffers: 2 })
+            .system(answer);
+        let win = app
+            .spawn(
+                app.root(),
+                window().layout(LayoutStyle::default().size(px(200.0), px(200.0))),
+            )
+            .id();
+        let list = app
+            .spawn_with(
+                win,
+                Leaf,
+                (
+                    LayoutStyle::default().column().size(px(200.0), px(200.0)),
+                    Viewport {
+                        clip: true,
+                        scroll: geometry::Point::default(),
+                    },
+                ),
+            )
+            .id();
+        for _ in 0..100 {
+            app.spawn_with(
+                list,
+                Leaf,
+                (
+                    LayoutStyle::default().size(px(200.0), px(4.0)).shrink(0.0),
+                    paint::Paint::Quad(paint::Quad::new(Color::WHITE)),
+                ),
+            );
+        }
+        app.tick();
+        app.component_mut::<Viewport>(list).unwrap().scroll = geometry::Point::new(0.0, 8.0);
+        app.tick();
+        // Every node has a `Viewport`; only the list clips. Recording the
+        // rest made each walk quadratic in the node count.
+        let scenes = app.resource::<Scenes>();
+        let (_, scene) = scenes.scenes.iter().find(|(w, _)| *w == win).unwrap();
+        assert_eq!(scene.viewed.len(), 1);
     }
 
     #[test]
@@ -462,6 +633,7 @@ mod tests {
             border: Insets::all(0.0),
             tile: NO_TILE,
             flags: f,
+            clip: Rect::ZERO,
         };
         assert_eq!(c.kind(), Command::IMAGE);
         assert!(c.is_opaque());

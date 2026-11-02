@@ -779,6 +779,7 @@ fn button_paints_quad_and_updates_on_pointer_events() {
         Press {
             contact: ContactId::Mouse,
             position: Point::ZERO,
+            time: 0,
         },
         btn.id(),
     );
@@ -797,6 +798,7 @@ fn button_paints_quad_and_updates_on_pointer_events() {
         Release {
             contact: ContactId::Mouse,
             position: Point::ZERO,
+            time: 0,
         },
         btn.id(),
     );

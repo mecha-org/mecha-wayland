@@ -37,6 +37,11 @@ pub struct ContactInput {
     pub contact: ContactId,
     pub phase: ContactPhase,
     pub position: Point,
+    /// The Wayland event's millisecond timestamp, on a clock of the
+    /// compositor's choosing; it wraps at `u32::MAX`, so compare with
+    /// `wrapping_sub`. Events with no timestamp of their own carry the
+    /// last one seen.
+    pub time: u32,
 }
 
 impl Signal for ContactInput {}

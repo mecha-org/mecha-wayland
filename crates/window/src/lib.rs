@@ -96,7 +96,8 @@ pub struct Window {
     scale: f32,
     /// A `FrameRequested` went out and its `Frame` has not come back.
     pending: bool,
-    /// What the window shows where nothing is drawn. Opaque.
+    /// What the window shows where nothing is drawn: opaque, or
+    /// [`Color::TRANSPARENT`].
     clear: Color,
 }
 
@@ -154,10 +155,18 @@ impl WindowBuilder {
         self
     }
 
-    /// The colour the window clears to. Black by default. A window is
-    /// opaque; an alpha below one is not rejected but no WSI supports it.
+    /// The colour the window clears to. Black by default. An opaque
+    /// colour, or one with no alpha for a see-through window, which is
+    /// stored as [`Color::TRANSPARENT`] whatever its rgb. Anything inside
+    /// the window composites onto it as onto any other solid. An alpha
+    /// between the two is not rejected, but nothing is known behind the
+    /// window's content and the WSI shows it opaque.
     pub fn clear(mut self, color: Color) -> Self {
-        self.clear = color;
+        self.clear = if color.is_transparent() {
+            Color::TRANSPARENT
+        } else {
+            color
+        };
         self
     }
 }

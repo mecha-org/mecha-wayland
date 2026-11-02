@@ -51,6 +51,9 @@ const LAYER_BUF_A: u32 = 12;
 /// `DRM_FORMAT_XRGB8888`.
 const XRGB: u32 = 0x3432_5258;
 
+/// `DRM_FORMAT_ARGB8888`.
+const ARGB: u32 = 0x3432_5241;
+
 /// `I915_FORMAT_MOD_Y_TILED`, the second layout the fake advertises after
 /// the linear one. A vendor modifier the local GBM may or may not be able
 /// to produce, so the slots report whichever of the two it picked.
@@ -122,7 +125,11 @@ mod ev {
 
 #[derive(Default)]
 struct Log(Vec<String>);
+/// The `time` of every `ContactInput`, in arrival order.
+#[derive(Default)]
+struct ContactTimes(Vec<u32>);
 impl Resource for Log {}
+impl Resource for ContactTimes {}
 fn log_resized(app: &mut App, e: &Emitted<Resized>) {
     app.resource_mut::<Log>().0.push(format!(
         "Resized {}x{}",
@@ -150,6 +157,7 @@ fn log_frame(app: &mut App, f: &Frame) {
     app.resource_mut::<Log>().0.push(format!("Frame {:?}", f.0));
 }
 fn log_contact(app: &mut App, e: &ContactInput) {
+    app.resource_mut::<ContactTimes>().0.push(e.time);
     app.resource_mut::<Log>().0.push(format!(
         "{:?} {:?} {:?} {}x{}",
         e.window, e.contact, e.phase, e.position.x, e.position.y
@@ -178,10 +186,18 @@ static GPU: Mutex<()> = Mutex::new(());
 
 /// The fake compositor with the whole stack installed, behind the GPU
 /// lock, after it advertised two layouts for XRGB8888: linear first, then
-/// [`VENDOR_MOD`]. GBM picks the first of the two it can render into, so
-/// which one a target reports is the driver's business, not the test's.
-/// `None` with a skip line when there is no render node.
+/// [`VENDOR_MOD`], and linear for ARGB8888. GBM picks the first of the two
+/// it can render into, so which one a target reports is the driver's
+/// business, not the test's. `None` with a skip line when there is no
+/// render node.
 fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
+    fake_advertising(true, true)
+}
+
+/// [`fake`], with or without XRGB8888 and ARGB8888 among the formats
+/// advertised. Neither is what a compositor bound at version 4 or above
+/// sends: its formats come by feedback instead.
+fn fake_advertising(xrgb: bool, argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
     let guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
     match Device::try_open(Budget::default()) {
         Ok(_) => {}
@@ -197,16 +213,25 @@ fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
             .bind::<XdgWmBase>()
             .bind::<WlSeat>()
     });
-    f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
-        w.uint(XRGB);
-        w.uint(0);
-        w.uint(0);
-    });
-    f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
-        w.uint(XRGB);
-        w.uint((VENDOR_MOD >> 32) as u32);
-        w.uint(VENDOR_MOD as u32);
-    });
+    if xrgb {
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(XRGB);
+            w.uint(0);
+            w.uint(0);
+        });
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(XRGB);
+            w.uint((VENDOR_MOD >> 32) as u32);
+            w.uint(VENDOR_MOD as u32);
+        });
+    }
+    if argb {
+        f.send(DMABUF, ev::DMABUF_MODIFIER, |w| {
+            w.uint(ARGB);
+            w.uint(0);
+            w.uint(0);
+        });
+    }
     f.app
         .add_module(LayoutModule)
         .add_module(PaintModule)
@@ -217,6 +242,7 @@ fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
         .insert_resource(Atlas::new());
     f.app
         .init_resource::<Log>()
+        .init_resource::<ContactTimes>()
         .init_resource::<Rescales>()
         .system(log_resized)
         .system(log_scale)
@@ -1054,6 +1080,99 @@ fn set_exclusive_zone_on_a_toplevel_does_nothing() {
     assert_eq!(f.app.resource::<Surfaces>().exclusive_zone_of(win), None);
 }
 
+fn set_keyboard_interactivity(f: &mut Fake, win: NodeId, ki: KeyboardInteractivity) {
+    {
+        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.set_keyboard_interactivity(win, ki, &mut wl);
+    }
+    f.turn();
+}
+
+#[test]
+fn set_keyboard_interactivity_sends_it_then_commits() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    let reqs = f.requests();
+    let shape: Vec<(u32, u16)> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
+    assert_eq!(
+        shape,
+        vec![(XDG, op::LAYER_SET_KEYBOARD), (SURFACE, op::COMMIT)],
+        "{reqs:?}"
+    );
+    assert_eq!(
+        reqs[0].reader().uint(),
+        Some(KeyboardInteractivity::Exclusive as u32)
+    );
+    let s = f.app.resource::<Surfaces>();
+    assert_eq!(
+        s.keyboard_interactivity_of(win),
+        Some(KeyboardInteractivity::Exclusive)
+    );
+    assert!(s.is_mapped(win));
+}
+
+#[test]
+fn set_keyboard_interactivity_to_the_current_value_sends_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    let current = f
+        .app
+        .resource::<Surfaces>()
+        .keyboard_interactivity_of(win)
+        .expect("a layer window");
+    set_keyboard_interactivity(&mut f, win, current);
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn set_keyboard_interactivity_while_hidden_is_sent_on_remap() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_mapped(&mut f, win, false);
+    f.requests();
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    assert!(shape(&mut f).is_empty(), "nothing is sent while hidden");
+    set_mapped(&mut f, win, true);
+    let reqs = f.requests();
+    let ki = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(XDG) && r.opcode == op::LAYER_SET_KEYBOARD)
+        .expect("the remap sends the keyboard interactivity");
+    assert_eq!(
+        ki.reader().uint(),
+        Some(KeyboardInteractivity::Exclusive as u32)
+    );
+}
+
+#[test]
+fn set_keyboard_interactivity_on_a_toplevel_does_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    f.requests();
+    set_keyboard_interactivity(&mut f, win, KeyboardInteractivity::Exclusive);
+    assert!(shape(&mut f).is_empty());
+    assert_eq!(
+        f.app.resource::<Surfaces>().keyboard_interactivity_of(win),
+        None
+    );
+}
+
+#[test]
+fn layer_surface_of_returns_the_windows_layer_surface() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    let ls = f.app.resource::<Surfaces>().layer_surface_of(win);
+    assert_eq!(ls.map(|l| l.id()), Some(ObjectId(XDG)));
+}
+
+#[test]
+fn layer_surface_of_a_toplevel_is_none() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    assert_eq!(f.app.resource::<Surfaces>().layer_surface_of(win), None);
+}
+
 fn set_input_region(f: &mut Fake, win: NodeId, region: Option<&[Rect]>) {
     {
         let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
@@ -1849,21 +1968,21 @@ fn pointer_enter_motion_button_leave_produce_contact_input_at_the_focused_window
     });
     f.turn();
     f.send(ptr, ev::POINTER_MOTION, |w| {
-        w.uint(2);
+        w.uint(100);
         w.fixed(11.0);
         w.fixed(21.0);
     });
     f.turn();
     f.send(ptr, ev::POINTER_BUTTON, |w| {
         w.uint(3);
-        w.uint(4);
+        w.uint(140);
         w.uint(0x110);
         w.uint(WlPointerButtonState::Pressed.into());
     });
     f.turn();
     f.send(ptr, ev::POINTER_BUTTON, |w| {
         w.uint(5);
-        w.uint(6);
+        w.uint(180);
         w.uint(0x110);
         w.uint(WlPointerButtonState::Released.into());
     });
@@ -1883,6 +2002,13 @@ fn pointer_enter_motion_button_leave_produce_contact_input_at_the_focused_window
             format!("{win:?} Mouse Released 11x21"),
             format!("{win:?} Mouse Cancelled 11x21"),
         ]
+    );
+
+    // `Enter` and `Leave` have no `time` on the wire: the seat's last
+    // one (0 before any) stands in.
+    assert_eq!(
+        f.app.resource::<ContactTimes>().0,
+        vec![0, 100, 140, 180, 180]
     );
 }
 
@@ -1919,7 +2045,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
 
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(1);
-        w.uint(2);
+        w.uint(100);
         w.object(ObjectId(SURFACE));
         w.int(0);
         w.fixed(5.0);
@@ -1927,7 +2053,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
     });
     f.turn();
     f.send(t, ev::TOUCH_MOTION, |w| {
-        w.uint(3);
+        w.uint(120);
         w.int(0);
         w.fixed(7.0);
         w.fixed(8.0);
@@ -1935,13 +2061,13 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
     f.turn();
     f.send(t, ev::TOUCH_UP, |w| {
         w.uint(4);
-        w.uint(5);
+        w.uint(150);
         w.int(0);
     });
     f.turn();
     // A further Motion for the same, now-released id is a no-op.
     f.send(t, ev::TOUCH_MOTION, |w| {
-        w.uint(6);
+        w.uint(160);
         w.int(0);
         w.fixed(9.0);
         w.fixed(9.0);
@@ -1957,6 +2083,7 @@ fn touch_down_motion_up_produce_contact_input_in_order() {
             format!("{win:?} Touch(0) Released 7x8"),
         ]
     );
+    assert_eq!(f.app.resource::<ContactTimes>().0, vec![100, 100, 120, 150]);
 }
 
 #[test]
@@ -1968,7 +2095,7 @@ fn touch_cancel_ends_every_active_touch_at_once() {
 
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(1);
-        w.uint(2);
+        w.uint(20);
         w.object(ObjectId(SURFACE));
         w.int(0);
         w.fixed(1.0);
@@ -1976,7 +2103,7 @@ fn touch_cancel_ends_every_active_touch_at_once() {
     });
     f.send(t, ev::TOUCH_DOWN, |w| {
         w.uint(3);
-        w.uint(4);
+        w.uint(40);
         w.object(ObjectId(SURFACE));
         w.int(1);
         w.fixed(2.0);
@@ -1993,6 +2120,10 @@ fn touch_cancel_ends_every_active_touch_at_once() {
         entries.iter().filter(|e| e.contains("Cancelled")).count(),
         2
     );
+
+    // `Cancel` has no `time`: both cancels carry the last one seen.
+    let times = f.app.resource::<ContactTimes>().0.clone();
+    assert_eq!(times[times.len() - 2..], [40, 40]);
 
     // Nothing left to cancel a second time.
     f.send(t, ev::TOUCH_CANCEL, |_| {});
@@ -2113,4 +2244,123 @@ fn showing_a_window_hidden_before_its_first_buffer_draws_without_a_new_configure
     f.app.tick();
     f.turn();
     assert_eq!(attaches(&mut f), vec![LAYER_BUF_A]);
+}
+
+// ── a transparent clear ──────────────────────────────────────────────────
+
+/// A toplevel cleared to transparent, configured to 320 by 200; returns
+/// the fourcc each of its two slots was created with.
+fn transparent_slot_formats(f: &mut Fake) -> Vec<u32> {
+    let root = f.app.root();
+    f.app.spawn(
+        root,
+        window()
+            .title("glass")
+            .layout(LayoutStyle::default().column())
+            .clear(Color::TRANSPARENT),
+    );
+    f.app.tick();
+    f.turn();
+    f.requests();
+    f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+        w.int(320);
+        w.int(200);
+        w.array(&[]);
+    });
+    f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
+    f.turn();
+    f.requests()
+        .iter()
+        .filter(|r| r.opcode == op::PARAMS_CREATE_IMMED)
+        .map(|r| {
+            let mut a = r.reader();
+            let (_buffer, _w, _h) = (a.object(), a.int(), a.int());
+            a.uint().unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn a_transparent_window_draws_into_argb_buffers() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    assert_eq!(transparent_slot_formats(&mut f), vec![ARGB, ARGB]);
+}
+
+#[test]
+fn a_transparent_window_falls_back_to_xrgb_when_argb_is_not_advertised() {
+    let Some((_gpu, mut f)) = fake_advertising(true, false) else {
+        return;
+    };
+    assert_eq!(
+        transparent_slot_formats(&mut f),
+        vec![XRGB, XRGB],
+        "shown opaque rather than not at all"
+    );
+}
+
+#[test]
+fn a_transparent_window_draws_into_argb_buffers_when_no_format_is_listed() {
+    let Some((_gpu, mut f)) = fake_advertising(false, false) else {
+        return;
+    };
+    assert_eq!(
+        transparent_slot_formats(&mut f),
+        vec![ARGB, ARGB],
+        "nothing listed rules nothing out, as for XRGB8888"
+    );
+}
+
+/// A drawn toplevel whose callback and buffer came back: idle, nothing
+/// wanted, and its next frame reuses the drawn slot at age 1 (see
+/// `a_frame_with_nothing_changed_commits_nothing`).
+fn idle(f: &mut Fake) -> NodeId {
+    let win = configured(f, 320, 200);
+    f.send(CALLBACK, ev::DONE, |w| w.uint(1));
+    f.send(BUF_A, ev::RELEASE, |_| {});
+    f.turn();
+    f.requests();
+    win
+}
+
+#[test]
+fn a_frame_with_nothing_to_draw_commits_nothing() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert!(log(&f).iter().filter(|l| l.starts_with("Frame")).count() >= 2);
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn a_requested_commit_is_sent_bare_on_a_frame_with_nothing_to_draw() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.resource_mut::<Surfaces>().request_commit(win);
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert_eq!(shape(&mut f), vec![(SURFACE, op::COMMIT)]);
+
+    // Honoured once.
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert!(shape(&mut f).is_empty());
+}
+
+#[test]
+fn a_requested_commit_rides_a_frame_that_draws() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = idle(&mut f);
+    f.app.resource_mut::<Surfaces>().request_commit(win);
+    repaint(&mut f, win);
+    f.turn();
+    let commits = f
+        .requests()
+        .iter()
+        .filter(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::COMMIT)
+        .count();
+    assert_eq!(commits, 1);
 }

@@ -4,7 +4,7 @@
 use crate::state::WidgetState;
 use app::{Build, Context, Handle, Spawner, Widget};
 use geometry::{Color, Corners, Insets};
-use interactivity::prelude::{Enter, Exit, Press, Release};
+use interactivity::prelude::{Enter, Exit, Press, PressCancelled, Release};
 use layout::{LayoutStyle, Val};
 use paint::{Paint, PaintContext, Quad};
 
@@ -319,6 +319,11 @@ impl Widget for Button {
         s.on::<Release>(me, |ctx: &mut Context<'_, Button>, _| {
             if ctx.me().state == WidgetState::Pressed {
                 ctx.set_state(WidgetState::Hovered);
+            }
+        });
+        s.on::<PressCancelled>(me, |ctx: &mut Context<'_, Button>, _| {
+            if ctx.me().state == WidgetState::Pressed {
+                ctx.set_state(WidgetState::Enabled);
             }
         });
 
@@ -657,5 +662,43 @@ mod tests {
         assert_eq!(b.props.state, WidgetState::Focused);
         assert_eq!(b.props.border_widths, Insets::all(2.5));
         assert_eq!(b.props.border_color, red);
+    }
+
+    #[test]
+    fn press_cancelled_reverts_a_pressed_button() {
+        use app::App;
+        use interactivity::prelude::{ContactId, PressCancelled};
+
+        let mut app = App::new();
+        app.add_module(layout::LayoutModule)
+            .add_module(paint::PaintModule);
+        app.insert_resource(atlas::Atlas::new());
+        let btn: Handle<Button> = app.spawn(app.root(), button());
+        app.emit(
+            Press {
+                contact: ContactId::Mouse,
+                position: geometry::Point::ZERO,
+                time: 0,
+            },
+            btn.id(),
+        );
+        app.flush();
+        assert_eq!(
+            app.widget::<Button>(btn).unwrap().state,
+            WidgetState::Pressed
+        );
+
+        app.emit(
+            PressCancelled {
+                contact: ContactId::Mouse,
+                position: geometry::Point::ZERO,
+            },
+            btn.id(),
+        );
+        app.flush();
+        assert_eq!(
+            app.widget::<Button>(btn).unwrap().state,
+            WidgetState::Enabled
+        );
     }
 }

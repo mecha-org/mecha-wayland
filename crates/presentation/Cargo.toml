@@ -11,6 +11,7 @@ gles.workspace = true
 interactivity.workspace = true
 layout.workspace = true
 render.workspace = true
+ring.workspace = true
 wayland.workspace = true
 window.workspace = true
 xkbcommon.workspace = true

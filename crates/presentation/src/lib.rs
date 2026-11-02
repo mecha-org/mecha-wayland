@@ -104,7 +104,7 @@ use window::prelude::*;
 mod seat;
 mod slots;
 
-use seat::{Seat, on_keyboard, on_pointer, on_seat, on_touch};
+use seat::{Seat, on_keyboard, on_pointer, on_repeat_timer, on_seat, on_touch};
 use slots::Slots;
 
 pub use wayland::{
@@ -629,6 +629,7 @@ impl Module for PresentationModule {
             .system(on_pointer)
             .system(on_touch)
             .system(on_keyboard)
+            .system(on_repeat_timer)
             .system(on_xdg_surface)
             .system(on_toplevel)
             .system(on_layer_surface)

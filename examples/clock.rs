@@ -1,26 +1,49 @@
 //! Demonstrates `Clock` in `mechanix-widgets`:
-//! - Digital clocks ticking via `TimerModule`, aligned to wall-clock boundaries
-//! - Formats: 12-hour (with AM/PM), 24-hour, with/without seconds
-//! - Date-only clock ticking on day change (`ClockInterval::Day`)
-//! - Full date and time formatting via chrono strftime patterns
-//! - UTC world clock mode
-//! - Text properties customized via the clock's inner text handle (`clock.text()`)
-//! - Dynamic context updates via `ClockContextExt` (toggling format, seconds)
-//! - Runtime theme switching (Dark / Light)
+//! - A time clock ticking every second (`ClockInterval::Second`)
+//! - A date clock ticking on day change (`ClockInterval::Day`)
+//! - Toggling 12h / 24h and seconds at runtime via `ClockContextExt`
 //!
 //! Run under a Wayland session: `cargo run --example clock`.
 
 use gles::Budget;
 use mecha_wayland::mechanix_widgets::prelude::{
-    ButtonVariant, ClockContextExt, FontBook, TextContextExt, button, clock, text,
+    ButtonVariant, Clock, ClockContextExt, FontBook, button, clock,
 };
 use mecha_wayland::prelude::*;
 use mechanix_widgets::ClockInterval;
-use theme::{ColorRole, FontWeight, TextVariant};
+use theme::{ColorRole, TextVariant};
 
 struct ClockShowcase {
     is_12h: bool,
     show_seconds: bool,
+}
+
+impl ClockShowcase {
+    fn format(&self) -> &'static str {
+        match (self.is_12h, self.show_seconds) {
+            (true, true) => "%I:%M:%S %p",
+            (true, false) => "%I:%M %p",
+            (false, true) => "%H:%M:%S",
+            (false, false) => "%H:%M",
+        }
+    }
+
+    /// Without seconds on screen, a tick per minute is enough.
+    fn interval(&self) -> ClockInterval {
+        if self.show_seconds {
+            ClockInterval::Second
+        } else {
+            ClockInterval::Minute
+        }
+    }
+}
+
+fn apply_time_format(ctx: &mut Context<'_, ClockShowcase>, time_clock: Handle<Clock>) {
+    let (format, interval) = (ctx.me().format(), ctx.me().interval());
+    if let Some(mut clock_ctx) = ctx.at(time_clock) {
+        clock_ctx.set_format(format);
+        clock_ctx.set_interval(interval);
+    }
 }
 
 struct ClockShowcaseBuilder;
@@ -38,169 +61,37 @@ impl Widget for ClockShowcase {
             .center()
             .fill()
             .padding_all(px(24.0))
-            .gap(px(16.0));
+            .gap(px(12.0));
         *s.component_mut::<Paint>(me).unwrap() =
             Paint::Quad(Quad::new(s.color(ColorRole::Surface)));
 
-        // Title and Header
-        s.spawn(
+        let state = ClockShowcase {
+            is_12h: false,
+            show_seconds: true,
+        };
+
+        let time_clock = s.spawn(
             me,
-            text("Mechanix Design - Clock Showcase")
-                .variant(TextVariant::HeadlineSmall)
-                .color(ColorRole::OnSurface),
+            clock(state.format())
+                .interval(state.interval())
+                .variant(TextVariant::DisplayMedium)
+                .color(ColorRole::Primary),
         );
 
-        s.spawn(
-            me,
-            text("Time-focused clock widgets with chrono formatting and text styling via text handle")
-                .variant(TextVariant::BodyMedium)
-                .color(ColorRole::OnSurfaceVariant),
-        );
-
-        // Header controls (Theme toggle)
-        let theme_btn = s.spawn(
-            me,
-            button()
-                .variant(ButtonVariant::Outlined)
-                .label("Toggle Theme (Dark / Light)"),
-        );
-
-        // ── Card 1: Hero Large Live Clock ──────────────────────────────────
-        let hero_card = s.spawn(
-            me,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(16.0))
-                    .gap(px(6.0)),
-            ),
-        );
-        s.spawn(
-            hero_card,
-            text("LOCAL TIME (STYLED VIA TEXT HANDLE)")
-                .variant(TextVariant::LabelMedium)
-                .color(ColorRole::Outline),
-        );
-        let hero_clock = s.spawn(hero_card, clock("%H:%M:%S"));
-
-        // ── Card 2: Row of Variations (12h, 24h, UTC) ─────────────────────
-        let row = s.spawn(
-            me,
-            div().style(LayoutStyle::default().row().center().gap(px(20.0))),
-        );
-
-        // 12-Hour Clock
-        let c1 = s.spawn(
-            row,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(12.0))
-                    .gap(px(4.0)),
-            ),
-        );
-
-        s.spawn(
-            c1,
-            text("12-Hour Format")
-                .variant(TextVariant::LabelSmall)
-                .color(ColorRole::Outline),
-        );
-        let clock_12h = s.spawn(c1, clock("%H:%M").interval(ClockInterval::Second));
-
-        // 24-Hour Clock
-        let c2 = s.spawn(
-            row,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(12.0))
-                    .gap(px(4.0)),
-            ),
-        );
-
-        s.spawn(
-            c2,
-            text("24-Hour Format")
-                .variant(TextVariant::LabelSmall)
-                .color(ColorRole::Outline),
-        );
-        let clock_24h = s.spawn(c2, clock("%H:%M:%S").interval(ClockInterval::Second));
-
-        // UTC Clock
-        let c3 = s.spawn(
-            row,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(12.0))
-                    .gap(px(4.0)),
-            ),
-        );
-        s.spawn(
-            c3,
-            text("UTC World Time")
-                .variant(TextVariant::LabelSmall)
-                .color(ColorRole::Outline),
-        );
-        let clock_utc = s.spawn(c3, clock("%H:%M:%S"));
-
-        // ── Card 3: Full Date & Calendar Format ──────────────────────────
-        let date_card = s.spawn(
-            me,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(12.0))
-                    .gap(px(4.0)),
-            ),
-        );
-        s.spawn(
-            date_card,
-            text("Calendar & Date Format")
-                .variant(TextVariant::LabelSmall)
-                .color(ColorRole::Outline),
-        );
-        let date_clock = s.spawn(date_card, clock("%A, %B %d, %Y • %I:%M:%S %p"));
         // Date only: re-renders once, at local midnight.
         s.spawn(
-            date_card,
+            me,
             clock("%A, %d %B %Y")
                 .interval(ClockInterval::Day)
-                .variant(TextVariant::BodyMedium)
+                .variant(TextVariant::TitleMedium)
                 .color(ColorRole::OnSurfaceVariant),
         );
 
-        // ── Card 4: Interactive Clock Controls ───────────────────────────
-        let interactive_card = s.spawn(
-            me,
-            div().style(
-                LayoutStyle::default()
-                    .column()
-                    .center()
-                    .padding_all(px(16.0))
-                    .gap(px(8.0)),
-            ),
-        );
-        s.spawn(
-            interactive_card,
-            text("Interactive Clock (Dynamic Time Updates via Context)")
-                .variant(TextVariant::LabelSmall)
-                .color(ColorRole::Outline),
-        );
-
-        let interactive_clock = s.spawn(interactive_card, clock("%I:%M:%S %p"));
-
         let btn_row = s.spawn(
-            interactive_card,
+            me,
             div().style(LayoutStyle::default().row().center().gap(px(8.0))),
         );
-        let toggle_mode_btn = s.spawn(
+        let toggle_hour_btn = s.spawn(
             btn_row,
             button()
                 .variant(ButtonVariant::Filled)
@@ -213,118 +104,17 @@ impl Widget for ClockShowcase {
                 .label("Toggle Seconds"),
         );
 
-        // Theme toggle action
-        s.on::<Clicked>(theme_btn, |ctx, _| {
-            let next = match ctx.theme().mode() {
-                ThemeMode::Dark => MechanixTheme::light(),
-                ThemeMode::Light => MechanixTheme::dark(),
-            };
-            ctx.set_theme(next);
-        });
-
-        // Interactive clock format toggling
-        s.on::<Clicked>(toggle_mode_btn, move |ctx, _| {
+        s.on::<Clicked>(toggle_hour_btn, move |ctx, _| {
             ctx.me().is_12h = !ctx.me().is_12h;
-            let is_12h = ctx.me().is_12h;
-            let show_sec = ctx.me().show_seconds;
-
-            let fmt = match (is_12h, show_sec) {
-                (true, true) => "%I:%M:%S %p",
-                (true, false) => "%I:%M %p",
-                (false, true) => "%H:%M:%S",
-                (false, false) => "%H:%M",
-            };
-
-            let interval = if show_sec {
-                ClockInterval::Second
-            } else {
-                ClockInterval::Minute
-            };
-
-            if let Some(mut clock_ctx) = ctx.at(interactive_clock) {
-                clock_ctx.set_format(fmt);
-                clock_ctx.set_interval(interval);
-            }
+            apply_time_format(ctx, time_clock);
         });
 
         s.on::<Clicked>(toggle_sec_btn, move |ctx, _| {
             ctx.me().show_seconds = !ctx.me().show_seconds;
-            let is_12h = ctx.me().is_12h;
-            let show_sec = ctx.me().show_seconds;
-
-            let fmt = match (is_12h, show_sec) {
-                (true, true) => "%I:%M:%S %p",
-                (true, false) => "%I:%M %p",
-                (false, true) => "%H:%M:%S",
-                (false, false) => "%H:%M",
-            };
-
-            let interval = if show_sec {
-                ClockInterval::Second
-            } else {
-                ClockInterval::Minute
-            };
-
-            if let Some(mut clock_ctx) = ctx.at(interactive_clock) {
-                clock_ctx.set_format(fmt);
-                clock_ctx.set_interval(interval);
-            }
+            apply_time_format(ctx, time_clock);
         });
 
-        // Theme listener updates container background AND customizes clocks' text handles
-        s.on_theme(me, move |ctx| {
-            let bg = ctx.color(ColorRole::Surface);
-            ctx.set_paint(Paint::Quad(Quad::new(bg)));
-
-            // Style Hero Clock using its text handle:
-            let hero_text_h = ctx.at(hero_clock).unwrap().me().text();
-            if let Some(mut t) = ctx.at(hero_text_h) {
-                t.set_variant(TextVariant::DisplayMedium);
-                t.set_color(ColorRole::Primary);
-                t.set_emphasised(true);
-            }
-
-            // Style 12-Hour Clock using its text handle:
-            let c12_text_h = ctx.at(clock_12h).unwrap().me().text();
-            if let Some(mut t) = ctx.at(c12_text_h) {
-                t.set_variant(TextVariant::TitleLarge);
-                t.set_color(ColorRole::OnSurface);
-            }
-
-            // Style 24-Hour Clock using its text handle:
-            let c24_text_h = ctx.at(clock_24h).unwrap().me().text();
-            if let Some(mut t) = ctx.at(c24_text_h) {
-                t.set_variant(TextVariant::TitleLarge);
-                t.set_color(ColorRole::OnSurfaceVariant);
-            }
-
-            // Style UTC Clock using its text handle:
-            let utc_text_h = ctx.at(clock_utc).unwrap().me().text();
-            if let Some(mut t) = ctx.at(utc_text_h) {
-                t.set_variant(TextVariant::TitleLarge);
-                t.set_color(ColorRole::Secondary);
-            }
-
-            // Style Calendar Clock using its text handle:
-            let date_text_h = ctx.at(date_clock).unwrap().me().text();
-            if let Some(mut t) = ctx.at(date_text_h) {
-                t.set_variant(TextVariant::TitleMedium);
-                t.set_color(ColorRole::OnSurface);
-            }
-
-            // Style Interactive Clock using its text handle:
-            let inter_text_h = ctx.at(interactive_clock).unwrap().me().text();
-            if let Some(mut t) = ctx.at(inter_text_h) {
-                t.set_variant(TextVariant::HeadlineSmall);
-                t.set_color(ColorRole::Secondary);
-                t.set_weight(FontWeight::Bold);
-            }
-        });
-
-        ClockShowcase {
-            is_12h: true,
-            show_seconds: true,
-        }
+        state
     }
 }
 
@@ -342,7 +132,7 @@ impl Widget for Shell {
             b.root,
             window()
                 .title("Mechanix Design - Clock Widget")
-                .layout(LayoutStyle::default().center().size(px(600.0), px(540.0))),
+                .layout(LayoutStyle::default().center().size(px(420.0), px(260.0))),
         );
         s.on::<CloseRequested>(win, |ctx, _| ctx.signal(Stop));
         s.spawn(win, ClockShowcaseBuilder);
@@ -360,10 +150,8 @@ fn main() {
         .add_module(RenderModule::default())
         .insert_resource(Atlas::new());
 
-    // Baseline dark theme
     app.add_module(MechanixTheme::dark());
 
-    // Load font
     let font = app
         .resource_mut::<Atlas>()
         .add_font(include_bytes!(

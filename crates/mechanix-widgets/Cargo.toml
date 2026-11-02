@@ -11,5 +11,9 @@ interactivity.workspace = true
 layout.workspace = true
 paint.workspace = true
 theme.workspace = true
+timer.workspace = true
 widgets.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+ring.workspace = true

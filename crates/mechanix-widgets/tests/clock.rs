@@ -10,6 +10,8 @@ use theme::prelude::*;
 
 fn setup_test_app() -> (App, atlas::FontId) {
     let mut app = App::new();
+    app.add_module(ring::RingModule::default());
+    app.add_module(timer::TimerModule);
     app.add_module(MechanixTheme::dark());
     app.add_module(LayoutModule);
     app.add_module(PaintModule);
@@ -108,14 +110,24 @@ fn test_5_clock_tick_event_update() {
 
     let text_h = app.widget::<Clock>(clock_h).unwrap().text();
     let native_h = app.widget::<Text>(text_h).unwrap().native();
-    assert!(!app.widget::<widgets::Text>(native_h).unwrap().string.is_empty());
+    assert!(
+        !app.widget::<widgets::Text>(native_h)
+            .unwrap()
+            .string
+            .is_empty()
+    );
 
     // Emit ClockTick event to the widget
     app.emit(ClockTick, clock_h);
     app.flush();
     app.tick();
 
-    assert!(!app.widget::<widgets::Text>(native_h).unwrap().string.is_empty());
+    assert!(
+        !app.widget::<widgets::Text>(native_h)
+            .unwrap()
+            .string
+            .is_empty()
+    );
 }
 
 #[test]
@@ -160,4 +172,35 @@ fn test_6_clock_context_ext_set_format() {
         app.widget::<widgets::Text>(native_h).unwrap().string,
         Local::now().format("%Y").to_string()
     );
+}
+
+#[test]
+fn test_timer_drives_clock_updates() {
+    use ring::prelude::*;
+    use std::time::{Duration, Instant};
+
+    let (mut app, _) = setup_test_app();
+    let clock_h = app.spawn(app.root(), clock("%H:%M:%S"));
+    app.tick();
+
+    // Swap the format behind the clock's back: only a timer fire re-renders it.
+    app.widget_mut::<Clock>(clock_h).unwrap().format = "%Y-fired".into();
+    let expected = Local::now().format("%Y-fired").to_string();
+
+    let text_h = app.widget::<Clock>(clock_h).unwrap().text();
+    let native_h = app.widget::<Text>(text_h).unwrap().native();
+    let rendered = |app: &App| {
+        app.widget::<widgets::Text>(native_h)
+            .unwrap()
+            .string
+            .clone()
+    };
+
+    let end = Instant::now() + Duration::from_secs(3);
+    while rendered(&app) != expected && Instant::now() < end {
+        app.tick();
+        Ring::turn(&mut app);
+    }
+    app.tick();
+    assert_eq!(rendered(&app), expected);
 }

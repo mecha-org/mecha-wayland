@@ -488,7 +488,9 @@ dependencies = [
  "interactivity",
  "layout",
  "paint",
+ "ring",
  "theme",
+ "timer",
  "widgets",
 ]
 

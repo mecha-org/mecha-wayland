@@ -1,6 +1,7 @@
 //! Demonstrates `Clock` in `mechanix-widgets`:
-//! - Digital clocks used directly as widgets without any module installation
+//! - Digital clocks ticking via `TimerModule`, aligned to wall-clock boundaries
 //! - Formats: 12-hour (with AM/PM), 24-hour, with/without seconds
+//! - Date-only clock ticking on day change (`ClockInterval::Day`)
 //! - Full date and time formatting via chrono strftime patterns
 //! - UTC world clock mode
 //! - Text properties customized via the clock's inner text handle (`clock.text()`)
@@ -107,7 +108,7 @@ impl Widget for ClockShowcase {
                 .variant(TextVariant::LabelSmall)
                 .color(ColorRole::Outline),
         );
-        let clock_12h = s.spawn(c1, clock("%H:%M").every_second());
+        let clock_12h = s.spawn(c1, clock("%H:%M").interval(ClockInterval::Second));
 
         // 24-Hour Clock
         let c2 = s.spawn(
@@ -166,6 +167,14 @@ impl Widget for ClockShowcase {
                 .color(ColorRole::Outline),
         );
         let date_clock = s.spawn(date_card, clock("%A, %B %d, %Y • %I:%M:%S %p"));
+        // Date only: re-renders once, at local midnight.
+        s.spawn(
+            date_card,
+            clock("%A, %d %B %Y")
+                .interval(ClockInterval::Day)
+                .variant(TextVariant::BodyMedium)
+                .color(ColorRole::OnSurfaceVariant),
+        );
 
         // ── Card 4: Interactive Clock Controls ───────────────────────────
         let interactive_card = s.spawn(
@@ -226,9 +235,15 @@ impl Widget for ClockShowcase {
                 (false, false) => "%H:%M",
             };
 
+            let interval = if show_sec {
+                ClockInterval::Second
+            } else {
+                ClockInterval::Minute
+            };
+
             if let Some(mut clock_ctx) = ctx.at(interactive_clock) {
-                clock_ctx.set_text("as");
                 clock_ctx.set_format(fmt);
+                clock_ctx.set_interval(interval);
             }
         });
 
@@ -244,8 +259,15 @@ impl Widget for ClockShowcase {
                 (false, false) => "%H:%M",
             };
 
+            let interval = if show_sec {
+                ClockInterval::Second
+            } else {
+                ClockInterval::Minute
+            };
+
             if let Some(mut clock_ctx) = ctx.at(interactive_clock) {
                 clock_ctx.set_format(fmt);
+                clock_ctx.set_interval(interval);
             }
         });
 
@@ -334,6 +356,7 @@ fn main() {
         .add_module(PaintModule)
         .add_module(WindowModule)
         .add_module(InteractivityModule)
+        .add_module(AnimationModule)
         .add_module(RenderModule::default())
         .insert_resource(Atlas::new());
 
@@ -350,6 +373,7 @@ fn main() {
     app.insert_resource(FontBook::new(font));
 
     app.add_module(RingModule::default())
+        .add_module(TimerModule)
         .add_module(
             WaylandModule::new()
                 .bind::<WlCompositor>()

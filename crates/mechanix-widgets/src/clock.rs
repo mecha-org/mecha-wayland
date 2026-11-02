@@ -1,8 +1,13 @@
-use chrono::Local;
+use std::time::Duration;
 
-use crate::text::{Text, TextContextExt, text};
+use chrono::{DateTime, Local, Timelike};
+
+use crate::color::IntoColorSource;
+use crate::text::{Text, TextBuilder, TextContextExt, text};
 use app::{Build, Context, Handle, Spawner, Widget};
 use layout::LayoutStyle;
+use theme::{FontWeight, TextVariant};
+use timer::{ContextTimers, SpawnerTimers, TimerId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ClockTick;
@@ -14,13 +19,51 @@ pub enum ClockInterval {
     #[default]
     Second,
     Minute,
+    /// Ticks at local midnight, for date-only formats.
+    Day,
 }
 
+impl ClockInterval {
+    /// Time from now until the next wall-clock second, minute or day
+    /// boundary, so updates land as the displayed value changes rather than
+    /// drifting from when the clock was spawned.
+    pub fn until_next(self) -> Duration {
+        let now = Local::now();
+        let into_second = Duration::from_nanos(u64::from(now.nanosecond() % 1_000_000_000));
+        let remaining = match self {
+            Self::Second => Duration::from_secs(1).saturating_sub(into_second),
+            Self::Minute => Duration::from_secs(60)
+                .saturating_sub(Duration::from_secs(u64::from(now.second())) + into_second),
+            Self::Day => until_midnight(now),
+        };
+        remaining.max(Duration::from_millis(1))
+    }
+}
+
+/// Time until the next local midnight. Resolved through the timezone so DST
+/// days of 23 or 25 hours land on the actual date change.
+fn until_midnight(now: DateTime<Local>) -> Duration {
+    now.date_naive()
+        .succ_opt()
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .and_then(|midnight| midnight.and_local_timezone(Local).earliest())
+        .and_then(|midnight| (midnight - now).to_std().ok())
+        // Midnight skipped by a DST gap: fall back to a nominal 24h day.
+        .unwrap_or_else(|| {
+            let into_day = Duration::from_secs(u64::from(now.num_seconds_from_midnight()))
+                + Duration::from_nanos(u64::from(now.nanosecond() % 1_000_000_000));
+            Duration::from_secs(86_400).saturating_sub(into_day)
+        })
+}
+
+/// A live clock. Ticks through the `timer` crate, so the app needs
+/// `RingModule` and `TimerModule` installed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Clock {
     pub format: String,
     pub interval: ClockInterval,
     pub(crate) text_handle: Handle<Text>,
+    pub(crate) timer: TimerId,
 }
 
 impl Clock {
@@ -54,6 +97,8 @@ pub fn clock(format: impl Into<String>) -> ClockBuilder {
 pub struct ClockBuilder {
     pub format: String,
     pub interval: ClockInterval,
+    /// Styling for the inner text; its string is replaced by the time.
+    pub text: TextBuilder,
 }
 
 impl ClockBuilder {
@@ -61,7 +106,28 @@ impl ClockBuilder {
         Self {
             format: format.into(),
             interval: ClockInterval::Second,
+            text: text(""),
         }
+    }
+
+    pub fn variant(mut self, variant: TextVariant) -> Self {
+        self.text = self.text.variant(variant);
+        self
+    }
+
+    pub fn color(mut self, color: impl IntoColorSource) -> Self {
+        self.text = self.text.color(color);
+        self
+    }
+
+    pub fn size(mut self, px: f32) -> Self {
+        self.text = self.text.size(px);
+        self
+    }
+
+    pub fn weight(mut self, weight: FontWeight) -> Self {
+        self.text = self.text.weight(weight);
+        self
     }
 
     pub fn format(mut self, format: impl Into<String>) -> Self {
@@ -72,14 +138,6 @@ impl ClockBuilder {
     pub fn interval(mut self, interval: ClockInterval) -> Self {
         self.interval = interval;
         self
-    }
-
-    pub fn every_second(self) -> Self {
-        self.interval(ClockInterval::Second)
-    }
-
-    pub fn every_minute(self) -> Self {
-        self.interval(ClockInterval::Minute)
     }
 }
 
@@ -99,17 +157,27 @@ impl Widget for Clock {
     fn build(b: ClockBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default();
 
-        let initial_formatted = Local::now().format(&b.format).to_string();
-        let text_handle = s.spawn(me, text(initial_formatted));
+        let mut label = b.text;
+        label.props.string = Local::now().format(&b.format).to_string();
+        let text_handle = s.spawn(me, label);
 
         s.on::<ClockTick>(me, |ctx, _| {
             ctx.update_time();
+        });
+
+        // A one-shot re-armed on every fire, rather than an interval, so
+        // each tick realigns to the next wall-clock boundary.
+        let timer = s.set_timeout(b.interval.until_next(), |ctx, e| {
+            ctx.update_time();
+            let next = ctx.me().interval.until_next();
+            ctx.start_timer_for(e.id, next);
         });
 
         Clock {
             format: b.format,
             interval: b.interval,
             text_handle,
+            timer,
         }
     }
 }
@@ -124,7 +192,7 @@ pub trait ClockContextExt {
     /// Updates the format string and re-evaluates the time.
     fn set_format(&mut self, format: impl Into<String>);
 
-    /// Updates the interval metadata.
+    /// Updates the interval and re-arms the timer to its next boundary.
     fn set_interval(&mut self, interval: ClockInterval);
 }
 
@@ -151,6 +219,8 @@ impl ClockContextExt for Context<'_, Clock> {
 
     fn set_interval(&mut self, interval: ClockInterval) {
         self.me().interval = interval;
+        let timer = self.me().timer;
+        self.start_timer_for(timer, interval.until_next());
     }
 }
 
@@ -165,6 +235,8 @@ mod tests {
 
     fn setup_app() -> (App, atlas::FontId) {
         let mut app = App::new();
+        app.add_module(ring::RingModule::default());
+        app.add_module(timer::TimerModule);
         app.add_module(MechanixTheme::dark());
         app.add_module(layout::LayoutModule);
         app.add_module(paint::PaintModule);
@@ -194,11 +266,36 @@ mod tests {
 
     #[test]
     fn test_clock_interval_explicit_configuration() {
-        let c1 = clock("%H:%M").every_second();
+        let c1 = clock("%H:%M").interval(ClockInterval::Second);
         assert_eq!(c1.interval, ClockInterval::Second);
 
-        let c2 = clock("%H:%M:%S").every_minute();
+        let c2 = clock("%H:%M:%S").interval(ClockInterval::Minute);
         assert_eq!(c2.interval, ClockInterval::Minute);
+
+        let c3 = clock("%A, %d %B").interval(ClockInterval::Day);
+        assert_eq!(c3.interval, ClockInterval::Day);
+    }
+
+    #[test]
+    fn test_clock_interval_until_next_bounds() {
+        let ms = Duration::from_millis(1);
+        let second = ClockInterval::Second.until_next();
+        assert!(second >= ms && second <= Duration::from_secs(1));
+
+        let minute = ClockInterval::Minute.until_next();
+        assert!(minute >= ms && minute <= Duration::from_secs(60));
+
+        // DST days can run to 25 hours.
+        let day = ClockInterval::Day.until_next();
+        assert!(day >= ms && day <= Duration::from_secs(25 * 3600));
+    }
+
+    #[test]
+    fn test_until_midnight_lands_on_next_date() {
+        let now = Local::now();
+        let midnight = now + chrono::Duration::from_std(until_midnight(now)).unwrap();
+        assert_eq!(midnight.date_naive(), now.date_naive().succ_opt().unwrap());
+        assert_eq!(midnight.num_seconds_from_midnight(), 0);
     }
 
     #[test]
@@ -218,6 +315,23 @@ mod tests {
 
         let expected_year = Local::now().format("%Y").to_string();
         assert_eq!(native_text.string, expected_year);
+    }
+
+    #[test]
+    fn test_clock_builder_styles_text() {
+        let (mut app, _) = setup_app();
+        let clock_h = app.spawn(
+            app.root(),
+            clock("%Y").size(14.0).color(ColorRole::Secondary),
+        );
+        app.tick();
+
+        let text_h = app.widget::<Clock>(clock_h).unwrap().text();
+        let native_h = app.widget::<Text>(text_h).unwrap().native();
+        let native_w = app.widget::<widgets::Text>(native_h).unwrap();
+        assert_eq!(native_w.string, Local::now().format("%Y").to_string());
+        assert_eq!(native_w.px, 14);
+        assert_eq!(native_w.color, app.color(ColorRole::Secondary));
     }
 
     #[test]

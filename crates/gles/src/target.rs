@@ -12,8 +12,12 @@ use khronos_egl as egl;
 
 use crate::egl::Gpu;
 
-/// `DRM_FORMAT_XRGB8888`: every target's format.
+/// `DRM_FORMAT_XRGB8888`: an opaque target's format.
 pub const XRGB8888: u32 = 0x3432_5258;
+
+/// `DRM_FORMAT_ARGB8888`: the format of a target with alpha, for a window
+/// that clears to transparent.
+pub const ARGB8888: u32 = 0x3432_5241;
 
 /// `EGL_NATIVE_PIXMAP_KHR`: how a `gbm_bo` is handed to `eglCreateImage`.
 const NATIVE_PIXMAP: egl::Enum = 0x30B0;
@@ -37,6 +41,7 @@ struct PlaneData {
 pub struct Target {
     width: u32,
     height: u32,
+    fourcc: u32,
     modifier: u64,
     planes: Vec<PlaneData>,
     pub(crate) fbo: glow::Framebuffer,
@@ -55,9 +60,9 @@ impl Target {
     pub fn height(&self) -> u32 {
         self.height
     }
-    /// [`XRGB8888`].
+    /// [`XRGB8888`], or [`ARGB8888`] for a target with alpha.
     pub fn fourcc(&self) -> u32 {
-        XRGB8888
+        self.fourcc
     }
     /// The layout GBM chose, `0` for linear — which is what the fallback
     /// buffer reports, since it is created linear.
@@ -94,14 +99,20 @@ const INVALID: u64 = 0x00ff_ffff_ffff_ffff;
 /// reason GBM gave is dropped: there is nothing to do with it but take
 /// the fallback, and the target reports the layout it ended up with, so
 /// a caller that cares can compare.
-fn buffer(gpu: &Gpu, width: u32, height: u32, modifiers: &[u64]) -> (gbm::BufferObject<()>, u64) {
+fn buffer(
+    gpu: &Gpu,
+    width: u32,
+    height: u32,
+    format: Format,
+    modifiers: &[u64],
+) -> (gbm::BufferObject<()>, u64) {
     let linear = || {
         let bo = gpu
             .gbm
             .create_buffer_object::<()>(
                 width,
                 height,
-                Format::Xrgb8888,
+                format,
                 BufferObjectFlags::RENDERING | BufferObjectFlags::LINEAR,
             )
             .unwrap_or_else(|e| panic!("gles: gbm_bo_create({width}x{height}, linear): {e}"));
@@ -117,7 +128,7 @@ fn buffer(gpu: &Gpu, width: u32, height: u32, modifiers: &[u64]) -> (gbm::Buffer
     match gpu.gbm.create_buffer_object_with_modifiers2::<()>(
         width,
         height,
-        Format::Xrgb8888,
+        format,
         modifiers.iter().map(|&m| Modifier::from(m)),
         BufferObjectFlags::RENDERING,
     ) {
@@ -130,8 +141,13 @@ fn buffer(gpu: &Gpu, width: u32, height: u32, modifiers: &[u64]) -> (gbm::Buffer
     }
 }
 
-pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, modifiers: &[u64]) -> Target {
-    let (bo, modifier) = buffer(gpu, width, height, modifiers);
+pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, fourcc: u32, modifiers: &[u64]) -> Target {
+    let format = match fourcc {
+        XRGB8888 => Format::Xrgb8888,
+        ARGB8888 => Format::Argb8888,
+        _ => unreachable!("gles: a target is XRGB8888 or ARGB8888"),
+    };
+    let (bo, modifier) = buffer(gpu, width, height, format, modifiers);
     let planes = (0..bo.plane_count() as i32)
         .map(|i| PlaneData {
             fd: bo
@@ -191,6 +207,7 @@ pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, modifiers: &[u64]) -> T
     Target {
         width,
         height,
+        fourcc,
         modifier,
         planes,
         fbo,

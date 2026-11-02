@@ -38,6 +38,10 @@ pub(crate) struct Seat {
     /// Every touch point currently down: `wl_touch`'s id to the window
     /// it started on and its last known position.
     touches: HashMap<i32, (NodeId, Point)>,
+    /// The `time` of the latest pointer or touch event that carried one
+    /// (`0` before any): what `Enter`, `Leave` and touch `Cancel`, which
+    /// have none of their own, report.
+    last_time: u32,
 }
 impl Resource for Seat {}
 
@@ -61,6 +65,7 @@ impl Seat {
             modifiers: Modifiers::default(),
             pointer_focus: None,
             touches: HashMap::new(),
+            last_time: 0,
         }
     }
 }
@@ -104,19 +109,24 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 return;
             };
             let position = Point::new(*surface_x, *surface_y);
-            app.resource_mut::<Seat>().pointer_focus = Some((window, position));
+            let mut seat = app.resource_mut::<Seat>();
+            seat.pointer_focus = Some((window, position));
+            let time = seat.last_time;
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Moved,
                 position,
+                time,
             });
         }
         WlPointerEvent::Motion {
+            time,
             surface_x,
             surface_y,
             ..
         } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, _)) = app.resource::<Seat>().pointer_focus else {
                 return;
             };
@@ -127,9 +137,11 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
         }
-        WlPointerEvent::Button { state, .. } => {
+        WlPointerEvent::Button { time, state, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, position)) = app.resource::<Seat>().pointer_focus else {
                 return;
             };
@@ -142,17 +154,20 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
                 contact: ContactId::Mouse,
                 phase,
                 position,
+                time: *time,
             });
         }
         WlPointerEvent::Leave { .. } => {
             let Some((window, position)) = app.resource_mut::<Seat>().pointer_focus.take() else {
                 return;
             };
+            let time = app.resource::<Seat>().last_time;
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Mouse,
                 phase: ContactPhase::Cancelled,
                 position,
+                time,
             });
         }
         _ => {}
@@ -168,8 +183,14 @@ pub(crate) fn on_pointer(app: &mut App, e: &WlPointerEvent) {
 pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
     match e {
         WlTouchEvent::Down {
-            surface, id, x, y, ..
+            time,
+            surface,
+            id,
+            x,
+            y,
+            ..
         } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some(window) = app.resource::<Surfaces>().window_of(surface.id()) else {
                 return;
             };
@@ -182,15 +203,18 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
             app.signal(ContactInput {
                 window,
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Pressed,
                 position,
+                time: *time,
             });
         }
-        WlTouchEvent::Motion { id, x, y, .. } => {
+        WlTouchEvent::Motion { time, id, x, y, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, _)) = app.resource::<Seat>().touches.get(id).copied() else {
                 return;
             };
@@ -203,9 +227,11 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Moved,
                 position,
+                time: *time,
             });
         }
-        WlTouchEvent::Up { id, .. } => {
+        WlTouchEvent::Up { time, id, .. } => {
+            app.resource_mut::<Seat>().last_time = *time;
             let Some((window, position)) = app.resource_mut::<Seat>().touches.remove(id) else {
                 return;
             };
@@ -214,16 +240,19 @@ pub(crate) fn on_touch(app: &mut App, e: &WlTouchEvent) {
                 contact: ContactId::Touch(*id as u32),
                 phase: ContactPhase::Released,
                 position,
+                time: *time,
             });
         }
         WlTouchEvent::Cancel { .. } => {
             let touches = std::mem::take(&mut app.resource_mut::<Seat>().touches);
+            let time = app.resource::<Seat>().last_time;
             for (id, (window, position)) in touches {
                 app.signal(ContactInput {
                     window,
                     contact: ContactId::Touch(id as u32),
                     phase: ContactPhase::Cancelled,
                     position,
+                    time,
                 });
             }
         }

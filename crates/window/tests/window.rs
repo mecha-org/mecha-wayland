@@ -497,3 +497,17 @@ fn a_window_clears_to_black_unless_told_otherwise() {
         Color::from_rgb8(10, 20, 30)
     );
 }
+
+#[test]
+fn a_clear_with_no_alpha_is_transparent_whatever_its_rgb() {
+    let mut app = app();
+    let w = app.spawn(
+        app.root(),
+        a_window().clear(Color::rgba(1.0, 0.5, 0.25, 0.0)),
+    );
+    assert_eq!(
+        app.widget::<Window>(w).unwrap().clear(),
+        Color::TRANSPARENT,
+        "its rgb would otherwise leak into every edge composited onto it"
+    );
+}

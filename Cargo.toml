@@ -18,12 +18,14 @@ paint.workspace = true
 presentation.workspace = true
 render.workspace = true
 ring.workspace = true
+scroll.workspace = true
 timer.workspace = true
 wayland.workspace = true
 widgets.workspace = true
 window.workspace = true
 theme.workspace = true
 text-input.workspace = true
+toplevels.workspace = true
 mechanix-widgets.workspace = true
 
 [dev-dependencies]
@@ -43,12 +45,14 @@ members = [
     "crates/presentation",
     "crates/render",
     "crates/ring",
+    "crates/scroll",
     "crates/timer",
     "crates/wayland",
     "crates/widgets",
     "crates/window",
     "crates/theme",
     "crates/text-input",
+    "crates/toplevels",
     "crates/mechanix-widgets",
 ]
 resolver = "3"
@@ -66,12 +70,14 @@ paint = { path = "crates/paint" }
 presentation = { path = "crates/presentation" }
 render = { path = "crates/render" }
 ring = { path = "crates/ring" }
+scroll = { path = "crates/scroll" }
 timer = { path = "crates/timer" }
 wayland = { path = "crates/wayland" }
 widgets = { path = "crates/widgets" }
 window = { path = "crates/window" }
 theme = { path = "crates/theme" }
 text-input = { path = "crates/text-input" }
+toplevels = { path = "crates/toplevels" }
 mechanix-widgets = { path = "crates/mechanix-widgets" }
 bitflags = "2"
 fontdue = "0.9"

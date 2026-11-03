@@ -1,11 +1,12 @@
 //! A slider example demonstrating the Mechanix Design tick-bar slider with multiple sizes,
-//! horizontal and vertical orientations, tap/press interaction, and theme-aware styling.
+//! horizontal and vertical orientations, press-and-drag interaction, and theme-aware styling.
 //! Run under a Wayland session: `cargo run --example slider_demo`.
 
 use mecha_wayland::mechanix_widgets::prelude::{
-    ButtonVariant, FontBook, SliderChange, SliderSize, TextContextExt, button, slider, text,
+    ButtonVariant, FontBook, TextContextExt, button, text,
 };
 use mecha_wayland::prelude::*;
+use mechanix_widgets::{SliderChange, SliderSize, slider};
 use theme::{ColorRole, TextVariant};
 
 struct DemoView;

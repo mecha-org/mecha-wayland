@@ -1,7 +1,7 @@
 use crate::color::{ColorSource, IntoColorSource};
 use app::{Build, Context, Event, Handle, Spawner, Widget};
 use geometry::{Color, Point};
-use interactivity::prelude::{Clicked, Press};
+use interactivity::prelude::{ContactId, ContextClaim, Press, PressCancelled, PressMoved, Release};
 use layout::{ComputedLayout, LayoutStyle, px};
 use theme::{ColorRole, SpawnerThemeExt, ThemeReader};
 use widgets::{Div, DivContext, div};
@@ -74,7 +74,7 @@ impl SliderSize {
     }
 }
 
-/// Emitted when a user press or click selects a different value.
+/// Emitted when a press or drag selects a different value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SliderChange {
     pub value: f32,
@@ -244,9 +244,17 @@ pub struct Slider {
     pub inactive_color: Option<ColorSource>,
     pub orientation: SliderOrientation,
     pub(crate) ticks: Vec<Handle<Div>>,
+    /// The contact currently dragging the slider, if any.
+    pub(crate) dragging: Option<ContactId>,
 }
 
 impl Slider {
+    /// Whether a contact is currently dragging the slider.
+    #[inline]
+    pub fn is_dragging(&self) -> bool {
+        self.dragging.is_some()
+    }
+
     /// Size variant of the slider.
     #[inline]
     pub fn size(&self) -> SliderSize {
@@ -358,6 +366,7 @@ impl Widget for Slider {
             inactive_color: b.inactive_color,
             orientation: b.orientation,
             ticks: Vec::new(),
+            dragging: None,
         };
         slider.value = slider.snap(slider.value);
 
@@ -378,11 +387,39 @@ impl Widget for Slider {
             })
             .collect();
 
-        s.on::<Press>(me, |ctx, e: &Press| set_from_pointer(ctx, e.position));
-        s.on::<Clicked>(me, |ctx, e: &Clicked| set_from_pointer(ctx, e.position));
+        s.on::<Press>(me, on_press);
+        s.on::<PressMoved>(me, on_press_moved);
+        s.on::<Release>(me, |ctx, e: &Release| end_drag(ctx, e.contact));
+        s.on::<PressCancelled>(me, |ctx, e: &PressCancelled| end_drag(ctx, e.contact));
         s.on_theme(me, sync_ticks);
 
         slider
+    }
+}
+
+/// Starts a drag: the slider claims the contact so an enclosing scroll view
+/// can't take it over, then jumps to the pressed position.
+fn on_press(ctx: &mut Context<'_, Slider>, e: &Press) {
+    if ctx.me().dragging.is_some() {
+        // Another contact already drives the slider.
+        return;
+    }
+    ctx.me().dragging = Some(e.contact);
+    ctx.claim_contact(e.contact);
+    set_from_pointer(ctx, e.position);
+}
+
+/// Follows the dragging contact, even outside the slider's bounds.
+fn on_press_moved(ctx: &mut Context<'_, Slider>, e: &PressMoved) {
+    if ctx.me().dragging == Some(e.contact) {
+        set_from_pointer(ctx, e.position);
+    }
+}
+
+fn end_drag(ctx: &mut Context<'_, Slider>, contact: ContactId) {
+    let me = ctx.me();
+    if me.dragging == Some(contact) {
+        me.dragging = None;
     }
 }
 
@@ -523,6 +560,7 @@ mod tests {
             inactive_color: None,
             orientation: SliderOrientation::Horizontal,
             ticks: vec![],
+            dragging: None,
         }
     }
 

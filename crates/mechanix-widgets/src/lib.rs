@@ -37,9 +37,14 @@ pub use widgets::{
 pub mod prelude {
     // Themed widgets & builders
     pub use crate::button::{
-        Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonVariant, button,
+        Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonSize, ButtonVariant, button,
     };
     pub use crate::clock::{Clock, ClockBuilder, ClockContextExt, ClockInterval, ClockTick, clock};
+    pub use crate::slider::{
+        Slider, SliderBuilder, SliderChange, SliderContextExt, SliderOrientation, SliderSize,
+        SliderVariant, slider,
+    };
+
     pub use crate::text::{Text, TextBuilder, TextContextExt, text};
 
     // Color, typography & font resolution

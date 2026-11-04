@@ -41,7 +41,13 @@ impl Widget for DemoView {
         // Section 1: Horizontal Sliders (Different Sizes)
         let h_section = s.spawn(
             me,
-            div().style(LayoutStyle::default().column().center().gap(px(10.0))),
+            div().style(
+                LayoutStyle::default()
+                    .column()
+                    .center()
+                    .gap(px(10.0))
+                    .width(percent(100.0)),
+            ),
         );
 
         // 1. XSmall (16 px)
@@ -61,7 +67,7 @@ impl Widget for DemoView {
                 .size(SliderSize::XSmall)
                 .value(0.25)
                 .range(0.0, 1.0)
-                .steps(30),
+                .length(px(200.0)),
         );
         s.on::<SliderChange>(s_xs, move |ctx, e| {
             let pct = (e.value * 100.0).round() as i32;
@@ -87,7 +93,7 @@ impl Widget for DemoView {
                 .size(SliderSize::Small)
                 .value(0.50)
                 .range(0.0, 1.0)
-                .steps(35)
+                .length(px(240.0))
                 .active_color(ColorRole::Primary),
         );
         s.on::<SliderChange>(s_sm, move |ctx, e| {
@@ -98,13 +104,20 @@ impl Widget for DemoView {
         });
 
         // 3. Medium (40 px) - Default theme colors (on-secondary-fixed / secondary-fixed-dim)
+        // Full-width row so the slider's percent length resolves against it.
         let row_md = s.spawn(
             h_section,
-            div().style(LayoutStyle::default().column().center().gap(px(4.0))),
+            div().style(
+                LayoutStyle::default()
+                    .column()
+                    .center()
+                    .gap(px(4.0))
+                    .width(percent(100.0)),
+            ),
         );
         let label_md = s.spawn(
             row_md,
-            text("Medium (40 px - Default Theme Colors): 70%")
+            text("Medium (40 px, 80% wide): 70%")
                 .variant(TextVariant::LabelMedium)
                 .color(ColorRole::OnSurface),
         );
@@ -114,12 +127,12 @@ impl Widget for DemoView {
                 .size(SliderSize::Medium)
                 .value(0.70)
                 .range(0.0, 1.0)
-                .steps(40),
+                .length(percent(80.0)),
         );
         s.on::<SliderChange>(s_md, move |ctx, e| {
             let pct = (e.value * 100.0).round() as i32;
             if let Some(mut t) = ctx.at(label_md) {
-                t.set_text(format!("Medium (40 px - Default Theme Colors): {}%", pct));
+                t.set_text(format!("Medium (40 px, 80% wide): {}%", pct));
             }
         });
 
@@ -140,7 +153,7 @@ impl Widget for DemoView {
                 .size(SliderSize::Large)
                 .value(0.85)
                 .range(0.0, 1.0)
-                .steps(45)
+                .length(px(320.0))
                 .active_color(ColorRole::Primary),
         );
         s.on::<SliderChange>(s_lg, move |ctx, e| {
@@ -181,7 +194,7 @@ impl Widget for DemoView {
                 .vertical()
                 .value(0.45)
                 .range(0.0, 1.0)
-                .steps(30),
+                .length(px(180.0)),
         );
         s.on::<SliderChange>(v1, move |ctx, e| {
             let pct = (e.value * 100.0).round() as i32;
@@ -208,7 +221,7 @@ impl Widget for DemoView {
                 .vertical()
                 .value(0.60)
                 .range(0.0, 1.0)
-                .steps(30)
+                .length(px(180.0))
                 .active_color(ColorRole::Primary),
         );
         s.on::<SliderChange>(v2, move |ctx, e| {
@@ -236,7 +249,7 @@ impl Widget for DemoView {
                 .vertical()
                 .value(0.75)
                 .range(0.0, 1.0)
-                .steps(30)
+                .length(px(180.0))
                 .active_color(ColorRole::Secondary),
         );
         s.on::<SliderChange>(v3, move |ctx, e| {

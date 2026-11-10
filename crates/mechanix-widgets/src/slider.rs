@@ -104,6 +104,8 @@ fn tick_span(n: usize, tick: f32, gap: f32) -> f32 {
 struct TickSpec {
     width: f32,
     height: f32,
+    // Horizontal cross-axis override only; main-axis arithmetic stays in pixels.
+    relative_height: Option<Val>,
     gap: f32,
     radius: f32,
 }
@@ -149,6 +151,9 @@ pub struct SliderBuilder {
     pub tick_radius: f32,
     pub tick_width: f32,
     pub tick_height: f32,
+    /// Optional horizontal tick height relative to the track's content box.
+    /// See [`tick_height_relative`](Self::tick_height_relative).
+    pub tick_height_relative: Option<Val>,
     pub active_color: Option<ColorSource>,
     pub inactive_color: Option<ColorSource>,
     pub style: Option<LayoutStyle>,
@@ -175,6 +180,7 @@ impl SliderBuilder {
             tick_radius: size.radius(),
             tick_width,
             tick_height,
+            tick_height_relative: None,
             active_color: None,
             inactive_color: None,
             style: None,
@@ -188,6 +194,7 @@ impl SliderBuilder {
         let (w, h) = size.tick_size(self.orientation);
         self.tick_width = w;
         self.tick_height = h;
+        self.tick_height_relative = None;
         self.tick_gap = size.gap();
         self.tick_radius = size.radius();
         self
@@ -248,6 +255,10 @@ impl SliderBuilder {
         TickSpec {
             width: self.tick_width,
             height: self.tick_height,
+            relative_height: match self.orientation {
+                SliderOrientation::Horizontal => self.tick_height_relative,
+                SliderOrientation::Vertical => None,
+            },
             gap: self.tick_gap,
             radius: self.tick_radius,
         }
@@ -279,12 +290,32 @@ impl SliderBuilder {
 
     pub fn tick_height(mut self, height: f32) -> Self {
         self.tick_height = height;
+        self.tick_height_relative = None;
+        self
+    }
+
+    /// Sets the layout height of ticks in a **horizontal** slider.
+    ///
+    /// `percent(100.0)` fills the slider track's content height; `percent(50.0)`
+    /// fills half, centered vertically. Give the track a height through
+    /// [`style`](Self::style), e.g. `.height(percent(100.0))` inside a sized row.
+    /// An auto-height track that derives its height from its ticks cannot provide
+    /// a meaningful percentage basis.
+    ///
+    /// `px(...)` sets a fixed layout height; `auto()` clears the override.
+    /// [`tick_height`](Self::tick_height), [`tick_size`](Self::tick_size), and
+    /// [`size`](Self::size) also clear it. Vertical sliders ignore this override
+    /// and retain their pixel tick dimensions, regardless of builder call order.
+    /// Tick width, count, and pointer-to-value mapping are unaffected.
+    pub fn tick_height_relative(mut self, height: Val) -> Self {
+        self.tick_height_relative = (height != Val::Auto).then_some(height);
         self
     }
 
     pub fn tick_size(mut self, width: f32, height: f32) -> Self {
         self.tick_width = width;
         self.tick_height = height;
+        self.tick_height_relative = None;
         self
     }
 
@@ -509,7 +540,7 @@ fn tick_div(tick: TickSpec, color: Color) -> widgets::DivBuilder {
         .style(
             LayoutStyle::default()
                 .width(px(tick.width))
-                .height(px(tick.height))
+                .height(tick.relative_height.unwrap_or(px(tick.height)))
                 .shrink(0.0),
         )
         .radius(tick.radius)
@@ -990,6 +1021,133 @@ mod tests {
         app.component_mut::<LayoutStyle>(root).unwrap().width = px(120.0);
         settle(&mut app);
         ticks_fit(&app, 10);
+    }
+
+    #[test]
+    fn relative_tick_height_resizes_existing_and_new_ticks() {
+        use app::App;
+        use geometry::Insets;
+        use layout::{LayoutModule, LayoutRoot, percent};
+        use paint::PaintModule;
+        use theme::MechanixTheme;
+
+        for (percentage, length) in [
+            (50.0, percent(100.0)),
+            (100.0, percent(100.0)),
+            (100.0, px(100.0)),
+        ] {
+            let mut app = App::new();
+            app.add_module(LayoutModule)
+                .add_module(PaintModule)
+                .add_module(MechanixTheme::dark());
+            app.insert_resource(atlas::Atlas::new());
+            let root = app.spawn_with(
+                app.root(),
+                div().style(LayoutStyle::default().size(px(200.0), px(48.0))),
+                (LayoutRoot(true),),
+            );
+            let s = app.spawn(
+                root,
+                slider()
+                    .length(length)
+                    .tick_height_relative(percent(percentage))
+                    .value(0.5)
+                    .style(
+                        LayoutStyle::default()
+                            .height(percent(100.0))
+                            .padding(Insets::all(px(4.0))),
+                    ),
+            );
+            let mut first_tick = None;
+            // Height-only changes must resize existing ticks even though
+            // fit_ticks returns early when the count has not changed.
+            for (width, height) in [(200.0, 48.0), (200.0, 32.0), (400.0, 60.0), (120.0, 40.0)] {
+                *app.component_mut::<LayoutStyle>(root).unwrap() =
+                    LayoutStyle::default().size(px(width), px(height));
+                for _ in 0..4 {
+                    app.tick();
+                }
+                let track = app.component::<ComputedLayout>(s).unwrap().content();
+                let me = app.widget::<Slider>(s).unwrap();
+                assert_eq!(track.height(), height - 8.0);
+                let expected_width = if length == px(100.0) { 100.0 } else { width };
+                assert_eq!(track.width(), expected_width - 8.0);
+                assert_eq!(me.tick_count, tick_count(expected_width - 8.0, 2.0, 4.0));
+                assert_eq!(me.value, 0.5);
+                if let Some(first) = first_tick {
+                    assert_eq!(me.ticks[0], first);
+                } else {
+                    first_tick = Some(me.ticks[0]);
+                }
+                for &tick in &me.ticks {
+                    let r = app.component::<ComputedLayout>(tick).unwrap().rect;
+                    assert_eq!(r.height(), track.height() * percentage / 100.0);
+                    assert_eq!(r.width(), 2.0);
+                    assert!(r.y() >= track.y() && r.bottom() <= track.bottom());
+                    assert!((r.y() - track.y() - (track.height() - r.height()) / 2.0).abs() <= 1.0);
+                }
+                // Pointer mapping still uses the horizontal tick span.
+                let span = tick_span(me.tick_count, 2.0, 4.0);
+                assert_eq!(
+                    me.fraction_at(track, Point::new(track.x() + span / 2.0, track.y())),
+                    Some(0.5)
+                );
+                assert_eq!(
+                    me.fraction_at(track, Point::new(track.x() + span, track.y())),
+                    Some(1.0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn relative_height_keeps_pixel_and_vertical_behaviour() {
+        use app::App;
+        use layout::{LayoutModule, LayoutRoot, percent};
+        use paint::PaintModule;
+        use theme::MechanixTheme;
+
+        let relative = || slider().tick_height_relative(percent(100.0));
+        let cases = [
+            (slider(), 2.0, 40.0),
+            (relative().tick_height(28.0), 2.0, 28.0),
+            (relative().tick_size(3.0, 30.0), 3.0, 30.0),
+            (relative().size(SliderSize::Small), 2.0, 24.0),
+            (relative().tick_height_relative(Val::Auto), 2.0, 40.0),
+            (slider().tick_height_relative(px(18.0)), 2.0, 18.0),
+            (relative().vertical(), 40.0, 2.0),
+            (
+                slider().vertical().tick_height_relative(percent(100.0)),
+                40.0,
+                2.0,
+            ),
+        ];
+        for (builder, expected_width, expected_height) in cases {
+            let mut app = App::new();
+            app.add_module(LayoutModule)
+                .add_module(PaintModule)
+                .add_module(MechanixTheme::dark());
+            app.insert_resource(atlas::Atlas::new());
+            let root = app.spawn_with(
+                app.root(),
+                div().style(LayoutStyle::default().size(px(300.0), px(300.0))),
+                (LayoutRoot(true),),
+            );
+            let count = builder.tick_count().unwrap();
+            let s = app.spawn(root, builder);
+            // Fixed lengths create ticks during build as well as after layout.
+            assert_eq!(app.widget::<Slider>(s).unwrap().ticks.len(), count);
+            for _ in 0..4 {
+                app.tick();
+            }
+            let me = app.widget::<Slider>(s).unwrap();
+            assert_eq!(me.tick_count, count);
+            for &tick in &me.ticks {
+                let r = app.component::<ComputedLayout>(tick).unwrap().rect;
+                assert_eq!(r.width(), expected_width);
+                assert_eq!(r.height(), expected_height);
+            }
+        }
     }
 
     #[test]

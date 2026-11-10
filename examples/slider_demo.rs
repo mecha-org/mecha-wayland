@@ -1,5 +1,6 @@
 //! A slider example demonstrating the Mechanix Design tick-bar slider with multiple sizes,
 //! horizontal and vertical orientations, press-and-drag interaction, and theme-aware styling.
+//! The relative-height examples combine percentage tick heights with pixel tick gaps.
 //! Run under a Wayland session: `cargo run --example slider_demo`.
 
 use mecha_wayland::mechanix_widgets::prelude::{
@@ -163,6 +164,69 @@ impl Widget for DemoView {
             }
         });
 
+        // Relative-height horizontal sliders: tick_gap is the horizontal space
+        // between ticks, independent of their percentage height.
+        s.spawn(
+            me,
+            text("Relative Tick Heights + Custom Gaps")
+                .variant(TextVariant::TitleMedium)
+                .color(ColorRole::OnSurface),
+        );
+        let relative_row = s.spawn(
+            me,
+            div().style(
+                LayoutStyle::default()
+                    .row()
+                    .width(percent(100.0))
+                    .gap(px(20.0)),
+            ),
+        );
+        for (height_percent, gap) in [(100.0, 2.0), (50.0, 8.0)] {
+            let column = s.spawn(
+                relative_row,
+                div().style(
+                    LayoutStyle::default()
+                        .column()
+                        .grow(1.0)
+                        .flex_basis(px(0.0))
+                        .min_width(px(0.0))
+                        .gap(px(6.0)),
+                ),
+            );
+            let label = s.spawn(
+                column,
+                text(format!("{height_percent}% height, gap {gap}px: 50%"))
+                    .variant(TextVariant::LabelMedium)
+                    .color(ColorRole::OnSurface),
+            );
+            // A definite parent height lets both the track's 100% height and
+            // the ticks' percentage height resolve without an auto-size cycle.
+            let track_row = s.spawn(
+                column,
+                div().style(
+                    LayoutStyle::default()
+                        .size(percent(100.0), px(60.0))
+                        .shrink(0.0),
+                ),
+            );
+            let control = s.spawn(
+                track_row,
+                slider()
+                    .length(percent(100.0))
+                    .style(LayoutStyle::default().height(percent(100.0)))
+                    .tick_height_relative(percent(height_percent))
+                    .tick_gap(gap)
+                    .value(0.5)
+                    .active_color(ColorRole::Primary),
+            );
+            s.on::<SliderChange>(control, move |ctx, e| {
+                let pct = (e.value * 100.0).round() as i32;
+                if let Some(mut t) = ctx.at(label) {
+                    t.set_text(format!("{height_percent}% height, gap {gap}px: {pct}%"));
+                }
+            });
+        }
+
         // Section 2: Vertical Sliders Side-by-Side (Audio Mixer / Equalizer)
         s.spawn(
             me,
@@ -302,7 +366,7 @@ impl Widget for Shell {
             b.root,
             window()
                 .title("Mechanix Slider Demo")
-                .layout(LayoutStyle::default().center().size(px(520.0), px(760.0))),
+                .layout(LayoutStyle::default().center().size(px(640.0), px(900.0))),
         );
         s.on::<CloseRequested>(win, |ctx, _| ctx.signal(Stop));
         s.spawn(win, DemoViewBuilder);

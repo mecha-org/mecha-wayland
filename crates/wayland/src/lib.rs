@@ -65,6 +65,7 @@ pub mod fake;
 
 pub mod display;
 pub mod generated;
+pub mod outputs;
 pub mod wire;
 
 pub use display::{
@@ -616,6 +617,7 @@ pub mod prelude {
         WlCallback, WlCallbackEvent, WlDisplay, WlDisplayEvent, WlRegistry, WlRegistryEvent,
     };
     pub use crate::generated::*;
+    pub use crate::outputs::{OutputAdded, OutputRemoved, Outputs, OutputsModule};
     pub use crate::{Global, Globals, Interface, ObjectId, Wayland, WaylandModule};
 }
 

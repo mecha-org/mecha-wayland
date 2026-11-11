@@ -72,7 +72,7 @@ mod tree;
 
 use std::fmt;
 
-use app::{App, Component, Module, NodeId, PostTick, Removed, Resource, Signal, Spawned};
+use app::{App, Component, Module, Moved, NodeId, PostTick, Removed, Resource, Signal, Spawned};
 use geometry::{Insets, Point, Rect, Size};
 use taffy::AvailableSpace;
 use taffy::geometry::Size as TSize;
@@ -349,7 +349,8 @@ impl Module for LayoutModule {
             .register_component::<Scratch>()
             .init_resource::<DirtyRoots>()
             .system(on_spawned)
-            .system(on_removed);
+            .system(on_removed)
+            .system(on_moved);
     }
 }
 
@@ -433,6 +434,13 @@ fn on_removed(app: &mut App, r: &Removed) {
     if app.is_live(r.parent) {
         invalidate(app, r.parent);
     }
+}
+
+/// A moved subtree: both parents' child lists changed, and the subtree's
+/// own sizes were worked out for its old place. (Stale ids do nothing.)
+fn on_moved(app: &mut App, m: &Moved) {
+    invalidate(app, m.from);
+    invalidate(app, m.id);
 }
 
 /// The dirty roots that are still live and still marked, in marking

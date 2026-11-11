@@ -68,6 +68,18 @@ pub struct Removed {
 }
 impl Signal for Removed {}
 
+/// A subtree moved. Queued by [`App::move_to`](crate::App::move_to),
+/// once per call, for the subtree's root only: `id` was a child of `from`
+/// and is now the last child of `to`. Either node may be gone by the time
+/// a system sees it, if it was removed later in the same flush.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Moved {
+    pub id: NodeId,
+    pub from: NodeId,
+    pub to: NodeId,
+}
+impl Signal for Moved {}
+
 /// The signal form of an emit: the event by value and the nodes it went
 /// to, sent after those nodes' handlers ran. How a system observes an
 /// event without owning a node. Dropped, like any signal, when no system

@@ -123,6 +123,19 @@ pub(crate) fn on_spawned(app: &mut App, spawned: &Spawned) {
     app.resource_mut::<Unresolved>().0.push(spawned.id);
 }
 
+/// A moved subtree starts over too: its old place was in other
+/// coordinates, maybe another window, so it takes its new place at once
+/// rather than animating there.
+pub(crate) fn on_moved(app: &mut App, m: &Moved) {
+    let subtree: Vec<NodeId> = std::iter::once(m.id).chain(app.descendants(m.id)).collect();
+    for &node in &subtree {
+        if let Some(mut transition) = app.component_mut::<Transition>(node) {
+            *transition = Transition::default();
+        }
+    }
+    app.resource_mut::<Unresolved>().0.extend(subtree);
+}
+
 /// Copy first resolutions and keep running transitions drawing; do not
 /// advance time here.
 ///

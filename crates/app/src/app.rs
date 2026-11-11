@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::component::{Component, Components};
 use crate::context::Context;
 use crate::handler::{Handler, HandlerColumns, Targets, dispatch};
-use crate::message::{Emitted, OnChanged, PostTick, Removed, Spawned, Tick};
+use crate::message::{Emitted, Moved, OnChanged, PostTick, Removed, Spawned, Tick};
 use crate::nodes::{Node, Nodes};
 use crate::query::{CompMut, Data, Query};
 use crate::resource::{ResourceMut, Resources};
@@ -197,6 +197,47 @@ impl App {
             pending.extend(node.children);
         }
         true
+    }
+
+    /// Move `id`, and every node under it, to be the last child of
+    /// `parent`. The nodes keep their ids, widgets, components and
+    /// handlers: the same nodes, somewhere else. Queues a [`Moved`]
+    /// signal, for whatever depends on where a node is (its window, its
+    /// layout, its drawing). Moving a node to the parent it has does
+    /// nothing.
+    ///
+    /// # Panics
+    ///
+    /// If either id is stale, `id` is the root, or `parent` is `id` or
+    /// under it.
+    pub fn move_to(&mut self, id: impl Into<NodeId>, parent: impl Into<NodeId>) {
+        let (id, parent) = (id.into(), parent.into());
+        assert!(
+            self.slots.is_live(id) && self.slots.is_live(parent),
+            "a move of a stale node: {id:?} to {parent:?}"
+        );
+        assert!(id != NodeId::ROOT, "the root node cannot be moved");
+        assert!(
+            parent != id && !self.ancestors(parent).any(|a| a == id),
+            "a node cannot move under itself: {id:?} to {parent:?}"
+        );
+        let from = self.node(id).parent;
+        if from == parent {
+            return;
+        }
+        let siblings = &mut self.node_mut(from).children;
+        let position = siblings
+            .iter()
+            .position(|c| *c == id)
+            .expect("live node is in its parent's children");
+        siblings.remove(position);
+        self.node_mut(parent).children.push(id);
+        self.node_mut(id).parent = parent;
+        self.signal(Moved {
+            id,
+            from,
+            to: parent,
+        });
     }
 
     // ── tree: read ───────────────────────────────────────────────────────

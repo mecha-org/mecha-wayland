@@ -209,6 +209,40 @@ fn in_window_is_filled_for_every_node_under_a_window_and_none_elsewhere() {
     assert_eq!(in_window(app.root()), None, "the app root");
 }
 
+#[test]
+fn a_moved_subtree_is_in_its_new_window_and_both_windows_draw() {
+    let mut app = app();
+    let first = app.spawn(app.root(), a_window());
+    let second = app.spawn(app.root(), a_window());
+    let panel = app.spawn(first, PanelBuilder);
+    let child = app.widget::<Panel>(panel).unwrap().child;
+    app.tick();
+    take_requested();
+
+    app.move_to(panel, second);
+    app.flush();
+
+    let in_window = |id: NodeId| app.component::<InWindow>(id).unwrap().0;
+    assert_eq!(in_window(panel.id()), Some(second.id()));
+    assert_eq!(
+        in_window(child.id()),
+        Some(second.id()),
+        "the whole subtree"
+    );
+    assert_eq!(take_requested(), [first.id(), second.id()], "old, then new");
+}
+
+#[test]
+#[should_panic(expected = "a window cannot be moved")]
+fn moving_a_window_panics() {
+    let mut app = app();
+    let first = app.spawn(app.root(), a_window());
+    let second = app.spawn(app.root(), a_window());
+    app.flush();
+    app.move_to(first, second);
+    app.flush();
+}
+
 // ── 3: Windows ──────────────────────────────────────────────────────────
 
 fn windows(app: &App) -> Vec<NodeId> {

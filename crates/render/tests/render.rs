@@ -860,6 +860,35 @@ fn a_removal_damages_what_it_drew_and_asks_for_a_frame() {
 }
 
 #[test]
+fn a_node_moved_to_another_window_draws_there_and_clears_where_it_was() {
+    let mut app = app();
+    let first = app.spawn(app.root(), a_window());
+    let second = app.spawn(app.root(), a_window());
+    let q = app.spawn_with(
+        first,
+        Leaf,
+        (boxed(50.0, 20.0), Paint::Quad(Quad::new(RED))),
+    );
+    app.tick();
+    take_requested();
+
+    // The same place in either window: nothing about it changes but the
+    // window.
+    let rect = Rect::new(0.0, 0.0, 50.0, 20.0);
+    app.move_to(q, second);
+    app.tick();
+
+    let new = queue(&mut app, second.id(), 1);
+    assert_eq!(new.scissor, vec![rect], "drawn in full in its new window");
+    assert_eq!(new.opaque.commands.len(), 1);
+    assert_eq!(new.opaque.commands[0].color, RED);
+
+    let old = queue(&mut app, first.id(), 1);
+    assert_eq!(old.scissor, vec![rect], "the old window clears it");
+    assert!(old.opaque.commands.is_empty(), "and draws nothing there");
+}
+
+#[test]
 fn a_spawn_into_a_drawn_window_damages_only_its_own_rect() {
     let mut app = app();
     let (win, _, _) = two_quads(&mut app);

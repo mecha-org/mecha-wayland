@@ -315,6 +315,60 @@ fn removing_a_subtree_stales_every_descendant_three_levels_deep() {
 }
 
 #[test]
+fn move_to_moves_the_same_subtree_and_signals_once() {
+    #[derive(Default)]
+    struct Moves(Vec<Moved>);
+    impl Resource for Moves {}
+
+    let mut app = App::new();
+    app.init_resource::<Moves>()
+        .system(|app: &mut App, m: &Moved| app.resource_mut::<Moves>().0.push(*m));
+    let root = app.root();
+    let from = app.spawn(root, LabelBuilder("from"));
+    let to = app.spawn(root, LabelBuilder("to"));
+    let kept = app.spawn(to, LabelBuilder("kept"));
+    let pair = app.spawn(from, PairBuilder);
+    let left = app.widget::<Pair>(pair).unwrap().left;
+
+    app.move_to(pair, to);
+    app.flush();
+
+    assert_eq!(app.children(from), Some(&[][..]));
+    assert_eq!(app.children(to), Some(&[kept.id(), pair.id()][..]), "last");
+    assert_eq!(app.parent(pair), Some(to.id()));
+    assert_eq!(app.parent(left), Some(pair.id()), "the subtree came along");
+    assert_eq!(
+        app.widget::<Label>(left).unwrap().0,
+        "left",
+        "the same node"
+    );
+    let moved = Moved {
+        id: pair.id(),
+        from: from.id(),
+        to: to.id(),
+    };
+    assert_eq!(app.resource::<Moves>().0, [moved]);
+
+    app.move_to(pair, to);
+    app.flush();
+    assert_eq!(
+        app.resource::<Moves>().0.len(),
+        1,
+        "to its own parent: nothing"
+    );
+}
+
+#[test]
+#[should_panic(expected = "under itself")]
+fn moving_under_its_own_subtree_panics() {
+    let mut app = App::new();
+    let root = app.root();
+    let top = app.spawn(root, LabelBuilder("top"));
+    let leaf = app.spawn(top, LabelBuilder("leaf"));
+    app.move_to(top, leaf);
+}
+
+#[test]
 #[should_panic(expected = "root")]
 fn removing_the_root_panics() {
     let mut app = App::new();

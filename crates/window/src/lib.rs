@@ -300,8 +300,36 @@ impl Module for WindowModule {
             .init_resource::<Windows>()
             .system(on_spawned)
             .system(on_removed)
+            .system(on_moved)
             .system(on_request_frame)
             .system(on_frame);
+    }
+}
+
+/// A moved subtree is in its new parent's window now: every node in it
+/// says so, and both windows draw again, the old one to clear what the
+/// subtree left behind.
+///
+/// # Panics
+///
+/// If the moved node is a window: a window stays a child of the root.
+fn on_moved(app: &mut App, m: &Moved) {
+    if !app.is_live(m.id) {
+        return;
+    }
+    let old = app.component::<InWindow>(m.id).and_then(|w| w.0);
+    assert!(old != Some(m.id), "a window cannot be moved: {:?}", m.id);
+    let new = app.component::<InWindow>(m.to).and_then(|w| w.0);
+    if old != new {
+        let subtree: Vec<NodeId> = std::iter::once(m.id).chain(app.descendants(m.id)).collect();
+        for node in subtree {
+            if let Some(mut slot) = app.component_mut::<InWindow>(node) {
+                slot.0 = new;
+            }
+        }
+    }
+    for window in [old, new].into_iter().flatten() {
+        app.signal(RequestFrame(window));
     }
 }
 

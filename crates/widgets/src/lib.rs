@@ -65,6 +65,7 @@ mod div;
 mod icon;
 mod image;
 mod input;
+mod secret;
 mod state;
 mod text;
 
@@ -76,6 +77,7 @@ pub use input::{
     ContentHint, ContentPurpose, Input, InputBuilder, InputContext, InputEdit, InputFocus,
     InputSubmit, input,
 };
+pub use secret::Secret;
 pub use state::WidgetState;
 pub use text::{
     Text, TextAlign, TextBuilder, TextContext, TextDecoration, TextOverflow, TextProps, TextWrap,
@@ -87,7 +89,8 @@ pub mod prelude {
         Button, ButtonBuilder, ButtonContext, ButtonProps, ButtonStateStyle, ContentHint,
         ContentPurpose, Div, DivBuilder, DivContext, Icon, IconBuilder, IconContext, Image,
         ImageBuilder, ImageContext, Input, InputBuilder, InputContext, InputEdit, InputFocus,
-        InputSubmit, Text, TextAlign, TextBuilder, TextContext, TextDecoration, TextOverflow,
-        TextProps, TextWrap, VerticalTrim, WidgetState, button, div, icon, image, input, text,
+        InputSubmit, Secret, Text, TextAlign, TextBuilder, TextContext, TextDecoration,
+        TextOverflow, TextProps, TextWrap, VerticalTrim, WidgetState, button, div, icon, image,
+        input, text,
     };
 }

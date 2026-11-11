@@ -113,6 +113,62 @@ fn a_press_on_another_focusable_blurs_the_field() {
     assert_eq!(text_focus(&ui), None);
 }
 
+/// `zwp_text_input_v3`'s `set_surrounding_text` request and its `enter`
+/// event.
+const SET_SURROUNDING_TEXT: u16 = 3;
+const ENTER: u16 = 0;
+
+/// The text input's id, from the `get_text_input` that made it, and the
+/// compositor's text-input focus on the window: `enable` waits for it.
+fn enter(ui: &mut Ui) -> u32 {
+    ui.f.turn();
+    let made =
+        ui.f.requests()
+            .into_iter()
+            .find(|r| r.opcode == 1 && r.body.len() == 8)
+            .expect("get_text_input");
+    let id = made.reader().object().expect("the new id").0;
+    ui.f.send(id, ENTER, |w| w.object(ObjectId(100)));
+    ui.f.turn();
+    id
+}
+
+/// How many of `opcode` the text input sent since last asked.
+fn sent(ui: &mut Ui, id: u32, opcode: u16) -> usize {
+    ui.f.turn();
+    ui.f.requests()
+        .iter()
+        .filter(|r| r.sender == ObjectId(id) && r.opcode == opcode)
+        .count()
+}
+
+fn type_a(ui: &mut Ui) {
+    let key = KeyPress {
+        meaning: KeyMeaning::Text("a".into()),
+        modifiers: Default::default(),
+    };
+    ui.f.app.emit(key, ui.field);
+    ui.f.app.tick();
+}
+
+#[test]
+fn a_password_field_never_sends_its_text() {
+    for (purpose, sends) in [
+        (ContentPurpose::Normal, true),
+        (ContentPurpose::Password, false),
+    ] {
+        let mut ui = ui_for(purpose);
+        let id = enter(&mut ui);
+        press(&mut ui, 50.0, 20.0);
+        type_a(&mut ui);
+        assert_eq!(
+            sent(&mut ui, id, SET_SURROUNDING_TEXT) > 0,
+            sends,
+            "{purpose:?}"
+        );
+    }
+}
+
 #[test]
 fn a_press_on_nothing_focusable_keeps_the_field() {
     let mut ui = ui();

@@ -22,6 +22,17 @@
 //! `text-input` crate turns into a surrounding-text report with `Other`
 //! as the cause — keeping the IME's picture of the text true across
 //! edits from either path.
+//!
+//! Any field may hold a secret, so every field's text is wiped when it
+//! goes: dropped, replaced, or moved to a bigger allocation as it grows.
+//! The bytes a deletion leaves behind in the spare capacity go with the
+//! rest, when the text is dropped or replaced. A [sensitive] field's text
+//! is never sent to the input method, and leaves through
+//! [`InputContext::take_text`] as a [`Secret`], without a copy.
+//!
+//! [sensitive]: Input::is_sensitive
+
+use std::ops::{Deref, Range};
 
 use app::{Build, Context, Event, Handle, Widget};
 use atlas::{Atlas, FontId};
@@ -30,8 +41,58 @@ use geometry::Color;
 use interactivity::{Focusable, KeyMeaning, KeyPress, KeyRepeat, Press};
 use layout::{ComputedLayout, LayoutStyle, StyleContext, px};
 use paint::{Paint, PaintContext, Quad};
+use zeroize::{Zeroize, Zeroizing};
 
-use crate::{Div, Text, TextContext, div, text};
+use crate::{Div, Secret, Text, TextContext, div, text};
+
+/// A field's text, wiped when it goes: dropped, replaced, or moved to a
+/// bigger allocation.
+struct Wiped(String);
+
+impl Wiped {
+    fn insert_str(&mut self, at: usize, s: &str) {
+        self.reserve(s.len());
+        self.0.insert_str(at, s);
+    }
+
+    /// Room for `additional` more bytes, the old allocation wiped if the
+    /// text has to move.
+    fn reserve(&mut self, additional: usize) {
+        if self.0.capacity() - self.0.len() >= additional {
+            return;
+        }
+        let mut grown =
+            String::with_capacity((self.0.len() + additional).max(self.0.capacity() * 2));
+        grown.push_str(&self.0);
+        std::mem::replace(&mut self.0, grown).zeroize();
+    }
+
+    fn drain(&mut self, range: Range<usize>) {
+        self.0.drain(range);
+    }
+
+    fn replace(&mut self, text: String) {
+        std::mem::replace(&mut self.0, text).zeroize();
+    }
+
+    fn take(&mut self) -> String {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Deref for Wiped {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 bitflags! {
     /// Hints about the kind of text an [`Input`] is editing, mirroring the
@@ -159,7 +220,7 @@ pub struct Input {
     /// focused. Set at build from `InputBuilder::caret` (which
     /// defaults to `InputBuilder::color`).
     caret_color: Color,
-    string: String,
+    string: Wiped,
     /// The cursor's byte offset in `string`.
     cursor: usize,
     /// The preedit shown at the cursor; never part of `string`.
@@ -186,6 +247,12 @@ impl Input {
     /// The committed text, without any preedit.
     pub fn text(&self) -> &str {
         &self.string
+    }
+
+    /// A copy of the text, wiped when it goes: an answer sent while the
+    /// field keeps showing what was typed.
+    pub fn secret(&self) -> Secret {
+        Secret::from(self.string.as_bytes().to_vec())
     }
 
     /// The cursor's byte offset in the text.
@@ -228,6 +295,16 @@ impl Input {
         self.content_hint.contains(ContentHint::HIDDENTEXT) && !self.unmasked
     }
 
+    /// Whether this field holds a secret: `SENSITIVEDATA`, or a password
+    /// or PIN purpose. Its text is never sent to the input method.
+    pub fn is_sensitive(&self) -> bool {
+        self.content_hint.contains(ContentHint::SENSITIVEDATA)
+            || matches!(
+                self.content_purpose,
+                ContentPurpose::Password | ContentPurpose::Pin
+            )
+    }
+
     /// What the widget shows: the string with the preedit at the cursor.
     /// When `is_hidden`, each committed character is replaced by a bullet
     /// `•`; the preedit is shown verbatim so the IME composition stays
@@ -247,7 +324,7 @@ impl Input {
                     &self.string[..self.cursor],
                     &self.string[self.cursor..]
                 ),
-                None => self.string.clone(),
+                None => self.string.to_string(),
             }
         }
     }
@@ -561,7 +638,7 @@ impl Widget for Input {
                     me.content,
                     me.font,
                     me.px,
-                    me.string.clone(),
+                    Zeroizing::new(me.string.to_string()),
                     me.is_hidden(),
                 )
             };
@@ -595,7 +672,7 @@ impl Widget for Input {
             font: b.font,
             px: b.px,
             caret_color: b.caret,
-            string: b.text,
+            string: Wiped(b.text),
             cursor,
             preedit: None,
             focused: false,
@@ -617,11 +694,11 @@ fn sync(ctx: &mut Context<'_, Input>) {
         // The caret sits over the glyphs before the cursor; when the
         // field is hidden those glyphs are bullets, so measure the
         // masked prefix — the real text's widths would misplace it.
-        let before_cursor = if hidden {
+        let before_cursor = Zeroizing::new(if hidden {
             mask(&me.string[..me.cursor])
         } else {
             me.string[..me.cursor].to_string()
-        };
+        });
         (
             me.content,
             me.caret,
@@ -654,6 +731,10 @@ pub trait InputContext {
     /// is dropped.
     fn set_text(&mut self, text: impl Into<String>);
 
+    /// Take the text out, as a [`Secret`] holding the very bytes the field
+    /// did, and leave the field empty: how a password leaves its field.
+    fn take_text(&mut self) -> Secret;
+
     /// Show or hide the field's text. Only meaningful for a field whose
     /// `ContentHint` includes `HIDDENTEXT` (a password field): `false`
     /// (the default) masks each character as `•`, `true` reveals the
@@ -664,10 +745,19 @@ pub trait InputContext {
 impl InputContext for Context<'_, Input> {
     fn set_text(&mut self, text: impl Into<String>) {
         let me = self.me();
-        me.string = text.into();
+        me.string.replace(text.into());
         me.cursor = me.string.len();
         me.preedit = None;
         sync(self);
+    }
+
+    fn take_text(&mut self) -> Secret {
+        let me = self.me();
+        let text = me.string.take();
+        me.cursor = 0;
+        me.preedit = None;
+        sync(self);
+        Secret::from(text)
     }
 
     fn set_hidden(&mut self, hidden: bool) {

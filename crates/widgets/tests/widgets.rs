@@ -979,6 +979,43 @@ fn return_in_a_multiline_input_is_a_line_break() {
     assert_eq!(SUBMITTED.with(|n| *n.borrow()), 0);
 }
 
+// ── input: taking the text ──────────────────────────────────────────────
+
+thread_local! {
+    static TAKEN: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+#[test]
+fn take_text_hands_over_what_was_typed_and_empties_the_field() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field: Handle<Input> =
+        app.spawn(root, input(font).content_purpose(ContentPurpose::Password));
+    app.tick();
+    // Past any first allocation, so the text moves as it grows.
+    let typed = "correct horse battery staple, and then some more";
+    for c in typed.chars() {
+        press(&mut app, field.id(), &c.to_string());
+    }
+    key(&mut app, field.id(), interactivity::KeyMeaning::Backspace);
+    assert!(app.widget::<Input>(field.id()).unwrap().is_sensitive());
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            let secret = ctx.at(field).unwrap().take_text();
+            TAKEN.with(|t| *t.borrow_mut() = secret.as_bytes().to_vec());
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    let typed = &typed[..typed.len() - 1];
+    assert_eq!(TAKEN.with(|t| t.borrow().clone()), typed.as_bytes());
+    let field = app.widget::<Input>(field.id()).unwrap();
+    assert_eq!((field.text(), field.cursor()), ("", 0));
+}
+
 // ── input: caret ────────────────────────────────────────────────────────
 
 #[test]

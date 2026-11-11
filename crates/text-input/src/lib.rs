@@ -47,6 +47,8 @@
 //!   checked against our commit count; the surrounding text is resent
 //!   after every edit regardless, which is what a mismatched serial
 //!   asks for anyway.
+//! - A sensitive field's text (`Input::is_sensitive`: a password or PIN)
+//!   is never sent: no surrounding text, on `enable` or after an edit.
 //! - A focused widget removed from the tree blurs.
 //!
 //! # Quick start
@@ -168,15 +170,7 @@ impl Module for TextInputModule {
 /// only — the caret toggle is the widget's own `InputFocus` handler,
 /// driven by the emits the press path and `on_focus` produce.
 fn focus(app: &mut App, w: NodeId) {
-    let (text, cursor, hint, purpose) = match app.widget::<Input>(w) {
-        Some(i) => (
-            i.text().to_string(),
-            i.cursor(),
-            i.content_hint(),
-            i.content_purpose(),
-        ),
-        None => (String::new(), 0, ContentHint::NONE, ContentPurpose::Normal),
-    };
+    let field = field(app, w).unwrap_or_default();
     app.resource_mut::<KeyboardFocus>().focus(w);
     let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
     let ti = &mut *ti;
@@ -187,20 +181,46 @@ fn focus(app: &mut App, w: NodeId) {
     }
     ti.focused = Some(w);
     ti.pending = None;
-    if ti.entered && !ti.enabled {
-        ti.input.enable(&mut wl);
-        let (text, cursor) = cap(&text, cursor);
-        ti.input
-            .set_surrounding_text(&mut wl, &text, cursor as i32, cursor as i32);
-        // Tell the input method what kind of field this is so it can
-        // raise the right panel (e.g. a numeric keypad for `Pin`, a
-        // hidden-text keyboard for `Password`). Double-buffered like
-        // the surrounding text, so it lands with this `commit`.
-        ti.input
-            .set_content_type(&mut wl, wayland_hint(hint), wayland_purpose(purpose));
-        ti.input.commit(&mut wl);
-        ti.enabled = true;
+    if ti.entered {
+        enable(ti, &mut wl, &field);
     }
+}
+
+/// What the input method is told about a field.
+#[derive(Default)]
+struct Field {
+    /// The text, capped, and the cursor in it. `None` for a sensitive
+    /// field: its text is never sent.
+    surrounding: Option<(String, usize)>,
+    hint: ContentHint,
+    purpose: ContentPurpose,
+}
+
+fn field(app: &App, w: NodeId) -> Option<Field> {
+    let i = app.widget::<Input>(w)?;
+    Some(Field {
+        surrounding: (!i.is_sensitive()).then(|| cap(i.text(), i.cursor())),
+        hint: i.content_hint(),
+        purpose: i.content_purpose(),
+    })
+}
+
+/// The committed `enable`, with the field's text and kind. `enable` resets
+/// everything the input method knew, so all of it goes with it.
+fn enable(ti: &mut TextInput, wl: &mut Wayland, field: &Field) {
+    ti.input.enable(wl);
+    if let Some((text, cursor)) = &field.surrounding {
+        ti.input
+            .set_surrounding_text(wl, text, *cursor as i32, *cursor as i32);
+    }
+    // Tell the input method what kind of field this is so it can
+    // raise the right panel (e.g. a numeric keypad for `Pin`, a
+    // hidden-text keyboard for `Password`). Double-buffered like
+    // the surrounding text, so it lands with this `commit`.
+    ti.input
+        .set_content_type(wl, wayland_hint(field.hint), wayland_purpose(field.purpose));
+    ti.input.commit(wl);
+    ti.enabled = true;
 }
 
 /// Translate the widget's [`ContentHint`] (mirroring the protocol's
@@ -297,11 +317,11 @@ fn on_focus(app: &mut App, e: &Emitted<InputFocus>) {
 }
 
 /// Report the widget's current text and cursor back to the IM, with
-/// `cause`, committed. A no-op when not enabled or not entered.
+/// `cause`, committed. A no-op when not enabled or not entered, and for a
+/// sensitive field.
 fn report(app: &mut App, w: NodeId, cause: ZwpTextInputV3ChangeCause) {
-    let (text, cursor) = match app.widget::<Input>(w) {
-        Some(i) => cap(i.text(), i.cursor()),
-        None => return,
+    let Some((text, cursor)) = field(app, w).and_then(|f| f.surrounding) else {
+        return;
     };
     let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
     let ti = &mut *ti;

@@ -96,6 +96,7 @@ taffy = { version = "0.10.1", default-features = false, features = [
     "block_layout",
 ] }
 xkbcommon = "0.9"
+zeroize = "1.8"
 
 [profile.dev]
 debug = 1

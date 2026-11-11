@@ -25,6 +25,8 @@ fn main() {
         "protocols/text-input-unstable-v3.xml",
         "protocols/wlr-foreign-toplevel-management-unstable-v1.xml",
         "protocols/wlr-screencopy-unstable-v1.xml",
+        "protocols/ext-idle-notify-v1.xml",
+        "protocols/wlr-output-power-management-unstable-v1.xml",
         phosh.to_str().expect("utf-8 OUT_DIR"),
     ]);
 }

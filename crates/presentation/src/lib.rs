@@ -21,7 +21,9 @@
 //!   then it commits bare. The callback's `done` and a buffer's `release` each
 //!   try again.
 //! - A configure settles the size and, when the device size changed,
-//!   replaces the two slots, and always kicks. It must: `window` lets one
+//!   replaces the two slots and drops the outstanding callback (a hidden
+//!   surface may never get its `done`, and the new size must still be
+//!   committed), and always kicks. It must: `window` lets one
 //!   frame request stand until a `Frame` answers it, so a configure that
 //!   declined would strand the request the window's own content raised
 //!   before the compositor ever configured it, and nothing would ever
@@ -185,6 +187,15 @@ struct Entry {
     /// [`Surfaces::request_commit`]: the next `Frame` commits even with
     /// nothing to draw.
     commit_wanted: bool,
+}
+
+impl Entry {
+    /// Stop waiting for the frame callback; a late `done` finds no owner.
+    fn drop_callback(&mut self, owner: &mut HashMap<ObjectId, NodeId>) {
+        if let Some(callback) = self.callback.take() {
+            owner.remove(&callback.id());
+        }
+    }
 }
 
 /// Presentation's own state: one entry per window it put on screen, and
@@ -357,9 +368,7 @@ impl Surfaces {
                 entry.surface.attach(wl, None, 0, 0);
                 entry.surface.commit(wl);
                 entry.configured = false;
-                if let Some(cb) = entry.callback.take() {
-                    self.owner.remove(&cb.id());
-                }
+                entry.drop_callback(&mut self.owner);
                 if let Some(slots) = entry.slots.as_mut() {
                     for slot in &mut slots.slots {
                         slot.drawn = None;
@@ -812,7 +821,16 @@ fn replace_slots(
 }
 
 /// The shell configured `w`: settle the size, make slots if the device
-/// size changed, report `Resized`, and kick. The kick is unconditional
+/// size changed, report `Resized`, and kick.
+///
+/// A new device size also drops the outstanding frame callback: the
+/// configure must be answered with a buffer of the new size, and a
+/// compositor may never answer the callback of a surface it does not
+/// show (one occluded, or on an output that is off), which would leave
+/// the window drawn, and hit-tested, at its old size forever. A dropped
+/// callback that fires after all has no owner and is ignored.
+///
+/// The kick is unconditional
 /// because `window` swallows every `RequestFrame` while one is pending
 /// and only a `Frame` clears that bit: the request a window raises for
 /// its own content arrives before the first configure, so a configure
@@ -851,6 +869,7 @@ fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
             .as_ref()
             .is_none_or(|b| (b.width, b.height) != (dw, dh));
         if stale {
+            entry.drop_callback(&mut s.owner);
             replace_slots(
                 entry,
                 &mut s.owner,
@@ -1265,7 +1284,8 @@ fn on_removed(app: &mut App, _: &Removed) {
     let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
     let s = &mut *surfaces;
     for w in gone {
-        let entry = s.entries.remove(&w).unwrap();
+        let mut entry = s.entries.remove(&w).unwrap();
+        entry.drop_callback(&mut s.owner);
         match entry.shell {
             Shell::Toplevel { xdg, toplevel } => {
                 toplevel.destroy(&mut wl);
@@ -1283,8 +1303,5 @@ fn on_removed(app: &mut App, _: &Removed) {
         }
         entry.surface.destroy(&mut wl);
         s.owner.remove(&entry.surface.id());
-        if let Some(cb) = entry.callback {
-            s.owner.remove(&cb.id());
-        }
     }
 }

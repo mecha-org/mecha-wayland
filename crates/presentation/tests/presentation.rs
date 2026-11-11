@@ -1276,6 +1276,49 @@ fn frames_are_throttled_by_the_callback() {
 }
 
 #[test]
+fn a_resize_draws_without_waiting_for_the_outstanding_callback() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    configured(&mut f, 320, 200);
+    f.requests();
+    // The callback of the first frame is never answered, as for a
+    // surface the compositor does not show.
+    f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+        w.int(640);
+        w.int(480);
+        w.array(&[]);
+    });
+    f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(2));
+    f.turn();
+    f.app.tick();
+    f.turn();
+    assert_eq!(attaches(&mut f).len(), 1, "the new size is committed");
+
+    // The dropped callback firing after all changes nothing.
+    f.send(CALLBACK, ev::DONE, |w| w.uint(1));
+    f.turn();
+    assert!(attaches(&mut f).is_empty(), "nothing wanted");
+}
+
+#[test]
+fn a_same_size_configure_still_waits_for_the_callback() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    f.requests();
+    f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+        w.int(320);
+        w.int(200);
+        w.array(&[]);
+    });
+    f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(2));
+    repaint(&mut f, win);
+    f.turn();
+    assert!(attaches(&mut f).is_empty(), "the callback is outstanding");
+    f.send(CALLBACK, ev::DONE, |w| w.uint(1));
+    f.turn();
+    assert_eq!(attaches(&mut f).len(), 1);
+}
+
+#[test]
 fn changing_window_direction_keeps_the_configured_size_and_draws() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = configured(&mut f, 640, 480);

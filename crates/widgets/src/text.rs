@@ -313,7 +313,7 @@ fn shape(
             ));
         }
     }
-    let height = line.ascent - line.descent + line.gap;
+    let height = line.extent() + line.gap;
     (sprites, Size::new(width, height))
 }
 

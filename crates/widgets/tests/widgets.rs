@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use app::prelude::*;
 use atlas::prelude::*;
-use geometry::{Color, Corners, Rect};
+use geometry::{Color, Corners, Insets, Rect};
 use layout::prelude::*;
 use paint::prelude::*;
 use widgets::prelude::*;
@@ -975,4 +975,54 @@ fn return_in_a_multiline_input_is_a_line_break() {
     key(&mut app, field, interactivity::KeyMeaning::Enter);
     assert_eq!(app.widget::<Input>(field).unwrap().text(), "a\n");
     assert_eq!(SUBMITTED.with(|n| *n.borrow()), 0);
+}
+
+// ── input: caret ────────────────────────────────────────────────────────
+
+#[test]
+fn the_caret_follows_the_text_in_a_padded_input() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let parent = root(&mut app, 400.0, 100.0);
+    let field = app
+        .spawn(
+            parent,
+            input(font).size(20).style(
+                LayoutStyle::default()
+                    .row()
+                    .size(px(300.0), px(48.0))
+                    .padding(Insets::new(px(0.0), px(16.0), px(0.0), px(16.0))),
+            ),
+        )
+        .id();
+    app.tick();
+    app.emit(InputFocus { focused: true }, field);
+    press(&mut app, field, "ab");
+    app.tick();
+    // The text is the input's one Text; the caret its 1px-wide bar.
+    let text = app
+        .descendants(field)
+        .find(|&n| app.widget::<Text>(n).is_some())
+        .unwrap();
+    let caret = app
+        .descendants(field)
+        .find(|&n| {
+            app.widget::<Div>(n).is_some()
+                && app
+                    .component::<ComputedLayout>(n)
+                    .is_some_and(|l| l.rect.width() == 1.0)
+        })
+        .unwrap();
+    let (text, caret) = (rect(&app, text), rect(&app, caret));
+    assert!(text.x() >= 16.0, "the padding moves the text: {text:?}");
+    assert!(
+        (caret.x() - text.right()).abs() < 1.0,
+        "the caret ends the text: caret {caret:?}, text {text:?}"
+    );
+    let line = app.resource::<Atlas>().line(font, 20);
+    assert!(
+        (caret.y() - text.y()).abs() < 1.0
+            && (caret.height() - (line.ascent - line.descent)).abs() < 1.0,
+        "the caret starts with the text and is a line tall: caret {caret:?}, text {text:?}, {line:?}"
+    );
 }

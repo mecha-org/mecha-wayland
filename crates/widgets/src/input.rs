@@ -514,17 +514,22 @@ impl Widget for Input {
             container = container.background(bg);
         }
         let container = s.spawn(me, container);
-        let content = s.spawn(
+        // The text and its caret share a line box that starts where the
+        // text does, so the caret's offset is the text's own, whatever
+        // padding or border the container has.
+        let line = s.spawn(
             container,
-            text(b.font, b.text.clone()).size(b.px).color(b.color),
+            div().style(LayoutStyle::default().relative().row().shrink(0.0)),
         );
+        let content = s.spawn(line, text(b.font, b.text.clone()).size(b.px).color(b.color));
         // A static 1px caret, sized to the line, positioned over `content`
         // by `sync`'s `set_left`. Absolute so it never enters the flex flow.
         // Built with no paint: `sync` turns it on when the widget is
-        // focused, so it is invisible until then.
-        let line_height = s.resource::<Atlas>().line(b.font, b.px).ascent;
+        // focused, so it is invisible until then. It spans the letters,
+        // descenders included.
+        let line_height = s.resource::<Atlas>().line(b.font, b.px).extent();
         let caret = s.spawn(
-            container,
+            line,
             div().style(
                 LayoutStyle::default()
                     .absolute()

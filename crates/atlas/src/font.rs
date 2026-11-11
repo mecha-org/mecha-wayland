@@ -47,6 +47,14 @@ pub struct Line {
     pub gap: f32,
 }
 
+impl Line {
+    /// From the top of the tallest letter to the bottom of the lowest
+    /// descender: the letters' own box, without the gap to the next line.
+    pub fn extent(&self) -> f32 {
+        self.ascent - self.descent
+    }
+}
+
 const NONE: u32 = u32::MAX;
 
 /// One loaded font and its glyph index vectors.

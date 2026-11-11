@@ -241,7 +241,16 @@ pub struct Input {
     /// toggling a "show password" button sets it `true` to reveal the
     /// typed text. Has no effect when `HIDDENTEXT` is not set.
     unmasked: bool,
+    /// The text's colour, from `InputBuilder::color`; dimmed while
+    /// disabled.
+    color: Color,
+    /// Shown, dimmed, but takes no focus, presses, keys or edits.
+    disabled: bool,
 }
+
+/// How much of its colour a disabled field's text keeps, as a disabled
+/// button's label does.
+const DISABLED_OPACITY: f32 = 0.38;
 
 impl Input {
     /// The committed text, without any preedit.
@@ -253,6 +262,11 @@ impl Input {
     /// field keeps showing what was typed.
     pub fn secret(&self) -> Secret {
         Secret::from(self.string.as_bytes().to_vec())
+    }
+
+    /// Whether the field takes nothing: see [`InputContext::set_disabled`].
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
     }
 
     /// The cursor's byte offset in the text.
@@ -419,6 +433,9 @@ impl Event for InputSubmit {}
 /// turns into a surrounding-text report with `Other` as the cause, so
 /// the IME's picture of the text stays true across keyboard edits.
 fn on_key(ctx: &mut Context<'_, Input>, meaning: &KeyMeaning) {
+    if ctx.me().disabled {
+        return;
+    }
     if *meaning == KeyMeaning::Enter {
         if ctx.me().content_hint.contains(ContentHint::MULTILINE) {
             on_key(ctx, &KeyMeaning::Text("\n".into()));
@@ -616,13 +633,16 @@ impl Widget for Input {
             ),
         );
         s.on::<InputEdit>(me, |ctx, e| {
+            if ctx.me().disabled {
+                return;
+            }
             ctx.me().apply(e);
             sync(ctx);
         });
         s.on::<KeyPress>(me, |ctx, e| on_key(ctx, &e.meaning));
         s.on::<KeyRepeat>(me, |ctx, e| on_key(ctx, &e.meaning));
         s.on::<InputFocus>(me, |ctx, e| {
-            ctx.me().focused = e.focused;
+            ctx.me().focused = e.focused && !ctx.me().disabled;
             sync(ctx);
         });
         // A press on this widget is what focuses it, and where it lands
@@ -632,6 +652,9 @@ impl Widget for Input {
         // `InputFocus { focused: true }` that follows tells the
         // `text-input` crate to report the new cursor to the IM.
         s.on::<Press>(me, |ctx, e| {
+            if ctx.me().disabled {
+                return;
+            }
             let (content, font, font_px, string, hidden) = {
                 let me = ctx.me();
                 (
@@ -679,6 +702,8 @@ impl Widget for Input {
             content_hint: b.content_hint,
             content_purpose: b.content_purpose,
             unmasked: false,
+            color: b.color,
+            disabled: false,
         }
     }
 }
@@ -740,6 +765,11 @@ pub trait InputContext {
     /// (the default) masks each character as `•`, `true` reveals the
     /// typed text. A no-op for a non-hidden field. Resyncs the display.
     fn set_hidden(&mut self, hidden: bool);
+
+    /// Disable the field, or enable it again. Disabled, it keeps showing
+    /// its text, dimmed, and takes no focus, presses, keys or edits; a
+    /// focused field gives the focus up.
+    fn set_disabled(&mut self, disabled: bool);
 }
 
 impl InputContext for Context<'_, Input> {
@@ -763,5 +793,30 @@ impl InputContext for Context<'_, Input> {
     fn set_hidden(&mut self, hidden: bool) {
         self.me().unmasked = !hidden;
         sync(self);
+    }
+
+    fn set_disabled(&mut self, disabled: bool) {
+        if self.me().disabled == disabled {
+            return;
+        }
+        let (content, color, focused) = {
+            let me = self.me();
+            me.disabled = disabled;
+            (me.content, me.color, me.focused)
+        };
+        if let Some(mut f) = self.component_mut::<Focusable>() {
+            *f = Focusable(!disabled);
+        }
+        let color = if disabled {
+            color.with_alpha(color.a * DISABLED_OPACITY)
+        } else {
+            color
+        };
+        self.at(content).unwrap().set_color(color);
+        // The `text-input` crate blurs on this, and lets the keyboard
+        // focus go.
+        if disabled && focused {
+            self.emit(InputFocus { focused: false }, self.handle());
+        }
     }
 }

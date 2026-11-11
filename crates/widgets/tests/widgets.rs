@@ -1016,6 +1016,34 @@ fn take_text_hands_over_what_was_typed_and_empties_the_field() {
     assert_eq!((field.text(), field.cursor()), ("", 0));
 }
 
+#[test]
+fn a_disabled_field_keeps_its_text_and_takes_nothing() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field: Handle<Input> = app.spawn(root, input(font));
+    app.tick();
+    press(&mut app, field.id(), "ab");
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            ctx.at(field).unwrap().set_disabled(true);
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    press(&mut app, field.id(), "c");
+    let f = app.widget::<Input>(field.id()).unwrap();
+    assert!(f.is_disabled());
+    assert_eq!(f.text(), "ab", "keys go nowhere");
+    assert_eq!(f.secret().as_bytes(), b"ab");
+    assert_eq!(
+        app.component::<interactivity::Focusable>(field.id()),
+        Some(&interactivity::Focusable(false))
+    );
+}
+
 // ── input: caret ────────────────────────────────────────────────────────
 
 #[test]

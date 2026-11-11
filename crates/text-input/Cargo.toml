@@ -12,6 +12,7 @@ window.workspace = true
 
 [dev-dependencies]
 atlas.workspace = true
+geometry.workspace = true
 layout.workspace = true
 paint.workspace = true
 ring.workspace = true

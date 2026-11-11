@@ -859,6 +859,7 @@ version = "0.1.0"
 dependencies = [
  "app",
  "atlas",
+ "geometry",
  "interactivity",
  "layout",
  "paint",

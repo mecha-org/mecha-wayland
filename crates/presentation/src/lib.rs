@@ -4,8 +4,11 @@
 //! # Model
 //!
 //! - Every window gets a `wl_surface` and a shell role at its `Spawned`:
-//!   an xdg toplevel by default, or a layer surface when the spawn bundle
-//!   carries [`Role::Layer`]. The role is read once.
+//!   an xdg toplevel by default, a layer surface when the spawn bundle
+//!   carries [`Role::Layer`], or a session lock surface for
+//!   [`Role::Lock`] (see [`lock`]). The role is read once.
+//! - A toplevel or layer surface is committed empty at once, for its first
+//!   configure; a lock surface is not (see [`lock`]).
 //! - The shell's configure is acked and settled: the shell's size where
 //!   it gave one, else the window's `Layout`, else [`DEFAULT_SIZE`]; the
 //!   window hears `Resized`. `preferred_buffer_scale` becomes
@@ -103,12 +106,14 @@ use render::Scenes;
 use wayland::prelude::*;
 use window::prelude::*;
 
+pub mod lock;
 mod seat;
 mod slots;
 
 use seat::{Seat, on_keyboard, on_pointer, on_repeat_timer, on_seat, on_touch};
 use slots::Slots;
 
+pub use lock::{LockState, SessionLock, SessionLockFinished, SessionLocked};
 pub use wayland::{
     ZwlrLayerShellV1Layer as Layer, ZwlrLayerSurfaceV1Anchor as Anchor,
     ZwlrLayerSurfaceV1KeyboardInteractivity as KeyboardInteractivity,
@@ -116,8 +121,8 @@ pub use wayland::{
 
 pub mod prelude {
     pub use crate::{
-        Anchor, BUFFERS, DEFAULT_SIZE, KeyboardInteractivity, Layer, LayerRole, PresentationModule,
-        Role, Surfaces,
+        Anchor, BUFFERS, DEFAULT_SIZE, KeyboardInteractivity, Layer, LayerRole, LockState,
+        PresentationModule, Role, SessionLock, SessionLockFinished, SessionLocked, Surfaces,
     };
 }
 
@@ -141,6 +146,9 @@ pub enum Role {
     #[default]
     Toplevel,
     Layer(LayerRole),
+    /// The session lock's surface on this output. Spawn one per output
+    /// after [`Surfaces::lock`]; the compositor sizes it to the output.
+    Lock(WlOutput),
 }
 impl Component for Role {}
 
@@ -159,6 +167,7 @@ enum Shell {
         toplevel: XdgToplevel,
     },
     Layer(ZwlrLayerSurfaceV1),
+    Lock(ExtSessionLockSurfaceV1),
 }
 
 struct Entry {
@@ -570,8 +579,9 @@ impl Surfaces {
     }
 }
 
-/// Registers `Role`, inserts `Surfaces`, opens the GPU, binds the layer
-/// shell if the compositor offers one. Installs last of everything.
+/// Registers `Role`, inserts `Surfaces` and [`SessionLock`], opens the
+/// GPU, and binds the layer shell and the session lock manager if the
+/// compositor offers them. Installs last of everything.
 ///
 /// # Panics
 ///
@@ -628,7 +638,9 @@ impl Module for PresentationModule {
             formats: Formats::default(),
         });
         app.insert_resource(Seat::new(seat));
+        lock::install(app);
         app.system(on_spawned)
+            .system(on_lock_surface)
             .system(on_wm_base)
             .system(on_dmabuf)
             .system(on_seat)
@@ -709,6 +721,7 @@ fn on_spawned(app: &mut App, s: &Spawned) {
     };
     let compositor = *app.resource::<WlCompositor>();
     let wm_base = *app.resource::<XdgWmBase>();
+    let session_lock = app.resource::<SessionLock>().object();
 
     let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
     let surface = compositor.create_surface(&mut wl);
@@ -720,7 +733,7 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             }
             Some((l, requested))
         }
-        Role::Toplevel => None,
+        Role::Toplevel | Role::Lock(_) => None,
     };
     let shell = match role {
         Role::Toplevel => {
@@ -745,8 +758,21 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             surfaces.owner.insert(ls.id(), s.id);
             Shell::Layer(ls)
         }
+        Role::Lock(output) => {
+            let lock = session_lock.expect(
+                "presentation: a Role::Lock window needs the session lock: call SessionLock::lock first",
+            );
+            let ls = lock.get_lock_surface(&mut wl, surface, output);
+            surfaces.owner.insert(ls.id(), s.id);
+            Shell::Lock(ls)
+        }
     };
-    surface.commit(&mut wl);
+    // The initial commit asks an xdg or layer surface's first configure.
+    // A lock surface is configured as soon as it is made, and committing
+    // before acking that configure is a protocol error.
+    if !matches!(shell, Shell::Lock(_)) {
+        surface.commit(&mut wl);
+    }
     let hidden = surfaces.pending_hidden.remove(&s.id) && matches!(shell, Shell::Layer(_));
     surfaces.owner.insert(surface.id(), s.id);
     surfaces.entries.insert(
@@ -948,6 +974,21 @@ fn on_xdg_surface(app: &mut App, e: &XdgSurfaceEvent) {
     }
 }
 
+/// A layer or lock surface's configure: if the role object is one of
+/// ours, `ack` it and settle its window at `size`.
+fn ack_and_settle(app: &mut App, role: ObjectId, size: (u32, u32), ack: impl FnOnce(&mut Wayland)) {
+    let found = {
+        let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.entry_of(role).map(|(w, _)| {
+            ack(&mut wl);
+            w
+        })
+    };
+    if let Some(w) = found {
+        settle(app, w, (size.0 as i32, size.1 as i32));
+    }
+}
+
 fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
     match e {
         ZwlrLayerSurfaceV1Event::Configure {
@@ -955,18 +996,9 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
             serial,
             width,
             height,
-        } => {
-            let found = {
-                let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-                surfaces.entry_of(layer_surface.id()).map(|(w, _)| {
-                    layer_surface.ack_configure(&mut wl, *serial);
-                    w
-                })
-            };
-            if let Some(w) = found {
-                settle(app, w, (*width as i32, *height as i32));
-            }
-        }
+        } => ack_and_settle(app, layer_surface.id(), (*width, *height), |wl| {
+            layer_surface.ack_configure(wl, *serial)
+        }),
         ZwlrLayerSurfaceV1Event::Closed { layer_surface } => {
             if let Some(w) = app
                 .resource::<Surfaces>()
@@ -978,6 +1010,18 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
             }
         }
     }
+}
+
+fn on_lock_surface(app: &mut App, e: &ExtSessionLockSurfaceV1Event) {
+    let ExtSessionLockSurfaceV1Event::Configure {
+        session_lock_surface,
+        serial,
+        width,
+        height,
+    } = e;
+    ack_and_settle(app, session_lock_surface.id(), (*width, *height), |wl| {
+        session_lock_surface.ack_configure(wl, *serial)
+    });
 }
 
 fn on_frame_requested(app: &mut App, r: &FrameRequested) {
@@ -1294,6 +1338,10 @@ fn on_removed(app: &mut App, _: &Removed) {
                 s.owner.remove(&xdg.id());
             }
             Shell::Layer(ls) => {
+                ls.destroy(&mut wl);
+                s.owner.remove(&ls.id());
+            }
+            Shell::Lock(ls) => {
                 ls.destroy(&mut wl);
                 s.owner.remove(&ls.id());
             }

@@ -113,9 +113,11 @@ fn a_press_on_another_focusable_blurs_the_field() {
     assert_eq!(text_focus(&ui), None);
 }
 
-/// `zwp_text_input_v3`'s `set_surrounding_text` request and its `enter`
-/// event.
+/// `zwp_text_input_v3`'s `enable`, `set_surrounding_text` and
+/// `show_input_panel` requests, and its `enter` event.
+const ENABLE: u16 = 1;
 const SET_SURROUNDING_TEXT: u16 = 3;
+const SHOW_INPUT_PANEL: u16 = 9;
 const ENTER: u16 = 0;
 
 /// The text input's id, from the `get_text_input` that made it, and the
@@ -140,6 +142,10 @@ fn sent(ui: &mut Ui, id: u32, opcode: u16) -> usize {
         .iter()
         .filter(|r| r.sender == ObjectId(id) && r.opcode == opcode)
         .count()
+}
+
+fn enables(ui: &mut Ui, id: u32) -> usize {
+    sent(ui, id, ENABLE)
 }
 
 fn type_a(ui: &mut Ui) {
@@ -167,6 +173,46 @@ fn a_password_field_never_sends_its_text() {
             "{purpose:?}"
         );
     }
+}
+
+#[test]
+fn a_press_on_the_focused_field_enables_it_again_and_a_key_does_not() {
+    let mut ui = ui();
+    let id = enter(&mut ui);
+    press(&mut ui, 50.0, 20.0);
+    assert_eq!(enables(&mut ui, id), 1);
+
+    // The input method shows itself again, after the user hid it.
+    press(&mut ui, 50.0, 20.0);
+    assert_eq!(enables(&mut ui, id), 1);
+
+    // Typing on a hardware keyboard leaves a hidden one hidden.
+    type_a(&mut ui);
+    assert_eq!(enables(&mut ui, id), 0);
+    assert_eq!(ui.f.app.widget::<Input>(ui.field).unwrap().text(), "a");
+}
+
+#[test]
+fn from_version_2_a_press_on_the_focused_field_shows_the_panel_and_resets_nothing() {
+    let mut ui = ui_with(ContentPurpose::Normal, 2);
+    let id = enter(&mut ui);
+    press(&mut ui, 50.0, 20.0);
+    assert_eq!(enables(&mut ui, id), 1);
+
+    press(&mut ui, 50.0, 20.0);
+    ui.f.turn();
+    let sent: Vec<u16> =
+        ui.f.requests()
+            .iter()
+            .filter(|r| r.sender == ObjectId(id))
+            .map(|r| r.opcode)
+            .collect();
+    assert_eq!(
+        sent.iter().filter(|&&op| op == SHOW_INPUT_PANEL).count(),
+        1,
+        "{sent:?}"
+    );
+    assert!(!sent.contains(&ENABLE), "no reset: {sent:?}");
 }
 
 #[test]

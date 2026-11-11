@@ -25,7 +25,10 @@
 //!   blurs, with a committed `disable`, when the keyboard focus moves off
 //!   it: a press on another `Focusable` node, or its owner moving the
 //!   focus. A press on nothing focusable (a button, an OSK's keys)
-//!   leaves it focused. The surface focus the `Enter`/`Leave` events carry is the
+//!   leaves it focused. A press on the field already focused asks for the
+//!   input panel again, so an input method the user hid shows again:
+//!   `show_input_panel` where the compositor has version 2, else the
+//!   committed `enable` again. The surface focus the `Enter`/`Leave` events carry is the
 //!   compositor's business: a `Leave` only resets (the compositor
 //!   ignores our requests until the next `Enter` anyway) — and, not
 //!   being double-buffered, clears the widget's preedit immediately —
@@ -87,7 +90,7 @@
 //! ```
 
 use app::prelude::*;
-use interactivity::KeyboardFocus;
+use interactivity::{KeyboardFocus, Press};
 use wayland::prelude::*;
 use widgets::{ContentHint, ContentPurpose, Input, InputEdit, InputFocus};
 
@@ -158,6 +161,7 @@ impl Module for TextInputModule {
         app.system(on_text_input)
             .system(on_keyboard_focus)
             .system(on_focus)
+            .system(on_press)
             .system(on_edited)
             .system(on_removed);
     }
@@ -221,6 +225,39 @@ fn enable(ti: &mut TextInput, wl: &mut Wayland, field: &Field) {
         .set_content_type(wl, wayland_hint(field.hint), wayland_purpose(field.purpose));
     ti.input.commit(wl);
     ti.enabled = true;
+}
+
+/// The text-input version with `show_input_panel`.
+const SHOW_INPUT_PANEL_SINCE: u32 = 2;
+
+/// A press on the field that already has the text focus asks for the
+/// input panel (an on-screen keyboard) again, after the user hid it, say:
+/// `show_input_panel` from version 2, a hint that changes nothing else.
+/// Before it, the only way is `enable` again, which resets everything the
+/// input method knew, so the field's text and kind go with it. Only a
+/// press: a key edit sends the same `InputFocus` as a press does, and must
+/// not bring a hidden keyboard back.
+fn on_press(app: &mut App, e: &Emitted<Press>) {
+    let Some(w) = app.resource::<TextInput>().focused else {
+        return;
+    };
+    if !app.resource::<TextInput>().enabled || !e.targets.contains(&w) {
+        return;
+    }
+    let shows = {
+        let (ti, wl) = app.query::<(Res<TextInput>, Res<Wayland>)>();
+        wl.version(ti.input) >= SHOW_INPUT_PANEL_SINCE
+    };
+    if shows {
+        let (ti, mut wl) = app.query::<(Res<TextInput>, ResMut<Wayland>)>();
+        ti.input.show_input_panel(&mut wl);
+        return;
+    }
+    let Some(field) = field(app, w) else {
+        return;
+    };
+    let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
+    enable(&mut ti, &mut wl, &field);
 }
 
 /// Translate the widget's [`ContentHint`] (mirroring the protocol's

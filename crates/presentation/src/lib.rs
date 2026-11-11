@@ -599,14 +599,11 @@ impl Module for PresentationModule {
             app.resource::<Scenes>().buffers()
         );
         let device = Device::open(self.budget);
-        let layer_shell = app
-            .resource::<Globals>()
-            .find(ZwlrLayerShellV1::NAME)
-            .cloned()
-            .map(|g| {
-                let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-                globals.bind::<ZwlrLayerShellV1>(&g, &mut wl)
-            });
+        // Version 2 for `set_layer`.
+        let layer_shell = {
+            let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
+            globals.bind_if_offered(&mut wl, 2)
+        };
         app.register_component::<Role>().insert_resource(Surfaces {
             entries: HashMap::new(),
             pending_hidden: HashSet::new(),

@@ -133,19 +133,14 @@ pub struct TextInputModule;
 impl Module for TextInputModule {
     fn install(self, app: &mut App) {
         let seat = *app.resource::<WlSeat>();
-        let manager = {
-            let global = app
-                .resource::<Globals>()
-                .find(ZwpTextInputManagerV3::NAME)
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "text-input: the compositor does not advertise {}",
-                        ZwpTextInputManagerV3::NAME
-                    )
-                });
+        let manager: ZwpTextInputManagerV3 = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-            globals.bind::<ZwpTextInputManagerV3>(&global, &mut wl)
+            globals.bind_if_offered(&mut wl, 1).unwrap_or_else(|| {
+                panic!(
+                    "text-input: the compositor does not advertise {}",
+                    ZwpTextInputManagerV3::NAME
+                )
+            })
         };
         let input = {
             let mut wl = app.resource_mut::<Wayland>();

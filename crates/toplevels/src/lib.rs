@@ -144,24 +144,16 @@ pub struct ToplevelsModule;
 
 impl Module for ToplevelsModule {
     fn install(self, app: &mut App) {
-        let global = app
-            .resource::<Globals>()
-            .find(ZwlrForeignToplevelManagerV1::NAME)
-            .cloned();
-        let manager = global.map(|global| {
+        // The list needs only foreign-toplevel; without `phosh_private`
+        // new enough for thumbnails, there are just no previews.
+        let (manager, phosh): (Option<ZwlrForeignToplevelManagerV1>, Option<PhoshPrivate>) = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-            globals.bind::<ZwlrForeignToplevelManagerV1>(&global, &mut wl)
-        });
+            (
+                globals.bind_if_offered(&mut wl, 1),
+                globals.bind_if_offered(&mut wl, thumbnail::MIN_VERSION),
+            )
+        };
         let available = manager.is_some();
-        let phosh = app
-            .resource::<Globals>()
-            .find(PhoshPrivate::NAME)
-            .filter(|g| g.version >= thumbnail::MIN_VERSION)
-            .cloned()
-            .map(|global| {
-                let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-                globals.bind::<PhoshPrivate>(&global, &mut wl)
-            });
         app.insert_resource(Toplevels {
             manager,
             phosh,

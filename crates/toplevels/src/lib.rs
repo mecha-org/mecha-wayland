@@ -54,6 +54,8 @@ pub struct ToplevelInfo {
     pub title: String,
     pub app_id: String,
     pub activated: bool,
+    /// Fullscreen, as the compositor reports it (protocol version 2 on).
+    pub fullscreen: bool,
     pub parent: Option<ToplevelId>,
     /// A counter bumped at each `done` that newly reports `activated`;
     /// 0 means never activated.
@@ -71,6 +73,7 @@ struct Pending {
     title: String,
     app_id: String,
     activated: bool,
+    fullscreen: bool,
     parent: Option<ToplevelId>,
 }
 
@@ -179,6 +182,7 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     title: String::new(),
                     app_id: String::new(),
                     activated: false,
+                    fullscreen: false,
                     parent: None,
                     last_activated: 0,
                 },
@@ -186,6 +190,7 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     title: String::new(),
                     app_id: String::new(),
                     activated: false,
+                    fullscreen: false,
                     parent: None,
                 },
                 mapped: false,
@@ -241,13 +246,16 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
             foreign_toplevel_handle: h,
             state,
         } => {
-            let activated = state.chunks_exact(4).any(|c| {
-                let v = u32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                ZwlrForeignToplevelHandleV1State::try_from(v)
-                    == Ok(ZwlrForeignToplevelHandleV1State::Activated)
-            });
+            let has = |wanted| {
+                state.as_chunks::<4>().0.iter().any(|c| {
+                    ZwlrForeignToplevelHandleV1State::try_from(u32::from_ne_bytes(*c)) == Ok(wanted)
+                })
+            };
+            let activated = has(ZwlrForeignToplevelHandleV1State::Activated);
+            let fullscreen = has(ZwlrForeignToplevelHandleV1State::Fullscreen);
             if let Some(e) = t.entry(ToplevelId(*h)) {
                 e.pending.activated = activated;
+                e.pending.fullscreen = fullscreen;
             }
         }
         E::Parent {
@@ -271,6 +279,7 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
                     title: p.title.clone(),
                     app_id: p.app_id.clone(),
                     activated: p.activated,
+                    fullscreen: p.fullscreen,
                     parent: p.parent,
                     last_activated: if newly { stamp } else { e.info.last_activated },
                 };

@@ -65,6 +65,11 @@ fn state(f: &mut Fake, id: u32, activated: bool) {
         }
     });
 }
+/// A `state` event carrying these raw state values.
+fn states(f: &mut Fake, id: u32, values: &[u32]) {
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
+    f.send(id, EV_STATE, |w| w.array(&bytes));
+}
 fn done(f: &mut Fake, id: u32) {
     f.send(id, EV_DONE, |_| {});
 }
@@ -99,6 +104,23 @@ fn a_toplevel_appears_after_done() {
     assert!(!all[0].activated);
     assert_eq!(all[0].last_activated, 0);
     assert_eq!(changes(&f), 1);
+}
+
+#[test]
+fn fullscreen_state_is_reported_and_cleared() {
+    // wlr state values: 2 activated, 3 fullscreen.
+    let mut f = fake();
+    open(&mut f, A);
+    states(&mut f, A, &[2, 3]);
+    done(&mut f, A);
+    settle(&mut f);
+    let a = get(&f, A);
+    assert!(a.activated && a.fullscreen);
+    states(&mut f, A, &[2]);
+    done(&mut f, A);
+    settle(&mut f);
+    let a = get(&f, A);
+    assert!(a.activated && !a.fullscreen);
 }
 
 #[test]

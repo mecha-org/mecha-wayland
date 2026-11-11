@@ -72,6 +72,13 @@ impl SliderSize {
             SliderOrientation::Vertical => (self.height(), self.width()),
         }
     }
+
+    /// [`tick_size`](Self::tick_size) as `px` layout values.
+    #[inline]
+    pub fn tick_size_val(self, orientation: SliderOrientation) -> (Val, Val) {
+        let (w, h) = self.tick_size(orientation);
+        (px(w), px(h))
+    }
 }
 
 /// Default track length.
@@ -99,28 +106,59 @@ fn tick_span(n: usize, tick: f32, gap: f32) -> f32 {
     }
 }
 
-/// Size and spacing of the tick divs.
+/// Resolves a tick dimension to px. `percent` is of `parent` (the slider's
+/// content box on that axis); `auto` falls back to `default`.
+fn resolve_val(v: Val, parent: f32, default: f32) -> f32 {
+    let r = match v {
+        Val::Px(p) => p,
+        Val::Percent(p) => parent * p / 100.0,
+        Val::Auto => default,
+    };
+    if r.is_finite() { r.max(0.0) } else { 0.0 }
+}
+
+/// Size and spacing of the tick divs. Width and height are `px` or
+/// `percent` of the slider's content box; `auto` uses the size variant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TickSpec {
-    width: f32,
-    height: f32,
-    // Horizontal cross-axis override only; main-axis arithmetic stays in pixels.
-    relative_height: Option<Val>,
+    width: Val,
+    height: Val,
     gap: f32,
     radius: f32,
+    size: SliderSize,
 }
 
 impl TickSpec {
     /// Number of ticks that fit in `length` px along the main axis.
     fn count_in(self, length: f32, orientation: SliderOrientation) -> usize {
-        tick_count(length, self.extent(orientation), self.gap)
+        tick_count(length, self.extent(orientation, length), self.gap)
     }
 
-    /// Main-axis size of one tick.
-    fn extent(self, orientation: SliderOrientation) -> f32 {
-        match orientation {
-            SliderOrientation::Horizontal => self.width,
-            SliderOrientation::Vertical => self.height,
+    /// Main-axis size of one tick in px, for a track `length` px long.
+    ///
+    /// Snapped to whole pixels: layout rounds each tick's position, so a
+    /// fractional size (e.g. 1% of 384 px = 3.84 px) would land each tick
+    /// on the pixel grid differently and draw some 3 px and some 4 px wide.
+    /// A visible tick never snaps below 1 px.
+    fn extent(self, orientation: SliderOrientation, length: f32) -> f32 {
+        let (main, default) = match orientation {
+            SliderOrientation::Horizontal => (self.width, self.size.width()),
+            SliderOrientation::Vertical => (self.height, self.size.width()),
+        };
+        let r = resolve_val(main, length, default);
+        if r > 0.0 { r.round().max(1.0) } else { 0.0 }
+    }
+
+    /// Cross-axis size of one tick. Left to layout so `percent` tracks the
+    /// slider's cross size; `auto` uses the size variant.
+    fn cross(self, orientation: SliderOrientation) -> Val {
+        let cross = match orientation {
+            SliderOrientation::Horizontal => self.height,
+            SliderOrientation::Vertical => self.width,
+        };
+        match cross {
+            Val::Auto => px(self.size.height()),
+            v => v,
         }
     }
 }
@@ -147,13 +185,15 @@ pub struct SliderBuilder {
     /// Track length along the main axis: width when horizontal, height when vertical.
     /// `px` or `percent` (of the parent); `auto` leaves the axis to [`style`](Self::style).
     pub length: Val,
-    pub tick_gap: f32,
-    pub tick_radius: f32,
-    pub tick_width: f32,
-    pub tick_height: f32,
-    /// Optional horizontal tick height relative to the track's content box.
-    /// See [`tick_height_relative`](Self::tick_height_relative).
-    pub tick_height_relative: Option<Val>,
+    /// Overrides below are `None` until set; unset ones come from
+    /// [`size`](Self::size) and [`orientation`](Self::orientation) at build
+    /// time, so the builder calls can go in any order.
+    pub tick_gap: Option<f32>,
+    pub tick_radius: Option<f32>,
+    /// On-screen tick width: `px`, or `percent` of the slider's content width.
+    pub tick_width: Option<Val>,
+    /// On-screen tick height: `px`, or `percent` of the slider's content height.
+    pub tick_height: Option<Val>,
     pub active_color: Option<ColorSource>,
     pub inactive_color: Option<ColorSource>,
     pub style: Option<LayoutStyle>,
@@ -168,19 +208,16 @@ impl Default for SliderBuilder {
 
 impl SliderBuilder {
     pub fn new() -> Self {
-        let size = SliderSize::Medium;
-        let (tick_width, tick_height) = size.tick_size(SliderOrientation::Horizontal);
         Self {
-            size,
+            size: SliderSize::Medium,
             value: 0.0,
             min: 0.0,
             max: 1.0,
             length: DEFAULT_LENGTH,
-            tick_gap: size.gap(),
-            tick_radius: size.radius(),
-            tick_width,
-            tick_height,
-            tick_height_relative: None,
+            tick_gap: None,
+            tick_radius: None,
+            tick_width: None,
+            tick_height: None,
             active_color: None,
             inactive_color: None,
             style: None,
@@ -188,15 +225,10 @@ impl SliderBuilder {
         }
     }
 
-    /// Sets the slider size variant and updates tick dimensions, gap, and radius.
+    /// Sets the size variant: the default tick size, gap and radius. Tick
+    /// values set explicitly win, whichever order the calls are made in.
     pub fn size(mut self, size: SliderSize) -> Self {
         self.size = size;
-        let (w, h) = size.tick_size(self.orientation);
-        self.tick_width = w;
-        self.tick_height = h;
-        self.tick_height_relative = None;
-        self.tick_gap = size.gap();
-        self.tick_radius = size.radius();
         self
     }
 
@@ -205,19 +237,21 @@ impl SliderBuilder {
         self.size(variant)
     }
 
-    pub fn horizontal(mut self) -> Self {
-        if self.orientation == SliderOrientation::Vertical {
-            self.orientation = SliderOrientation::Horizontal;
-            std::mem::swap(&mut self.tick_width, &mut self.tick_height);
-        }
-        self
+    /// Lays the track out left to right. The default tick size is thin
+    /// along the track and the variant height across it; an explicit
+    /// [`tick_width`](Self::tick_width) / [`tick_height`](Self::tick_height)
+    /// is kept as given.
+    pub fn horizontal(self) -> Self {
+        self.orientation(SliderOrientation::Horizontal)
     }
 
-    pub fn vertical(mut self) -> Self {
-        if self.orientation == SliderOrientation::Horizontal {
-            self.orientation = SliderOrientation::Vertical;
-            std::mem::swap(&mut self.tick_width, &mut self.tick_height);
-        }
+    /// Lays the track out bottom to top. See [`horizontal`](Self::horizontal).
+    pub fn vertical(self) -> Self {
+        self.orientation(SliderOrientation::Vertical)
+    }
+
+    pub fn orientation(mut self, orientation: SliderOrientation) -> Self {
+        self.orientation = orientation;
         self
     }
 
@@ -251,16 +285,16 @@ impl SliderBuilder {
         self
     }
 
+    /// The tick settings in effect: each override, else the size variant's
+    /// default for the orientation.
     fn tick_spec(&self) -> TickSpec {
+        let (w, h) = self.size.tick_size_val(self.orientation);
         TickSpec {
-            width: self.tick_width,
-            height: self.tick_height,
-            relative_height: match self.orientation {
-                SliderOrientation::Horizontal => self.tick_height_relative,
-                SliderOrientation::Vertical => None,
-            },
-            gap: self.tick_gap,
-            radius: self.tick_radius,
+            width: self.tick_width.unwrap_or(w),
+            height: self.tick_height.unwrap_or(h),
+            gap: self.tick_gap.unwrap_or(self.size.gap()),
+            radius: self.tick_radius.unwrap_or(self.size.radius()),
+            size: self.size,
         }
     }
 
@@ -274,48 +308,36 @@ impl SliderBuilder {
     }
 
     pub fn tick_gap(mut self, gap: f32) -> Self {
-        self.tick_gap = gap;
+        self.tick_gap = Some(gap);
         self
     }
 
     pub fn tick_radius(mut self, radius: f32) -> Self {
-        self.tick_radius = radius;
+        self.tick_radius = Some(radius);
         self
     }
 
-    pub fn tick_width(mut self, width: f32) -> Self {
-        self.tick_width = width;
+    /// Tick width, e.g. `px(2.0)` or `percent(1.0)` (of the slider's content
+    /// width). Re-resolved whenever the slider's layout changes.
+    pub fn tick_width(mut self, width: Val) -> Self {
+        self.tick_width = Some(width);
         self
     }
 
-    pub fn tick_height(mut self, height: f32) -> Self {
-        self.tick_height = height;
-        self.tick_height_relative = None;
-        self
-    }
-
-    /// Sets the layout height of ticks in a **horizontal** slider.
+    /// Tick height, e.g. `px(40.0)` or `percent(100.0)` (of the slider's
+    /// content height). Re-resolved whenever the slider's layout changes.
     ///
-    /// `percent(100.0)` fills the slider track's content height; `percent(50.0)`
-    /// fills half, centered vertically. Give the track a height through
-    /// [`style`](Self::style), e.g. `.height(percent(100.0))` inside a sized row.
-    /// An auto-height track that derives its height from its ticks cannot provide
-    /// a meaningful percentage basis.
-    ///
-    /// `px(...)` sets a fixed layout height; `auto()` clears the override.
-    /// [`tick_height`](Self::tick_height), [`tick_size`](Self::tick_size), and
-    /// [`size`](Self::size) also clear it. Vertical sliders ignore this override
-    /// and retain their pixel tick dimensions, regardless of builder call order.
-    /// Tick width, count, and pointer-to-value mapping are unaffected.
-    pub fn tick_height_relative(mut self, height: Val) -> Self {
-        self.tick_height_relative = (height != Val::Auto).then_some(height);
+    /// A cross-axis `percent` needs the slider to have a definite cross size
+    /// (set it via [`style`](Self::style)); otherwise it resolves to `0`.
+    pub fn tick_height(mut self, height: Val) -> Self {
+        self.tick_height = Some(height);
         self
     }
 
-    pub fn tick_size(mut self, width: f32, height: f32) -> Self {
-        self.tick_width = width;
-        self.tick_height = height;
-        self.tick_height_relative = None;
+    /// Sets [`tick_width`](Self::tick_width) and [`tick_height`](Self::tick_height).
+    pub fn tick_size(mut self, width: Val, height: Val) -> Self {
+        self.tick_width = Some(width);
+        self.tick_height = Some(height);
         self
     }
 
@@ -335,19 +357,21 @@ impl SliderBuilder {
     }
 }
 
+/// A spawned slider. Its state is read through the getters here and
+/// changed through [`SliderContextExt`], which keeps the ticks in sync.
 pub struct Slider {
-    pub size: SliderSize,
-    pub value: f32,
-    pub min: f32,
-    pub max: f32,
-    /// Number of ticks, derived from the laid-out track length. `0` before
-    /// the first layout of a `percent` / `auto` length, or when not even
-    /// one tick fits.
-    pub tick_count: usize,
-    pub active_color: Option<ColorSource>,
-    pub inactive_color: Option<ColorSource>,
-    pub orientation: SliderOrientation,
+    size: SliderSize,
+    value: f32,
+    min: f32,
+    max: f32,
+    /// Derived from the laid-out track length; see [`tick_count`](Self::tick_count).
+    tick_count: usize,
+    active_color: Option<ColorSource>,
+    inactive_color: Option<ColorSource>,
+    orientation: SliderOrientation,
     tick: TickSpec,
+    /// Main-axis size of one tick in px, resolved against the laid-out track.
+    extent: f32,
     pub(crate) ticks: Vec<Handle<Div>>,
     /// The contact currently dragging the slider, if any.
     pub(crate) dragging: Option<ContactId>,
@@ -366,6 +390,47 @@ impl Slider {
         self.size
     }
 
+    /// Current value, within `[min, max]`.
+    #[inline]
+    pub fn value(&self) -> f32 {
+        self.value
+    }
+
+    #[inline]
+    pub fn min(&self) -> f32 {
+        self.min
+    }
+
+    #[inline]
+    pub fn max(&self) -> f32 {
+        self.max
+    }
+
+    #[inline]
+    pub fn orientation(&self) -> SliderOrientation {
+        self.orientation
+    }
+
+    /// Number of ticks, derived from the laid-out track length. `0` before
+    /// the first layout of a `percent` / `auto` length, or when not even
+    /// one tick fits.
+    #[inline]
+    pub fn tick_count(&self) -> usize {
+        self.tick_count
+    }
+
+    /// The active-color override, `None` for the theme default.
+    #[inline]
+    pub fn active_color(&self) -> Option<ColorSource> {
+        self.active_color
+    }
+
+    /// The inactive-color override, `None` for the theme default.
+    #[inline]
+    pub fn inactive_color(&self) -> Option<ColorSource> {
+        self.inactive_color
+    }
+
     /// Position of `value` within `[min, max]`, in `0.0..=1.0`.
     #[inline]
     pub fn fraction(&self) -> f32 {
@@ -382,14 +447,14 @@ impl Slider {
     }
 
     /// Number of lit ticks for the current value, in `0..=tick_count`.
-    #[inline]
     ///
     /// The value's position along the ticks is `fraction * span`; a tick is
     /// lit once that position reaches its centre, so the lit ticks follow
     /// the pointer exactly. `min` lights none, `max` lights all.
+    #[inline]
     pub fn lit_ticks(&self) -> usize {
         let n = self.tick_count;
-        let extent = self.tick.extent(self.orientation);
+        let extent = self.extent;
         let pitch = extent + self.tick.gap.max(0.0);
         if n == 0 || pitch <= 0.0 {
             return 0;
@@ -407,11 +472,7 @@ impl Slider {
     /// when horizontal or the bottom when vertical. `None` when there are no
     /// ticks to measure against.
     fn fraction_at(&self, content: Rect, pos: Point) -> Option<f32> {
-        let span = tick_span(
-            self.tick_count,
-            self.tick.extent(self.orientation),
-            self.tick.gap,
-        );
+        let span = tick_span(self.tick_count, self.extent, self.tick.gap);
         if span <= 0.0 || !span.is_finite() {
             return None;
         }
@@ -478,6 +539,11 @@ impl Widget for Slider {
     fn build(b: SliderBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         let tick_count = b.tick_count().unwrap_or(0);
         let tick = b.tick_spec();
+        // Known up front only for a `px` length; otherwise set by `fit_ticks`.
+        let extent = match b.length {
+            Val::Px(length) => tick.extent(b.orientation, length),
+            _ => 0.0,
+        };
         // Ticks pack from the start (left / bottom); leftover space stays at the end.
         let mut style = b
             .style
@@ -486,7 +552,7 @@ impl Widget for Slider {
             .align_items(Align::Center);
         match b.orientation {
             SliderOrientation::Horizontal => {
-                style = style.row().column_gap(px(b.tick_gap)).min_width(px(0.0));
+                style = style.row().column_gap(px(tick.gap)).min_width(px(0.0));
                 if b.length != Val::Auto {
                     style = style.width(b.length);
                 }
@@ -494,7 +560,7 @@ impl Widget for Slider {
             SliderOrientation::Vertical => {
                 style = style
                     .column_reverse()
-                    .row_gap(px(b.tick_gap))
+                    .row_gap(px(tick.gap))
                     .min_height(px(0.0));
                 if b.length != Val::Auto {
                     style = style.height(b.length);
@@ -513,6 +579,7 @@ impl Widget for Slider {
             inactive_color: b.inactive_color,
             orientation: b.orientation,
             tick,
+            extent,
             ticks: Vec::new(),
             dragging: None,
         };
@@ -521,7 +588,10 @@ impl Widget for Slider {
         let (active, inactive) = tick_colors(b.active_color, b.inactive_color, s);
         let lit = slider.lit_ticks();
         slider.ticks = (0..slider.tick_count)
-            .map(|i| s.spawn(me, tick_div(tick, if i < lit { active } else { inactive })))
+            .map(|i| {
+                let color = if i < lit { active } else { inactive };
+                s.spawn(me, tick_div(tick, b.orientation, extent, color))
+            })
             .collect();
 
         s.on::<OnChanged<ComputedLayout>>(me, |ctx, _| fit_ticks(ctx));
@@ -535,14 +605,24 @@ impl Widget for Slider {
     }
 }
 
-fn tick_div(tick: TickSpec, color: Color) -> widgets::DivBuilder {
+/// Layout of one tick: the main axis in resolved px (so the count always
+/// fits the track exactly), the cross axis left to layout.
+fn tick_style(tick: TickSpec, orientation: SliderOrientation, extent: f32) -> LayoutStyle {
+    let (w, h) = match orientation {
+        SliderOrientation::Horizontal => (px(extent), tick.cross(orientation)),
+        SliderOrientation::Vertical => (tick.cross(orientation), px(extent)),
+    };
+    LayoutStyle::default().width(w).height(h).shrink(0.0)
+}
+
+fn tick_div(
+    tick: TickSpec,
+    orientation: SliderOrientation,
+    extent: f32,
+    color: Color,
+) -> widgets::DivBuilder {
     div()
-        .style(
-            LayoutStyle::default()
-                .width(px(tick.width))
-                .height(tick.relative_height.unwrap_or(px(tick.height)))
-                .shrink(0.0),
-        )
+        .style(tick_style(tick, orientation, extent))
         .radius(tick.radius)
         .background(color)
 }
@@ -561,9 +641,30 @@ fn fit_ticks(ctx: &mut Context<'_, Slider>) {
         SliderOrientation::Horizontal => content.width(),
         SliderOrientation::Vertical => content.height(),
     };
-    let want = tick.count_in(length, orientation);
+    let extent = tick.extent(orientation, length);
+    let want = tick_count(length, extent, tick.gap);
+
+    // A `percent` tick resizes with the track: restyle the existing ticks.
+    let resized = ctx.me().extent != extent;
+    if resized {
+        ctx.me().extent = extent;
+        let style = tick_style(tick, orientation, extent);
+        let ticks = ctx.me().ticks.clone();
+        for t in ticks {
+            if let Some(mut c) = ctx.at(t)
+                && let Some(mut s) = c.component_mut::<LayoutStyle>()
+            {
+                *s = style.clone();
+            }
+        }
+    }
+
     let have = ctx.me().ticks.len();
     if want == have {
+        if resized {
+            // Same count, but the lit ticks depend on the tick extent.
+            sync_ticks(ctx);
+        }
         return;
     }
 
@@ -577,7 +678,7 @@ fn fit_ticks(ctx: &mut Context<'_, Slider>) {
         // Colored by `sync_ticks` below.
         let placeholder = Color::TRANSPARENT;
         for _ in have..want {
-            let t = ctx.spawn(me, tick_div(tick, placeholder));
+            let t = ctx.spawn(me, tick_div(tick, orientation, extent, placeholder));
             ctx.me().ticks.push(t);
         }
     }
@@ -733,6 +834,7 @@ mod tests {
             inactive_color: None,
             orientation: SliderOrientation::Horizontal,
             tick: slider().tick_spec(),
+            extent: 2.0,
             ticks: vec![],
             dragging: None,
         }
@@ -893,57 +995,71 @@ mod tests {
         // Percent lengths are counted after layout.
         assert_eq!(slider().length(layout::percent(50.0)).tick_count(), None);
         assert_eq!(b.size, SliderSize::Medium);
-        assert_eq!(b.tick_width, 2.0);
-        assert_eq!(b.tick_height, 40.0);
-        assert_eq!(b.tick_gap, 4.0);
+        assert_eq!(b.tick_spec().width, px(2.0));
+        assert_eq!(b.tick_spec().height, px(40.0));
+        assert_eq!(b.tick_spec().gap, 4.0);
         assert_eq!(b.orientation, SliderOrientation::Horizontal);
 
         let bv = slider().vertical();
         assert_eq!(bv.orientation, SliderOrientation::Vertical);
-        assert_eq!(bv.tick_width, 40.0);
-        assert_eq!(bv.tick_height, 2.0);
+        assert_eq!(bv.tick_spec().width, px(40.0));
+        assert_eq!(bv.tick_spec().height, px(2.0));
 
         let bh = slider().vertical().horizontal();
         assert_eq!(bh.orientation, SliderOrientation::Horizontal);
-        assert_eq!(bh.tick_width, 2.0);
-        assert_eq!(bh.tick_height, 40.0);
+        assert_eq!(bh.tick_spec().width, px(2.0));
+        assert_eq!(bh.tick_spec().height, px(40.0));
 
-        let custom = slider().tick_size(4.0, 32.0);
-        assert_eq!(custom.tick_width, 4.0);
-        assert_eq!(custom.tick_height, 32.0);
+        let custom = slider().tick_size(px(4.0), px(32.0));
+        assert_eq!(custom.tick_spec().width, px(4.0));
+        assert_eq!(custom.tick_spec().height, px(32.0));
+
+        // Percent tick width resolves against a px length up front:
+        // 1% of 300 = 3 px ticks, 4 px gap -> (300 + 4) / 7 = 43 ticks.
+        let pct = slider().length(px(300.0)).tick_width(layout::percent(1.0));
+        assert_eq!(pct.tick_count(), Some(43));
+
+        // Fractional tick sizes snap to whole pixels so every tick draws
+        // the same width: 1% of 384 = 3.84 -> 4 px; 0.1% of 300 = 0.3 -> 1 px.
+        let spec = slider().tick_width(layout::percent(1.0)).tick_spec();
+        assert_eq!(spec.extent(SliderOrientation::Horizontal, 384.0), 4.0);
+        let spec = slider().tick_width(layout::percent(0.1)).tick_spec();
+        assert_eq!(spec.extent(SliderOrientation::Horizontal, 300.0), 1.0);
+        let spec = slider().tick_width(px(0.0)).tick_spec();
+        assert_eq!(spec.extent(SliderOrientation::Horizontal, 300.0), 0.0);
     }
 
     #[test]
     fn slider_size_and_variants() {
         let xs = slider().size(SliderSize::XSmall);
         assert_eq!(xs.size, SliderSize::XSmall);
-        assert_eq!(xs.tick_height, 16.0);
-        assert_eq!(xs.tick_width, 2.0);
-        assert_eq!(xs.tick_gap, 4.0);
+        assert_eq!(xs.tick_spec().height, px(16.0));
+        assert_eq!(xs.tick_spec().width, px(2.0));
+        assert_eq!(xs.tick_spec().gap, 4.0);
 
         let sm = slider().size(SliderSize::Small);
         assert_eq!(sm.size, SliderSize::Small);
-        assert_eq!(sm.tick_height, 24.0);
-        assert_eq!(sm.tick_width, 2.0);
-        assert_eq!(sm.tick_gap, 4.0);
+        assert_eq!(sm.tick_spec().height, px(24.0));
+        assert_eq!(sm.tick_spec().width, px(2.0));
+        assert_eq!(sm.tick_spec().gap, 4.0);
 
         let md = slider().size(SliderSize::Medium);
         assert_eq!(md.size, SliderSize::Medium);
-        assert_eq!(md.tick_height, 40.0);
-        assert_eq!(md.tick_width, 2.0);
-        assert_eq!(md.tick_gap, 4.0);
+        assert_eq!(md.tick_spec().height, px(40.0));
+        assert_eq!(md.tick_spec().width, px(2.0));
+        assert_eq!(md.tick_spec().gap, 4.0);
 
         let lg = slider().size(SliderSize::Large);
         assert_eq!(lg.size, SliderSize::Large);
-        assert_eq!(lg.tick_height, 56.0);
-        assert_eq!(lg.tick_width, 2.0);
-        assert_eq!(lg.tick_gap, 4.0);
+        assert_eq!(lg.tick_spec().height, px(56.0));
+        assert_eq!(lg.tick_spec().width, px(2.0));
+        assert_eq!(lg.tick_spec().gap, 4.0);
 
         let xl = slider().size(SliderSize::XLarge);
         assert_eq!(xl.size, SliderSize::XLarge);
-        assert_eq!(xl.tick_height, 96.0);
-        assert_eq!(xl.tick_width, 2.0);
-        assert_eq!(xl.tick_gap, 4.0);
+        assert_eq!(xl.tick_spec().height, px(96.0));
+        assert_eq!(xl.tick_spec().width, px(2.0));
+        assert_eq!(xl.tick_spec().gap, 4.0);
 
         // variant method alias
         let v = slider().variant(SliderVariant::Large);
@@ -952,14 +1068,72 @@ mod tests {
         // vertical orientation with specific size: swap width and height
         let v_lg = slider().size(SliderSize::Large).vertical();
         assert_eq!(v_lg.orientation, SliderOrientation::Vertical);
-        assert_eq!(v_lg.tick_width, 56.0);
-        assert_eq!(v_lg.tick_height, 2.0);
+        assert_eq!(v_lg.tick_spec().width, px(56.0));
+        assert_eq!(v_lg.tick_spec().height, px(2.0));
 
         // setting size after setting vertical orientation: swap width and height
         let v_lg2 = slider().vertical().size(SliderSize::Large);
         assert_eq!(v_lg2.orientation, SliderOrientation::Vertical);
-        assert_eq!(v_lg2.tick_width, 56.0);
-        assert_eq!(v_lg2.tick_height, 2.0);
+        assert_eq!(v_lg2.tick_spec().width, px(56.0));
+        assert_eq!(v_lg2.tick_spec().height, px(2.0));
+    }
+
+    #[test]
+    fn builder_overrides_are_order_independent() {
+        // An explicit tick size survives a later `size` or orientation change.
+        let a = slider()
+            .tick_width(px(4.0))
+            .tick_gap(8.0)
+            .size(SliderSize::Large)
+            .vertical();
+        let b = slider()
+            .vertical()
+            .size(SliderSize::Large)
+            .tick_gap(8.0)
+            .tick_width(px(4.0));
+        assert_eq!(a.tick_spec(), b.tick_spec());
+        // Width as given; height is the vertical default (thin along the track).
+        assert_eq!((a.tick_spec().width, a.tick_spec().height), (px(4.0), px(2.0)));
+        assert_eq!(a.tick_spec().gap, 8.0);
+        assert_eq!(b.tick_spec().gap, 8.0);
+
+        let r = slider().tick_radius(3.0).size(SliderSize::XSmall);
+        assert_eq!(r.tick_spec().radius, 3.0);
+        assert_eq!((r.tick_spec().width, r.tick_spec().height), (px(2.0), px(16.0)));
+
+        // Flipping orientation twice is a no-op for overrides.
+        let f = slider().tick_height(px(30.0)).vertical().horizontal();
+        assert_eq!((f.tick_spec().width, f.tick_spec().height), (px(2.0), px(30.0)));
+    }
+
+    #[test]
+    fn spawned_slider_exposes_state_through_getters() {
+        use app::App;
+        use theme::MechanixTheme;
+
+        let mut app = App::new();
+        app.add_module(layout::LayoutModule)
+            .add_module(paint::PaintModule)
+            .add_module(MechanixTheme::dark());
+        let s = app.spawn(
+            app.root(),
+            slider()
+                .range(10.0, 20.0)
+                .value(25.0)
+                .length(px(236.0))
+                .vertical(),
+        );
+        let me = app.widget::<Slider>(s).unwrap();
+        assert_eq!(me.min(), 10.0);
+        assert_eq!(me.max(), 20.0);
+        assert_eq!(me.value(), 20.0, "clamped at build");
+        assert_eq!(me.orientation(), SliderOrientation::Vertical);
+        assert_eq!(me.size(), SliderSize::Medium);
+        assert_eq!(me.active_color(), None);
+        assert_eq!(me.inactive_color(), None);
+        // Vertical medium ticks are 2 px tall: 40 fit in 236 px.
+        assert_eq!(me.tick_count(), 40);
+        assert_eq!(me.lit_ticks(), 40);
     }
 
     #[test]
@@ -1024,130 +1198,64 @@ mod tests {
     }
 
     #[test]
-    fn relative_tick_height_resizes_existing_and_new_ticks() {
-        use app::App;
-        use geometry::Insets;
-        use layout::{LayoutModule, LayoutRoot, percent};
-        use paint::PaintModule;
-        use theme::MechanixTheme;
-
-        for (percentage, length) in [
-            (50.0, percent(100.0)),
-            (100.0, percent(100.0)),
-            (100.0, px(100.0)),
-        ] {
-            let mut app = App::new();
-            app.add_module(LayoutModule)
-                .add_module(PaintModule)
-                .add_module(MechanixTheme::dark());
-            app.insert_resource(atlas::Atlas::new());
-            let root = app.spawn_with(
-                app.root(),
-                div().style(LayoutStyle::default().size(px(200.0), px(48.0))),
-                (LayoutRoot(true),),
-            );
-            let s = app.spawn(
-                root,
-                slider()
-                    .length(length)
-                    .tick_height_relative(percent(percentage))
-                    .value(0.5)
-                    .style(
-                        LayoutStyle::default()
-                            .height(percent(100.0))
-                            .padding(Insets::all(px(4.0))),
-                    ),
-            );
-            let mut first_tick = None;
-            // Height-only changes must resize existing ticks even though
-            // fit_ticks returns early when the count has not changed.
-            for (width, height) in [(200.0, 48.0), (200.0, 32.0), (400.0, 60.0), (120.0, 40.0)] {
-                *app.component_mut::<LayoutStyle>(root).unwrap() =
-                    LayoutStyle::default().size(px(width), px(height));
-                for _ in 0..4 {
-                    app.tick();
-                }
-                let track = app.component::<ComputedLayout>(s).unwrap().content();
-                let me = app.widget::<Slider>(s).unwrap();
-                assert_eq!(track.height(), height - 8.0);
-                let expected_width = if length == px(100.0) { 100.0 } else { width };
-                assert_eq!(track.width(), expected_width - 8.0);
-                assert_eq!(me.tick_count, tick_count(expected_width - 8.0, 2.0, 4.0));
-                assert_eq!(me.value, 0.5);
-                if let Some(first) = first_tick {
-                    assert_eq!(me.ticks[0], first);
-                } else {
-                    first_tick = Some(me.ticks[0]);
-                }
-                for &tick in &me.ticks {
-                    let r = app.component::<ComputedLayout>(tick).unwrap().rect;
-                    assert_eq!(r.height(), track.height() * percentage / 100.0);
-                    assert_eq!(r.width(), 2.0);
-                    assert!(r.y() >= track.y() && r.bottom() <= track.bottom());
-                    assert!((r.y() - track.y() - (track.height() - r.height()) / 2.0).abs() <= 1.0);
-                }
-                // Pointer mapping still uses the horizontal tick span.
-                let span = tick_span(me.tick_count, 2.0, 4.0);
-                assert_eq!(
-                    me.fraction_at(track, Point::new(track.x() + span / 2.0, track.y())),
-                    Some(0.5)
-                );
-                assert_eq!(
-                    me.fraction_at(track, Point::new(track.x() + span, track.y())),
-                    Some(1.0)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn relative_height_keeps_pixel_and_vertical_behaviour() {
+    fn percent_tick_size_follows_layout() {
         use app::App;
         use layout::{LayoutModule, LayoutRoot, percent};
         use paint::PaintModule;
         use theme::MechanixTheme;
 
-        let relative = || slider().tick_height_relative(percent(100.0));
-        let cases = [
-            (slider(), 2.0, 40.0),
-            (relative().tick_height(28.0), 2.0, 28.0),
-            (relative().tick_size(3.0, 30.0), 3.0, 30.0),
-            (relative().size(SliderSize::Small), 2.0, 24.0),
-            (relative().tick_height_relative(Val::Auto), 2.0, 40.0),
-            (slider().tick_height_relative(px(18.0)), 2.0, 18.0),
-            (relative().vertical(), 40.0, 2.0),
-            (
-                slider().vertical().tick_height_relative(percent(100.0)),
-                40.0,
-                2.0,
-            ),
-        ];
-        for (builder, expected_width, expected_height) in cases {
-            let mut app = App::new();
-            app.add_module(LayoutModule)
-                .add_module(PaintModule)
-                .add_module(MechanixTheme::dark());
-            app.insert_resource(atlas::Atlas::new());
-            let root = app.spawn_with(
+        let mut app = App::new();
+        app.add_module(LayoutModule)
+            .add_module(PaintModule)
+            .add_module(MechanixTheme::dark());
+        app.insert_resource(atlas::Atlas::new());
+
+        let root = app
+            .spawn_with(
                 app.root(),
-                div().style(LayoutStyle::default().size(px(300.0), px(300.0))),
+                div().style(LayoutStyle::default().size(px(200.0), px(100.0))),
                 (LayoutRoot(true),),
-            );
-            let count = builder.tick_count().unwrap();
-            let s = app.spawn(root, builder);
-            // Fixed lengths create ticks during build as well as after layout.
-            assert_eq!(app.widget::<Slider>(s).unwrap().ticks.len(), count);
+            )
+            .id();
+        let s = app.spawn(
+            root,
+            slider()
+                .length(percent(100.0))
+                .tick_width(percent(2.0))
+                .tick_height(percent(50.0))
+                .style(LayoutStyle::default().height(px(80.0))),
+        );
+        let settle = |app: &mut App| {
             for _ in 0..4 {
                 app.tick();
             }
+        };
+        let check = |app: &App, count: usize, w: f32, h: f32| {
             let me = app.widget::<Slider>(s).unwrap();
             assert_eq!(me.tick_count, count);
-            for &tick in &me.ticks {
-                let r = app.component::<ComputedLayout>(tick).unwrap().rect;
-                assert_eq!(r.width(), expected_width);
-                assert_eq!(r.height(), expected_height);
-            }
-        }
+            assert_eq!(me.ticks.len(), count);
+            let r = app.component::<ComputedLayout>(me.ticks[0]).unwrap().rect;
+            assert!((r.width() - w).abs() < 0.01, "width {} != {w}", r.width());
+            assert!(
+                (r.height() - h).abs() < 0.01,
+                "height {} != {h}",
+                r.height()
+            );
+            let track = app.component::<ComputedLayout>(s).unwrap().content();
+            let last = app
+                .component::<ComputedLayout>(*me.ticks.last().unwrap())
+                .unwrap();
+            assert!(last.rect.right() <= track.right() + 0.01);
+        };
+
+        // 2% of 200 = 4 px ticks, 4 px gap: (200 + 4) / 8 = 25 ticks; 50% of 80 = 40 px tall.
+        settle(&mut app);
+        check(&app, 25, 4.0, 40.0);
+
+        // 2% of 400 = 8 px ticks: (400 + 4) / 12 = 33 ticks.
+        app.component_mut::<LayoutStyle>(root).unwrap().width = px(400.0);
+        settle(&mut app);
+        check(&app, 33, 8.0, 40.0);
     }
 
     #[test]

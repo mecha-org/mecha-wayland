@@ -18,7 +18,7 @@ use crate::events::{
     Release,
 };
 use crate::hit_test::hit_test;
-use crate::keyboard::{KeyState, KeyboardFocus, KeyboardInput};
+use crate::keyboard::{Focusable, KeyState, KeyboardFocus, KeyboardInput};
 
 /// `presentation` is trusted to know which surface an input came from; a
 /// stale or non-`Window` id here is its bug, not this crate's. `hit_test`
@@ -32,7 +32,7 @@ fn trusted_window(app: &App, window: NodeId) {
 }
 
 /// Registers the `Contacts` and `KeyboardFocus` resources, the
-/// `GrabPresses` component, and the systems that turn a `ContactInput`
+/// `GrabPresses` and `Focusable` components, and the systems that turn a `ContactInput`
 /// into `Press`/`PressMoved`/`PressCancelled`/`Release`/`Enter`/`Exit`/
 /// `Clicked`, and a `KeyboardInput` into `KeyPress`/`KeyRepeat`/
 /// `KeyRelease`. Installs after `WindowModule`.
@@ -43,6 +43,7 @@ impl Module for InteractivityModule {
         app.init_resource::<Contacts>()
             .init_resource::<KeyboardFocus>()
             .register_component::<GrabPresses>()
+            .register_component::<Focusable>()
             .system(on_moved)
             .system(on_pressed)
             .system(on_released)
@@ -122,6 +123,22 @@ fn on_moved(app: &mut App, input: &ContactInput) {
     }
 }
 
+/// Give the keyboard focus to the first [`Focusable`] in `hit`: the
+/// nodes the `Press` goes to, deepest and frontmost first. Nothing
+/// focusable leaves the focus where it is.
+fn focus_pressed(app: &mut App, hit: &[NodeId]) {
+    let Some(&node) = hit
+        .iter()
+        .find(|&&id| app.component::<Focusable>(id).is_some_and(|f| f.0))
+    else {
+        return;
+    };
+    // Unchanged, no write: `OnChanged<KeyboardFocus>` only for a move.
+    if app.resource::<KeyboardFocus>().focused() != Some(node) {
+        app.resource_mut::<KeyboardFocus>().focus(node);
+    }
+}
+
 fn on_pressed(app: &mut App, input: &ContactInput) {
     if input.phase != ContactPhase::Pressed {
         return;
@@ -133,6 +150,7 @@ fn on_pressed(app: &mut App, input: &ContactInput) {
         return;
     }
     let hit = hit_test(app, input.window, input.position);
+    focus_pressed(app, &hit);
     // The outermost grabber: the hit-set runs window last.
     let grabber = hit
         .iter()

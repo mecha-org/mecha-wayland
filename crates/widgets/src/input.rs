@@ -27,7 +27,7 @@ use app::{Build, Context, Event, Handle, Widget};
 use atlas::{Atlas, FontId};
 use bitflags::bitflags;
 use geometry::Color;
-use interactivity::{KeyMeaning, KeyPress, KeyRepeat, Press};
+use interactivity::{Focusable, KeyMeaning, KeyPress, KeyRepeat, Press};
 use layout::{ComputedLayout, LayoutStyle, StyleContext, px};
 use paint::{Paint, PaintContext, Quad};
 
@@ -509,6 +509,8 @@ impl Widget for Input {
         me: app::prelude::Handle<Self>,
         s: &mut app::prelude::Spawner<'_, Self>,
     ) -> Self {
+        // A press takes the keyboard focus here.
+        *s.component_mut::<Focusable>(me).unwrap() = Focusable(true);
         let mut container = div().border(b.border.0, b.border.1).style(b.style);
         if let Some(bg) = b.background {
             container = container.background(bg);

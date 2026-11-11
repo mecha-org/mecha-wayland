@@ -68,6 +68,8 @@ fn app() -> App {
     let mut app = App::new();
     app.add_module(LayoutModule)
         .add_module(PaintModule)
+        // `InteractivityModule`'s, for the input; the rest needs windows.
+        .register_component::<interactivity::Focusable>()
         .system(log_painted)
         .system(log_moved);
     app.insert_resource(Atlas::new());

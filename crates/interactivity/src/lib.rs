@@ -57,6 +57,8 @@
 //! - [`KeyboardFocus`] is the node keyboard events dispatch to. Whatever
 //!   owns that focus sets it with [`KeyboardFocus::focus`] and clears it
 //!   with [`KeyboardFocus::blur`]. A report with no focus is dropped.
+//! - A press focuses the first [`Focusable`] among the nodes its `Press`
+//!   goes to, deepest and frontmost first; with none, the focus stays.
 //! - [`KeyPress`], [`KeyRepeat`] and [`KeyRelease`] carry the key and the
 //!   modifiers in effect; no polling, no per-frame deltas — one report
 //!   becomes one event the focused node's handler runs.
@@ -125,13 +127,14 @@ pub use events::{
     Clicked, Enter, Exit, KeyPress, KeyRelease, KeyRepeat, Press, PressCancelled, PressMoved,
     Release,
 };
-pub use keyboard::{KeyMeaning, KeyState, KeyboardFocus, KeyboardInput, Modifiers};
+pub use keyboard::{Focusable, KeyMeaning, KeyState, KeyboardFocus, KeyboardInput, Modifiers};
 pub use module::InteractivityModule;
 
 pub mod prelude {
     pub use crate::{
         Clicked, ContactId, ContactInput, ContactPhase, Contacts, ContextClaim, Enter, Exit,
-        GrabPresses, InteractivityModule, KeyMeaning, KeyPress, KeyRelease, KeyRepeat, KeyState,
-        KeyboardFocus, KeyboardInput, Modifiers, Press, PressCancelled, PressMoved, Release,
+        Focusable, GrabPresses, InteractivityModule, KeyMeaning, KeyPress, KeyRelease, KeyRepeat,
+        KeyState, KeyboardFocus, KeyboardInput, Modifiers, Press, PressCancelled, PressMoved,
+        Release,
     };
 }

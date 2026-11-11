@@ -7,13 +7,14 @@
 //! - The widgets write only `LayoutStyle`, `Measure` and `Paint` —
 //!   columns `layout` and `paint` already register. `widgets` installs
 //!   no `Module`, `Component` or `Resource` of its own. `Button` requires
-//!   `interactivity` events to drive its state machine. `Input` also
-//!   registers handlers for `InputEdit` (from `text-input`'s
-//!   `zwp_text_input_v3` end) and `KeyPress`/`KeyRepeat` (from the
-//!   keyboard path), which do nothing without those crates installed.
+//!   `interactivity` events to drive its state machine. `Input` is
+//!   `interactivity`'s `Focusable`, and registers handlers for `InputEdit`
+//!   (from `text-input`'s `zwp_text_input_v3` end) and
+//!   `KeyPress`/`KeyRepeat` (from the keyboard path), which do nothing
+//!   without those crates installed.
 //! - Using any widget requires the caller to have installed
 //!   `LayoutModule` and `PaintModule` and inserted an `Atlas` resource.
-//!   `Button` also requires `InteractivityModule`.
+//!   `Button` and `Input` also require `InteractivityModule`.
 //! - Mutation after spawn happens through each widget's own `*Context`
 //!   trait ([`DivContext`], [`ButtonContext`], [`TextContext`],
 //!   [`IconContext`], [`ImageContext`], [`InputContext`]),

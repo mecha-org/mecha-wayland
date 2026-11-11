@@ -41,6 +41,8 @@ pub enum KeyMeaning {
     Right,
     Home,
     End,
+    /// Return or keypad Enter: done with a line.
+    Enter,
     /// No semantic meaning assigned (modifier keys, function keys,
     /// shortcuts, etc.). Consumers ignore it.
     None,

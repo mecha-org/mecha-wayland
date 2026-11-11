@@ -488,6 +488,8 @@ fn decode(seat: &Seat, key: u32) -> KeyMeaning {
         KeyMeaning::Home
     } else if sym == KEY_End {
         KeyMeaning::End
+    } else if sym == KEY_Return || sym == KEY_KP_Enter {
+        KeyMeaning::Enter
     } else {
         // Control modifiers suppress text: Ctrl+C is "copy", not 'c'.
         if seat.modifiers.ctrl || seat.modifiers.alt || seat.modifiers.logo {

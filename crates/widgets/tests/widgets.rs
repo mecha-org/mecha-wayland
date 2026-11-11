@@ -925,3 +925,54 @@ fn an_image_follows_rescale() {
     }
     assert_eq!(rect(&app, photo.id()).width(), 20.0);
 }
+
+// ── input: Return ───────────────────────────────────────────────────────
+
+thread_local! {
+    static SUBMITTED: RefCell<u32> = const { RefCell::new(0) };
+}
+
+fn log_submit(_: &mut App, _: &Emitted<InputSubmit>) {
+    SUBMITTED.with(|n| *n.borrow_mut() += 1);
+}
+
+fn key(app: &mut App, field: NodeId, meaning: interactivity::KeyMeaning) {
+    let modifiers = Default::default();
+    app.emit(interactivity::KeyPress { meaning, modifiers }, field);
+    app.tick();
+}
+
+fn press(app: &mut App, field: NodeId, text: &str) {
+    key(app, field, interactivity::KeyMeaning::Text(text.into()));
+}
+
+#[test]
+fn return_submits_a_single_line_input_and_inserts_nothing() {
+    let mut app = app();
+    app.system(log_submit);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field = app.spawn(root, input(font)).id();
+    app.tick();
+    press(&mut app, field, "ab");
+    key(&mut app, field, interactivity::KeyMeaning::Enter);
+    assert_eq!(app.widget::<Input>(field).unwrap().text(), "ab");
+    assert_eq!(SUBMITTED.with(|n| *n.borrow()), 1);
+}
+
+#[test]
+fn return_in_a_multiline_input_is_a_line_break() {
+    let mut app = app();
+    app.system(log_submit);
+    SUBMITTED.with(|n| *n.borrow_mut() = 0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field = app
+        .spawn(root, input(font).content_hint(ContentHint::MULTILINE))
+        .id();
+    app.tick();
+    press(&mut app, field, "a");
+    key(&mut app, field, interactivity::KeyMeaning::Enter);
+    assert_eq!(app.widget::<Input>(field).unwrap().text(), "a\n");
+    assert_eq!(SUBMITTED.with(|n| *n.borrow()), 0);
+}

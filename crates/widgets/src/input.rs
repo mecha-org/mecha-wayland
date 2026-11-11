@@ -328,12 +328,28 @@ impl Input {
     }
 }
 
+/// Return in a single-line [`Input`]: the user is done with the text.
+/// Emitted at the input instead of inserting a line break; read the text
+/// from the widget. A `MULTILINE` input inserts the break instead. (A line
+/// break committed by an input method is text, and goes in either way.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputSubmit;
+impl Event for InputSubmit {}
+
 /// A key arrived: apply it, push the display, and tell the
 /// `text-input` crate the text changed by emitting `InputFocus` — the
 /// same signal a press-driven cursor move sends, which `on_focus`
 /// turns into a surrounding-text report with `Other` as the cause, so
 /// the IME's picture of the text stays true across keyboard edits.
 fn on_key(ctx: &mut Context<'_, Input>, meaning: &KeyMeaning) {
+    if *meaning == KeyMeaning::Enter {
+        if ctx.me().content_hint.contains(ContentHint::MULTILINE) {
+            on_key(ctx, &KeyMeaning::Text("\n".into()));
+        } else {
+            ctx.emit(InputSubmit, ctx.handle());
+        }
+        return;
+    }
     if ctx.me().apply_meaning(meaning) {
         sync(ctx);
         ctx.emit(InputFocus { focused: true }, ctx.handle());

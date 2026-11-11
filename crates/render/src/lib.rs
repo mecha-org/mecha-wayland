@@ -426,6 +426,7 @@ impl Module for RenderModule {
             .system(on_paint_changed)
             .system(on_viewport_changed)
             .system(on_removed)
+            .system(on_moved)
             .system(on_frame);
     }
 }
@@ -502,6 +503,24 @@ fn on_removed(app: &mut App, r: &Removed) {
     }
 }
 
+/// A moved subtree draws in its new window as if new: its records are of
+/// its old place, maybe in another window. The old window clears it at
+/// its next frame (see [`on_frame`]); `WindowModule` asks for both.
+fn on_moved(app: &mut App, m: &Moved) {
+    if !app.is_live(m.id) {
+        return;
+    }
+    let subtree: Vec<NodeId> = std::iter::once(m.id).chain(app.descendants(m.id)).collect();
+    for node in subtree {
+        if let Some(mut d) = app.component_mut::<Drawn>(node) {
+            *d = Drawn {
+                dirty: true,
+                ..Drawn::default()
+            };
+        }
+    }
+}
+
 /// Rebuild the window's scene from the live `Layout` and
 /// `AnimatedPaint`. A stale id or a non-window is ignored. Nothing here raises `RequestFrame`.
 fn on_frame(app: &mut App, f: &Frame) {
@@ -516,10 +535,11 @@ fn on_frame(app: &mut App, f: &Frame) {
     let size = walk::scale_rect(layout.rect, scale).size;
 
     let (tree, mut data) = app.split();
-    let (layouts, paints, viewports, mut drawn, mut scenes) = data.query::<(
+    let (layouts, paints, viewports, windows, mut drawn, mut scenes) = data.query::<(
         &Layout,
         &AnimatedPaint,
         &Viewport,
+        &InWindow,
         &mut Drawn,
         ResMut<Scenes>,
     )>();
@@ -528,10 +548,11 @@ fn on_frame(app: &mut App, f: &Frame) {
     let visited = walk::walk(
         tree, &layouts, &paints, &viewports, &mut drawn, w, scale, clear, scene,
     );
-    // A node drawn last frame and gone now left pixels behind; its
-    // `Drawn` was reset by the core, so last frame's list is the record.
+    // A node drawn last frame and gone now, or moved to another window,
+    // left pixels behind; its `Drawn` was reset, so last frame's list is
+    // the record.
     for &(id, rect) in &scene.drawn {
-        if !tree.is_live(id) {
+        if !tree.is_live(id) || windows.get(id).and_then(|i| i.0) != Some(w) {
             scene.damage.push(rect);
             scene.pure = false;
         }

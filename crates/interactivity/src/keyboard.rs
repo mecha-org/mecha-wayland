@@ -13,8 +13,20 @@
 //! [`KeyboardFocus::focus`] when a node gains the keyboard focus and
 //! clears it with [`KeyboardFocus::blur`] when it loses it. A report
 //! with no focus is dropped — a keyboard with nowhere to go is a no-op.
+//!
+//! A press focuses the first [`Focusable`] among the nodes it lands on,
+//! deepest and frontmost first: the nodes its `Press` goes to. A press
+//! on nothing focusable (a button, an on-screen keyboard's keys) leaves
+//! the focus where it is.
 
-use app::{NodeId, Resource, Signal};
+use app::{Component, NodeId, Resource, Signal};
+
+/// A node with `Focusable(true)` takes the keyboard focus when pressed,
+/// or when something under it that isn't focusable itself is.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Focusable(pub bool);
+
+impl Component for Focusable {}
 
 /// One key's transition this report. Mirrors `wl_keyboard.key`'s state
 /// without naming the protocol.
@@ -41,6 +53,8 @@ pub enum KeyMeaning {
     Right,
     Home,
     End,
+    /// Return or keypad Enter: done with a line.
+    Enter,
     /// No semantic meaning assigned (modifier keys, function keys,
     /// shortcuts, etc.). Consumers ignore it.
     None,

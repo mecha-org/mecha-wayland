@@ -256,6 +256,7 @@ impl Module for AnimationModule {
             .init_resource::<displayed_layout::Active>()
             .system(paint::on_spawned)
             .system(displayed_layout::on_spawned)
+            .system(displayed_layout::on_moved)
             .system(displayed_layout::on_layout_done)
             .system(displayed_layout::on_target_changed)
             .system(paint::on_paint_changed)

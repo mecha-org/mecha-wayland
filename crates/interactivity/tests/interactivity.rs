@@ -956,3 +956,50 @@ fn a_second_press_during_a_claim_keeps_the_claim() {
     assert_eq!(clicked, vec![claimer.id()]);
     assert_eq!(take_release(), vec![claimer.id()]);
 }
+
+// ── Focus ───────────────────────────────────────────────────────────────
+
+fn tap(app: &mut App, win: Handle<Window>, at: Point) {
+    app.signal(moved(win, ContactId::Touch(1), at));
+    app.signal(pressed(win, ContactId::Touch(1), at));
+    app.signal(released(win, ContactId::Touch(1), at));
+    app.flush();
+}
+
+#[test]
+fn a_press_focuses_the_nearest_focusable_and_nothing_else_moves_it() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let (card, _) = card_and_button(&mut app, win);
+    let field = app.spawn_with(win, Leaf, (at(150.0, 150.0, 40.0, 40.0),));
+    *app.component_mut::<Focusable>(field).unwrap() = Focusable(true);
+    *app.component_mut::<Focusable>(card).unwrap() = Focusable(true);
+    app.tick();
+    let focused = |app: &App| app.resource::<KeyboardFocus>().focused();
+
+    tap(&mut app, win, Point::new(160.0, 160.0));
+    assert_eq!(focused(&app), Some(field.id()));
+
+    // On the window itself, focusable nowhere: the focus stays.
+    tap(&mut app, win, Point::new(190.0, 5.0));
+    assert_eq!(focused(&app), Some(field.id()));
+
+    // The button isn't focusable; the card it is in is.
+    tap(&mut app, win, Point::new(30.0, 30.0));
+    assert_eq!(focused(&app), Some(card.id()));
+}
+
+#[test]
+fn a_cover_over_a_focusable_does_not_keep_the_focus_from_it() {
+    let mut app = app();
+    let win = app.spawn(app.root(), a_window());
+    let list = app.spawn_with(win, Leaf, (at(20.0, 20.0, 40.0, 40.0),));
+    *app.component_mut::<Focusable>(list).unwrap() = Focusable(true);
+    // Spawned later, so in front, as a container's fade is: the press
+    // goes to both, and the list takes the focus.
+    app.spawn_with(win, Leaf, (at(0.0, 0.0, 100.0, 100.0),));
+    app.tick();
+
+    tap(&mut app, win, Point::new(30.0, 30.0));
+    assert_eq!(app.resource::<KeyboardFocus>().focused(), Some(list.id()));
+}

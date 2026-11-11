@@ -21,12 +21,14 @@
 //!   widget*: an `Input` whose `Press` handler runs emits an
 //!   `InputFocus { focused: true }` at itself, which this crate's
 //!   `Emitted<InputFocus>` system turns into a committed `enable`
-//!   carrying the widget's text as the surrounding text. A `Press` that
-//!   misses the focused widget in the focused widget's own window — by a
-//!   cheap id check against the press targets, no per-press tree walk —
-//!   blurs it with a committed `disable`; a press in another of the
-//!   app's windows (an OSK, a panel) leaves the focus alone. The
-//!   surface focus the `Enter`/`Leave` events carry is the
+//!   carrying the widget's text as the surrounding text. The widget
+//!   blurs, with a committed `disable`, when the keyboard focus moves off
+//!   it: a press on another `Focusable` node, or its owner moving the
+//!   focus. A press on nothing focusable (a button, an OSK's keys)
+//!   leaves it focused. A press on the field already focused asks for the
+//!   input panel again, so an input method the user hid shows again:
+//!   `show_input_panel` where the compositor has version 2, else the
+//!   committed `enable` again. The surface focus the `Enter`/`Leave` events carry is the
 //!   compositor's business: a `Leave` only resets (the compositor
 //!   ignores our requests until the next `Enter` anyway) — and, not
 //!   being double-buffered, clears the widget's preedit immediately —
@@ -48,6 +50,8 @@
 //!   checked against our commit count; the surrounding text is resent
 //!   after every edit regardless, which is what a mismatched serial
 //!   asks for anyway.
+//! - A sensitive field's text (`Input::is_sensitive`: a password or PIN)
+//!   is never sent: no surrounding text, on `enable` or after an edit.
 //! - A focused widget removed from the tree blurs.
 //!
 //! # Quick start
@@ -89,7 +93,6 @@ use app::prelude::*;
 use interactivity::{KeyboardFocus, Press};
 use wayland::prelude::*;
 use widgets::{ContentHint, ContentPurpose, Input, InputEdit, InputFocus};
-use window::InWindow;
 
 pub mod prelude {
     pub use crate::{TextInput, TextInputModule};
@@ -133,19 +136,14 @@ pub struct TextInputModule;
 impl Module for TextInputModule {
     fn install(self, app: &mut App) {
         let seat = *app.resource::<WlSeat>();
-        let manager = {
-            let global = app
-                .resource::<Globals>()
-                .find(ZwpTextInputManagerV3::NAME)
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "text-input: the compositor does not advertise {}",
-                        ZwpTextInputManagerV3::NAME
-                    )
-                });
+        let manager: ZwpTextInputManagerV3 = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-            globals.bind::<ZwpTextInputManagerV3>(&global, &mut wl)
+            globals.bind_if_offered(&mut wl, 1).unwrap_or_else(|| {
+                panic!(
+                    "text-input: the compositor does not advertise {}",
+                    ZwpTextInputManagerV3::NAME
+                )
+            })
         };
         let input = {
             let mut wl = app.resource_mut::<Wayland>();
@@ -161,8 +159,9 @@ impl Module for TextInputModule {
             pending: None,
         });
         app.system(on_text_input)
-            .system(on_press)
+            .system(on_keyboard_focus)
             .system(on_focus)
+            .system(on_press)
             .system(on_edited)
             .system(on_removed);
     }
@@ -175,15 +174,7 @@ impl Module for TextInputModule {
 /// only — the caret toggle is the widget's own `InputFocus` handler,
 /// driven by the emits the press path and `on_focus` produce.
 fn focus(app: &mut App, w: NodeId) {
-    let (text, cursor, hint, purpose) = match app.widget::<Input>(w) {
-        Some(i) => (
-            i.text().to_string(),
-            i.cursor(),
-            i.content_hint(),
-            i.content_purpose(),
-        ),
-        None => (String::new(), 0, ContentHint::NONE, ContentPurpose::Normal),
-    };
+    let field = field(app, w).unwrap_or_default();
     app.resource_mut::<KeyboardFocus>().focus(w);
     let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
     let ti = &mut *ti;
@@ -194,20 +185,79 @@ fn focus(app: &mut App, w: NodeId) {
     }
     ti.focused = Some(w);
     ti.pending = None;
-    if ti.entered && !ti.enabled {
-        ti.input.enable(&mut wl);
-        let (text, cursor) = cap(&text, cursor);
-        ti.input
-            .set_surrounding_text(&mut wl, &text, cursor as i32, cursor as i32);
-        // Tell the input method what kind of field this is so it can
-        // raise the right panel (e.g. a numeric keypad for `Pin`, a
-        // hidden-text keyboard for `Password`). Double-buffered like
-        // the surrounding text, so it lands with this `commit`.
-        ti.input
-            .set_content_type(&mut wl, wayland_hint(hint), wayland_purpose(purpose));
-        ti.input.commit(&mut wl);
-        ti.enabled = true;
+    if ti.entered {
+        enable(ti, &mut wl, &field);
     }
+}
+
+/// What the input method is told about a field.
+#[derive(Default)]
+struct Field {
+    /// The text, capped, and the cursor in it. `None` for a sensitive
+    /// field: its text is never sent.
+    surrounding: Option<(String, usize)>,
+    hint: ContentHint,
+    purpose: ContentPurpose,
+}
+
+fn field(app: &App, w: NodeId) -> Option<Field> {
+    let i = app.widget::<Input>(w)?;
+    Some(Field {
+        surrounding: (!i.is_sensitive()).then(|| cap(i.text(), i.cursor())),
+        hint: i.content_hint(),
+        purpose: i.content_purpose(),
+    })
+}
+
+/// The committed `enable`, with the field's text and kind. `enable` resets
+/// everything the input method knew, so all of it goes with it.
+fn enable(ti: &mut TextInput, wl: &mut Wayland, field: &Field) {
+    ti.input.enable(wl);
+    if let Some((text, cursor)) = &field.surrounding {
+        ti.input
+            .set_surrounding_text(wl, text, *cursor as i32, *cursor as i32);
+    }
+    // Tell the input method what kind of field this is so it can
+    // raise the right panel (e.g. a numeric keypad for `Pin`, a
+    // hidden-text keyboard for `Password`). Double-buffered like
+    // the surrounding text, so it lands with this `commit`.
+    ti.input
+        .set_content_type(wl, wayland_hint(field.hint), wayland_purpose(field.purpose));
+    ti.input.commit(wl);
+    ti.enabled = true;
+}
+
+/// The text-input version with `show_input_panel`.
+const SHOW_INPUT_PANEL_SINCE: u32 = 2;
+
+/// A press on the field that already has the text focus asks for the
+/// input panel (an on-screen keyboard) again, after the user hid it, say:
+/// `show_input_panel` from version 2, a hint that changes nothing else.
+/// Before it, the only way is `enable` again, which resets everything the
+/// input method knew, so the field's text and kind go with it. Only a
+/// press: a key edit sends the same `InputFocus` as a press does, and must
+/// not bring a hidden keyboard back.
+fn on_press(app: &mut App, e: &Emitted<Press>) {
+    let Some(w) = app.resource::<TextInput>().focused else {
+        return;
+    };
+    if !app.resource::<TextInput>().enabled || !e.targets.contains(&w) {
+        return;
+    }
+    let shows = {
+        let (ti, wl) = app.query::<(Res<TextInput>, Res<Wayland>)>();
+        wl.version(ti.input) >= SHOW_INPUT_PANEL_SINCE
+    };
+    if shows {
+        let (ti, mut wl) = app.query::<(Res<TextInput>, ResMut<Wayland>)>();
+        ti.input.show_input_panel(&mut wl);
+        return;
+    }
+    let Some(field) = field(app, w) else {
+        return;
+    };
+    let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
+    enable(&mut ti, &mut wl, &field);
 }
 
 /// Translate the widget's [`ContentHint`] (mirroring the protocol's
@@ -240,9 +290,13 @@ fn wayland_purpose(purpose: ContentPurpose) -> ZwpTextInputV3ContentPurpose {
     }
 }
 
-/// Blur: the committed `disable`, and no focused widget. Protocol only.
+/// Blur: the committed `disable`, and no focused widget. The keyboard
+/// focus goes too, unless it has already moved on.
 fn blur(app: &mut App) {
-    app.resource_mut::<KeyboardFocus>().blur();
+    let focused = app.resource::<TextInput>().focused;
+    if focused.is_some() && app.resource::<KeyboardFocus>().focused() == focused {
+        app.resource_mut::<KeyboardFocus>().blur();
+    }
     let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
     let ti = &mut *ti;
     if ti.enabled {
@@ -267,27 +321,13 @@ fn cap(text: &str, cursor: usize) -> (String, usize) {
     (text[start..].to_string(), cursor.saturating_sub(start))
 }
 
-/// A press that misses the focused widget blurs it — the way tapping
-/// outside a field ends its edit on a phone. Focus gain is the widget's
-/// own `Press` handler emitting `InputFocus { focused: true }`; this
-/// system only handles the converse, and by a cheap id check against the
-/// press targets — no per-press tree walk for an `Input`.
-///
-/// Only a press in the focused widget's own window counts. A press in
-/// another of the app's windows — an on-screen keyboard or a panel
-/// whose layer surface takes no keyboard focus — leaves the text focus
-/// where it is: whether that surface takes the keyboard is the
-/// compositor's call, reported as a `Leave`.
-fn on_press(app: &mut App, e: &Emitted<Press>) {
+/// The keyboard focus moved off the focused widget: it blurs, through its
+/// own `InputFocus` handler and [`on_focus`].
+fn on_keyboard_focus(app: &mut App, _: &OnChanged<KeyboardFocus>) {
     let Some(focused) = app.resource::<TextInput>().focused else {
         return;
     };
-    if e.targets.iter().any(|&id| id == focused) {
-        return;
-    }
-    let window_of = |id| app.component::<InWindow>(id).and_then(|w| w.0);
-    let pressed = e.targets.first().and_then(|&id| window_of(id));
-    if pressed.is_some() && pressed == window_of(focused) {
+    if app.resource::<KeyboardFocus>().focused() != Some(focused) {
         app.emit(InputFocus { focused: false }, focused);
     }
 }
@@ -314,11 +354,11 @@ fn on_focus(app: &mut App, e: &Emitted<InputFocus>) {
 }
 
 /// Report the widget's current text and cursor back to the IM, with
-/// `cause`, committed. A no-op when not enabled or not entered.
+/// `cause`, committed. A no-op when not enabled or not entered, and for a
+/// sensitive field.
 fn report(app: &mut App, w: NodeId, cause: ZwpTextInputV3ChangeCause) {
-    let (text, cursor) = match app.widget::<Input>(w) {
-        Some(i) => cap(i.text(), i.cursor()),
-        None => return,
+    let Some((text, cursor)) = field(app, w).and_then(|f| f.surrounding) else {
+        return;
     };
     let (mut ti, mut wl) = app.query::<(ResMut<TextInput>, ResMut<Wayland>)>();
     let ti = &mut *ti;

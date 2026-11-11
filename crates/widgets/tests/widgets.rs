@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 use app::prelude::*;
 use atlas::prelude::*;
-use geometry::{Color, Corners, Rect};
+use geometry::{Color, Corners, Insets, Rect};
 use layout::prelude::*;
 use paint::prelude::*;
 use widgets::prelude::*;
@@ -68,6 +68,8 @@ fn app() -> App {
     let mut app = App::new();
     app.add_module(LayoutModule)
         .add_module(PaintModule)
+        // `InteractivityModule`'s, for the input; the rest needs windows.
+        .register_component::<interactivity::Focusable>()
         .system(log_painted)
         .system(log_moved);
     app.insert_resource(Atlas::new());
@@ -924,4 +926,170 @@ fn an_image_follows_rescale() {
         other => panic!("expected Polychrome, got {other:?}"),
     }
     assert_eq!(rect(&app, photo.id()).width(), 20.0);
+}
+
+// ── input: Return ───────────────────────────────────────────────────────
+
+thread_local! {
+    static SUBMITTED: RefCell<u32> = const { RefCell::new(0) };
+}
+
+fn log_submit(_: &mut App, _: &Emitted<InputSubmit>) {
+    SUBMITTED.with(|n| *n.borrow_mut() += 1);
+}
+
+fn key(app: &mut App, field: NodeId, meaning: interactivity::KeyMeaning) {
+    let modifiers = Default::default();
+    app.emit(interactivity::KeyPress { meaning, modifiers }, field);
+    app.tick();
+}
+
+fn press(app: &mut App, field: NodeId, text: &str) {
+    key(app, field, interactivity::KeyMeaning::Text(text.into()));
+}
+
+#[test]
+fn return_submits_a_single_line_input_and_inserts_nothing() {
+    let mut app = app();
+    app.system(log_submit);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field = app.spawn(root, input(font)).id();
+    app.tick();
+    press(&mut app, field, "ab");
+    key(&mut app, field, interactivity::KeyMeaning::Enter);
+    assert_eq!(app.widget::<Input>(field).unwrap().text(), "ab");
+    assert_eq!(SUBMITTED.with(|n| *n.borrow()), 1);
+}
+
+#[test]
+fn return_in_a_multiline_input_is_a_line_break() {
+    let mut app = app();
+    app.system(log_submit);
+    SUBMITTED.with(|n| *n.borrow_mut() = 0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field = app
+        .spawn(root, input(font).content_hint(ContentHint::MULTILINE))
+        .id();
+    app.tick();
+    press(&mut app, field, "a");
+    key(&mut app, field, interactivity::KeyMeaning::Enter);
+    assert_eq!(app.widget::<Input>(field).unwrap().text(), "a\n");
+    assert_eq!(SUBMITTED.with(|n| *n.borrow()), 0);
+}
+
+// ── input: taking the text ──────────────────────────────────────────────
+
+thread_local! {
+    static TAKEN: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+#[test]
+fn take_text_hands_over_what_was_typed_and_empties_the_field() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field: Handle<Input> =
+        app.spawn(root, input(font).content_purpose(ContentPurpose::Password));
+    app.tick();
+    // Past any first allocation, so the text moves as it grows.
+    let typed = "correct horse battery staple, and then some more";
+    for c in typed.chars() {
+        press(&mut app, field.id(), &c.to_string());
+    }
+    key(&mut app, field.id(), interactivity::KeyMeaning::Backspace);
+    assert!(app.widget::<Input>(field.id()).unwrap().is_sensitive());
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            let secret = ctx.at(field).unwrap().take_text();
+            TAKEN.with(|t| *t.borrow_mut() = secret.as_bytes().to_vec());
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    let typed = &typed[..typed.len() - 1];
+    assert_eq!(TAKEN.with(|t| t.borrow().clone()), typed.as_bytes());
+    let field = app.widget::<Input>(field.id()).unwrap();
+    assert_eq!((field.text(), field.cursor()), ("", 0));
+}
+
+#[test]
+fn a_disabled_field_keeps_its_text_and_takes_nothing() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = app.root();
+    let field: Handle<Input> = app.spawn(root, input(font));
+    app.tick();
+    press(&mut app, field.id(), "ab");
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            ctx.at(field).unwrap().set_disabled(true);
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    press(&mut app, field.id(), "c");
+    let f = app.widget::<Input>(field.id()).unwrap();
+    assert!(f.is_disabled());
+    assert_eq!(f.text(), "ab", "keys go nowhere");
+    assert_eq!(f.secret().as_bytes(), b"ab");
+    assert_eq!(
+        app.component::<interactivity::Focusable>(field.id()),
+        Some(&interactivity::Focusable(false))
+    );
+}
+
+// ── input: caret ────────────────────────────────────────────────────────
+
+#[test]
+fn the_caret_follows_the_text_in_a_padded_input() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let parent = root(&mut app, 400.0, 100.0);
+    let field = app
+        .spawn(
+            parent,
+            input(font).size(20).style(
+                LayoutStyle::default()
+                    .row()
+                    .size(px(300.0), px(48.0))
+                    .padding(Insets::new(px(0.0), px(16.0), px(0.0), px(16.0))),
+            ),
+        )
+        .id();
+    app.tick();
+    app.emit(InputFocus { focused: true }, field);
+    press(&mut app, field, "ab");
+    app.tick();
+    // The text is the input's one Text; the caret its 1px-wide bar.
+    let text = app
+        .descendants(field)
+        .find(|&n| app.widget::<Text>(n).is_some())
+        .unwrap();
+    let caret = app
+        .descendants(field)
+        .find(|&n| {
+            app.widget::<Div>(n).is_some()
+                && app
+                    .component::<ComputedLayout>(n)
+                    .is_some_and(|l| l.rect.width() == 1.0)
+        })
+        .unwrap();
+    let (text, caret) = (rect(&app, text), rect(&app, caret));
+    assert!(text.x() >= 16.0, "the padding moves the text: {text:?}");
+    assert!(
+        (caret.x() - text.right()).abs() < 1.0,
+        "the caret ends the text: caret {caret:?}, text {text:?}"
+    );
+    let line = app.resource::<Atlas>().line(font, 20);
+    assert!(
+        (caret.y() - text.y()).abs() < 1.0
+            && (caret.height() - (line.ascent - line.descent)).abs() < 1.0,
+        "the caret starts with the text and is a line tall: caret {caret:?}, text {text:?}, {line:?}"
+    );
 }

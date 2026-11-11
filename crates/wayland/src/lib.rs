@@ -65,6 +65,7 @@ pub mod fake;
 
 pub mod display;
 pub mod generated;
+pub mod outputs;
 pub mod wire;
 
 pub use display::{
@@ -485,6 +486,14 @@ impl Globals {
             bind_version(I::NAME, global.version, I::VERSION),
         )
     }
+    /// Bind the first advertised `I`, if the compositor offers it at
+    /// `min_version` or later: an older one lacks requests the caller
+    /// sends, and sending one is a protocol error that ends the
+    /// connection.
+    pub fn bind_if_offered<I: Interface>(&self, wl: &mut Wayland, min_version: u32) -> Option<I> {
+        let global = self.find(I::NAME).filter(|g| g.version >= min_version)?;
+        Some(self.bind(global, wl))
+    }
 }
 
 /// The version to bind `interface` at: the lesser of the advertised and
@@ -559,16 +568,11 @@ impl WaylandModule {
     /// At install, if the compositor does not advertise `I::NAME`.
     pub fn bind<I: Interface + Resource>(mut self) -> Self {
         self.binds.push(Box::new(|app: &mut App| {
-            let global = app
-                .resource::<Globals>()
-                .find(I::NAME)
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!("wayland: the compositor does not advertise {}", I::NAME)
-                });
             let object: I = {
                 let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-                globals.bind::<I>(&global, &mut wl)
+                globals.bind_if_offered(&mut wl, 1).unwrap_or_else(|| {
+                    panic!("wayland: the compositor does not advertise {}", I::NAME)
+                })
             };
             app.insert_resource(object);
         }));
@@ -613,6 +617,7 @@ pub mod prelude {
         WlCallback, WlCallbackEvent, WlDisplay, WlDisplayEvent, WlRegistry, WlRegistryEvent,
     };
     pub use crate::generated::*;
+    pub use crate::outputs::{OutputAdded, OutputRemoved, Outputs, OutputsModule};
     pub use crate::{Global, Globals, Interface, ObjectId, Wayland, WaylandModule};
 }
 

@@ -100,7 +100,9 @@ pub struct Completed {
 }
 
 /// The io_uring and every op in flight. Ops hold their buffers until
-/// [`Ring::finish`]; the submitter keeps the fd open until then.
+/// [`Ring::finish`]; the submitter keeps the fd open until then. An op on
+/// an fd goes to the kernel as it is made, which takes its own hold on
+/// the file.
 ///
 /// Dropping the ring cancels every op still in flight and drains its
 /// completions before the ring, and the boxed ops the kernel may still be
@@ -165,8 +167,15 @@ impl Ring {
         self.submit_raw(-1, Op::cancel(target.0))
     }
 
+    /// An op on `fd`, into the kernel now, while `fd` is the submitter's:
+    /// the kernel takes the file then, so a close later (an owner dropped
+    /// before the ring) can't send the op to whatever reuses the number.
+    /// If this fails, the op goes with the next submit. Ops on no fd wait
+    /// for the next submit anyway.
     fn submit(&mut self, fd: BorrowedFd<'_>, op: Box<Op>) -> Token {
-        self.submit_raw(fd.as_raw_fd(), op)
+        let token = self.submit_raw(fd.as_raw_fd(), op);
+        let _ = self.uring.submit();
+        token
     }
 
     fn submit_raw(&mut self, fd: RawFd, mut op: Box<Op>) -> Token {

@@ -9,6 +9,9 @@ use layout::LayoutStyle;
 use theme::{FontWeight, TextVariant};
 use timer::{ContextTimers, SpawnerTimers, TimerId};
 
+/// Show the time now, and wait for the next boundary from now. For when
+/// the wait in progress went wrong, as after the system slept: a
+/// monotonic timer doesn't count the time asleep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ClockTick;
 
@@ -161,8 +164,12 @@ impl Widget for Clock {
         label.props.string = Local::now().format(&b.format).to_string();
         let text_handle = s.spawn(me, label);
 
+        // Now, and again at the next boundary: the timer's wait may be
+        // wrong by now, as after the system slept.
         s.on::<ClockTick>(me, |ctx, _| {
             ctx.update_time();
+            let interval = ctx.me().interval;
+            ctx.set_interval(interval);
         });
 
         // A one-shot re-armed on every fire, rather than an interval, so

@@ -7,13 +7,14 @@
 //! - The widgets write only `LayoutStyle`, `Measure` and `Paint` —
 //!   columns `layout` and `paint` already register. `widgets` installs
 //!   no `Module`, `Component` or `Resource` of its own. `Button` requires
-//!   `interactivity` events to drive its state machine. `Input` also
-//!   registers handlers for `InputEdit` (from `text-input`'s
-//!   `zwp_text_input_v3` end) and `KeyPress`/`KeyRepeat` (from the
-//!   keyboard path), which do nothing without those crates installed.
+//!   `interactivity` events to drive its state machine. `Input` is
+//!   `interactivity`'s `Focusable`, and registers handlers for `InputEdit`
+//!   (from `text-input`'s `zwp_text_input_v3` end) and
+//!   `KeyPress`/`KeyRepeat` (from the keyboard path), which do nothing
+//!   without those crates installed.
 //! - Using any widget requires the caller to have installed
 //!   `LayoutModule` and `PaintModule` and inserted an `Atlas` resource.
-//!   `Button` also requires `InteractivityModule`.
+//!   `Button` and `Input` also require `InteractivityModule`.
 //! - Mutation after spawn happens through each widget's own `*Context`
 //!   trait ([`DivContext`], [`ButtonContext`], [`TextContext`],
 //!   [`IconContext`], [`ImageContext`], [`InputContext`]),
@@ -64,6 +65,7 @@ mod div;
 mod icon;
 mod image;
 mod input;
+mod secret;
 mod state;
 mod text;
 
@@ -72,8 +74,10 @@ pub use div::{Div, DivBuilder, DivContext, div};
 pub use icon::{Icon, IconBuilder, IconContext, icon};
 pub use image::{Image, ImageBuilder, ImageContext, image};
 pub use input::{
-    ContentHint, ContentPurpose, Input, InputBuilder, InputContext, InputEdit, InputFocus, input,
+    ContentHint, ContentPurpose, Input, InputBuilder, InputContext, InputEdit, InputFocus,
+    InputSubmit, input,
 };
+pub use secret::Secret;
 pub use state::WidgetState;
 pub use text::{
     Text, TextAlign, TextBuilder, TextContext, TextDecoration, TextOverflow, TextProps, TextWrap,
@@ -84,8 +88,9 @@ pub mod prelude {
     pub use crate::{
         Button, ButtonBuilder, ButtonContext, ButtonProps, ButtonStateStyle, ContentHint,
         ContentPurpose, Div, DivBuilder, DivContext, Icon, IconBuilder, IconContext, Image,
-        ImageBuilder, ImageContext, Input, InputBuilder, InputContext, InputEdit, InputFocus, Text,
-        TextAlign, TextBuilder, TextContext, TextDecoration, TextOverflow, TextProps, TextWrap,
-        VerticalTrim, WidgetState, button, div, icon, image, input, text,
+        ImageBuilder, ImageContext, Input, InputBuilder, InputContext, InputEdit, InputFocus,
+        InputSubmit, Secret, Text, TextAlign, TextBuilder, TextContext, TextDecoration,
+        TextOverflow, TextProps, TextWrap, VerticalTrim, WidgetState, button, div, icon, image,
+        input, text,
     };
 }

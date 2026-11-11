@@ -22,16 +22,77 @@
 //! `text-input` crate turns into a surrounding-text report with `Other`
 //! as the cause — keeping the IME's picture of the text true across
 //! edits from either path.
+//!
+//! Any field may hold a secret, so every field's text is wiped when it
+//! goes: dropped, replaced, or moved to a bigger allocation as it grows.
+//! The bytes a deletion leaves behind in the spare capacity go with the
+//! rest, when the text is dropped or replaced. A [sensitive] field's text
+//! is never sent to the input method, and leaves through
+//! [`InputContext::take_text`] as a [`Secret`], without a copy.
+//!
+//! [sensitive]: Input::is_sensitive
+
+use std::ops::{Deref, Range};
 
 use app::{Build, Context, Event, Handle, Widget};
 use atlas::{Atlas, FontId};
 use bitflags::bitflags;
 use geometry::Color;
-use interactivity::{KeyMeaning, KeyPress, KeyRepeat, Press};
+use interactivity::{Focusable, KeyMeaning, KeyPress, KeyRepeat, Press};
 use layout::{ComputedLayout, LayoutStyle, StyleContext, px};
 use paint::{Paint, PaintContext, Quad};
+use zeroize::{Zeroize, Zeroizing};
 
-use crate::{Div, Text, TextContext, div, text};
+use crate::{Div, Secret, Text, TextContext, div, text};
+
+/// A field's text, wiped when it goes: dropped, replaced, or moved to a
+/// bigger allocation.
+struct Wiped(String);
+
+impl Wiped {
+    fn insert_str(&mut self, at: usize, s: &str) {
+        self.reserve(s.len());
+        self.0.insert_str(at, s);
+    }
+
+    /// Room for `additional` more bytes, the old allocation wiped if the
+    /// text has to move.
+    fn reserve(&mut self, additional: usize) {
+        if self.0.capacity() - self.0.len() >= additional {
+            return;
+        }
+        let mut grown =
+            String::with_capacity((self.0.len() + additional).max(self.0.capacity() * 2));
+        grown.push_str(&self.0);
+        std::mem::replace(&mut self.0, grown).zeroize();
+    }
+
+    fn drain(&mut self, range: Range<usize>) {
+        self.0.drain(range);
+    }
+
+    fn replace(&mut self, text: String) {
+        std::mem::replace(&mut self.0, text).zeroize();
+    }
+
+    fn take(&mut self) -> String {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Deref for Wiped {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 bitflags! {
     /// Hints about the kind of text an [`Input`] is editing, mirroring the
@@ -159,7 +220,7 @@ pub struct Input {
     /// focused. Set at build from `InputBuilder::caret` (which
     /// defaults to `InputBuilder::color`).
     caret_color: Color,
-    string: String,
+    string: Wiped,
     /// The cursor's byte offset in `string`.
     cursor: usize,
     /// The preedit shown at the cursor; never part of `string`.
@@ -180,12 +241,32 @@ pub struct Input {
     /// toggling a "show password" button sets it `true` to reveal the
     /// typed text. Has no effect when `HIDDENTEXT` is not set.
     unmasked: bool,
+    /// The text's colour, from `InputBuilder::color`; dimmed while
+    /// disabled.
+    color: Color,
+    /// Shown, dimmed, but takes no focus, presses, keys or edits.
+    disabled: bool,
 }
+
+/// How much of its colour a disabled field's text keeps, as a disabled
+/// button's label does.
+const DISABLED_OPACITY: f32 = 0.38;
 
 impl Input {
     /// The committed text, without any preedit.
     pub fn text(&self) -> &str {
         &self.string
+    }
+
+    /// A copy of the text, wiped when it goes: an answer sent while the
+    /// field keeps showing what was typed.
+    pub fn secret(&self) -> Secret {
+        Secret::from(self.string.as_bytes().to_vec())
+    }
+
+    /// Whether the field takes nothing: see [`InputContext::set_disabled`].
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
     }
 
     /// The cursor's byte offset in the text.
@@ -228,6 +309,16 @@ impl Input {
         self.content_hint.contains(ContentHint::HIDDENTEXT) && !self.unmasked
     }
 
+    /// Whether this field holds a secret: `SENSITIVEDATA`, or a password
+    /// or PIN purpose. Its text is never sent to the input method.
+    pub fn is_sensitive(&self) -> bool {
+        self.content_hint.contains(ContentHint::SENSITIVEDATA)
+            || matches!(
+                self.content_purpose,
+                ContentPurpose::Password | ContentPurpose::Pin
+            )
+    }
+
     /// What the widget shows: the string with the preedit at the cursor.
     /// When `is_hidden`, each committed character is replaced by a bullet
     /// `•`; the preedit is shown verbatim so the IME composition stays
@@ -247,7 +338,7 @@ impl Input {
                     &self.string[..self.cursor],
                     &self.string[self.cursor..]
                 ),
-                None => self.string.clone(),
+                None => self.string.to_string(),
             }
         }
     }
@@ -328,12 +419,31 @@ impl Input {
     }
 }
 
+/// Return in a single-line [`Input`]: the user is done with the text.
+/// Emitted at the input instead of inserting a line break; read the text
+/// from the widget. A `MULTILINE` input inserts the break instead. (A line
+/// break committed by an input method is text, and goes in either way.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputSubmit;
+impl Event for InputSubmit {}
+
 /// A key arrived: apply it, push the display, and tell the
 /// `text-input` crate the text changed by emitting `InputFocus` — the
 /// same signal a press-driven cursor move sends, which `on_focus`
 /// turns into a surrounding-text report with `Other` as the cause, so
 /// the IME's picture of the text stays true across keyboard edits.
 fn on_key(ctx: &mut Context<'_, Input>, meaning: &KeyMeaning) {
+    if ctx.me().disabled {
+        return;
+    }
+    if *meaning == KeyMeaning::Enter {
+        if ctx.me().content_hint.contains(ContentHint::MULTILINE) {
+            on_key(ctx, &KeyMeaning::Text("\n".into()));
+        } else {
+            ctx.emit(InputSubmit, ctx.handle());
+        }
+        return;
+    }
     if ctx.me().apply_meaning(meaning) {
         sync(ctx);
         ctx.emit(InputFocus { focused: true }, ctx.handle());
@@ -493,22 +603,29 @@ impl Widget for Input {
         me: app::prelude::Handle<Self>,
         s: &mut app::prelude::Spawner<'_, Self>,
     ) -> Self {
+        // A press takes the keyboard focus here.
+        *s.component_mut::<Focusable>(me).unwrap() = Focusable(true);
         let mut container = div().border(b.border.0, b.border.1).style(b.style);
         if let Some(bg) = b.background {
             container = container.background(bg);
         }
         let container = s.spawn(me, container);
-        let content = s.spawn(
+        // The text and its caret share a line box that starts where the
+        // text does, so the caret's offset is the text's own, whatever
+        // padding or border the container has.
+        let line = s.spawn(
             container,
-            text(b.font, b.text.clone()).size(b.px).color(b.color),
+            div().style(LayoutStyle::default().relative().row().shrink(0.0)),
         );
+        let content = s.spawn(line, text(b.font, b.text.clone()).size(b.px).color(b.color));
         // A static 1px caret, sized to the line, positioned over `content`
         // by `sync`'s `set_left`. Absolute so it never enters the flex flow.
         // Built with no paint: `sync` turns it on when the widget is
-        // focused, so it is invisible until then.
-        let line_height = s.resource::<Atlas>().line(b.font, b.px).ascent;
+        // focused, so it is invisible until then. It spans the letters,
+        // descenders included.
+        let line_height = s.resource::<Atlas>().line(b.font, b.px).extent();
         let caret = s.spawn(
-            container,
+            line,
             div().style(
                 LayoutStyle::default()
                     .absolute()
@@ -516,13 +633,16 @@ impl Widget for Input {
             ),
         );
         s.on::<InputEdit>(me, |ctx, e| {
+            if ctx.me().disabled {
+                return;
+            }
             ctx.me().apply(e);
             sync(ctx);
         });
         s.on::<KeyPress>(me, |ctx, e| on_key(ctx, &e.meaning));
         s.on::<KeyRepeat>(me, |ctx, e| on_key(ctx, &e.meaning));
         s.on::<InputFocus>(me, |ctx, e| {
-            ctx.me().focused = e.focused;
+            ctx.me().focused = e.focused && !ctx.me().disabled;
             sync(ctx);
         });
         // A press on this widget is what focuses it, and where it lands
@@ -532,13 +652,16 @@ impl Widget for Input {
         // `InputFocus { focused: true }` that follows tells the
         // `text-input` crate to report the new cursor to the IM.
         s.on::<Press>(me, |ctx, e| {
+            if ctx.me().disabled {
+                return;
+            }
             let (content, font, font_px, string, hidden) = {
                 let me = ctx.me();
                 (
                     me.content,
                     me.font,
                     me.px,
-                    me.string.clone(),
+                    Zeroizing::new(me.string.to_string()),
                     me.is_hidden(),
                 )
             };
@@ -572,13 +695,15 @@ impl Widget for Input {
             font: b.font,
             px: b.px,
             caret_color: b.caret,
-            string: b.text,
+            string: Wiped(b.text),
             cursor,
             preedit: None,
             focused: false,
             content_hint: b.content_hint,
             content_purpose: b.content_purpose,
             unmasked: false,
+            color: b.color,
+            disabled: false,
         }
     }
 }
@@ -594,11 +719,11 @@ fn sync(ctx: &mut Context<'_, Input>) {
         // The caret sits over the glyphs before the cursor; when the
         // field is hidden those glyphs are bullets, so measure the
         // masked prefix — the real text's widths would misplace it.
-        let before_cursor = if hidden {
+        let before_cursor = Zeroizing::new(if hidden {
             mask(&me.string[..me.cursor])
         } else {
             me.string[..me.cursor].to_string()
-        };
+        });
         (
             me.content,
             me.caret,
@@ -631,24 +756,67 @@ pub trait InputContext {
     /// is dropped.
     fn set_text(&mut self, text: impl Into<String>);
 
+    /// Take the text out, as a [`Secret`] holding the very bytes the field
+    /// did, and leave the field empty: how a password leaves its field.
+    fn take_text(&mut self) -> Secret;
+
     /// Show or hide the field's text. Only meaningful for a field whose
     /// `ContentHint` includes `HIDDENTEXT` (a password field): `false`
     /// (the default) masks each character as `•`, `true` reveals the
     /// typed text. A no-op for a non-hidden field. Resyncs the display.
     fn set_hidden(&mut self, hidden: bool);
+
+    /// Disable the field, or enable it again. Disabled, it keeps showing
+    /// its text, dimmed, and takes no focus, presses, keys or edits; a
+    /// focused field gives the focus up.
+    fn set_disabled(&mut self, disabled: bool);
 }
 
 impl InputContext for Context<'_, Input> {
     fn set_text(&mut self, text: impl Into<String>) {
         let me = self.me();
-        me.string = text.into();
+        me.string.replace(text.into());
         me.cursor = me.string.len();
         me.preedit = None;
         sync(self);
     }
 
+    fn take_text(&mut self) -> Secret {
+        let me = self.me();
+        let text = me.string.take();
+        me.cursor = 0;
+        me.preedit = None;
+        sync(self);
+        Secret::from(text)
+    }
+
     fn set_hidden(&mut self, hidden: bool) {
         self.me().unmasked = !hidden;
         sync(self);
+    }
+
+    fn set_disabled(&mut self, disabled: bool) {
+        if self.me().disabled == disabled {
+            return;
+        }
+        let (content, color, focused) = {
+            let me = self.me();
+            me.disabled = disabled;
+            (me.content, me.color, me.focused)
+        };
+        if let Some(mut f) = self.component_mut::<Focusable>() {
+            *f = Focusable(!disabled);
+        }
+        let color = if disabled {
+            color.with_alpha(color.a * DISABLED_OPACITY)
+        } else {
+            color
+        };
+        self.at(content).unwrap().set_color(color);
+        // The `text-input` crate blurs on this, and lets the keyboard
+        // focus go.
+        if disabled && focused {
+            self.emit(InputFocus { focused: false }, self.handle());
+        }
     }
 }

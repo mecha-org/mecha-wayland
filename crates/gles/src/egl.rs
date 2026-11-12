@@ -6,7 +6,6 @@
 use std::ffi::c_void;
 use std::fs::File;
 
-use gbm::AsRaw;
 use glow::HasContext;
 use khronos_egl as egl;
 
@@ -24,9 +23,9 @@ pub(crate) struct Gpu {
     pub(crate) egl: Egl,
     pub(crate) display: egl::Display,
     pub(crate) context: egl::Context,
-    /// Keeps the device fd open for the display's life; the `File` closes
-    /// it on drop.
-    pub(crate) gbm: gbm::Device<File>,
+    /// Keeps the device fd open for the display's life, and closes it
+    /// once the last buffer is gone.
+    pub(crate) gbm: crate::gbm::Device,
     pub(crate) gl: glow::Context,
     pub(crate) version: String,
     pub(crate) image_target_renderbuffer: ImageTargetRenderbuffer,
@@ -46,16 +45,12 @@ fn render_node() -> Result<File, crate::Error> {
 impl Gpu {
     pub(crate) fn open() -> Result<Gpu, crate::Error> {
         let node = render_node()?;
-        let gbm = setup("gbm_create_device", gbm::Device::new(node))?;
+        let gbm = crate::gbm::Device::new(node).map_err(crate::Error::Setup)?;
         // SAFETY: libEGL.so.1 is the system's EGL; nothing else is loaded.
         let egl = setup("load libEGL.so.1", unsafe { Egl::load_required() })?;
         // SAFETY: the gbm device pointer is live for as long as `gbm` is.
         let display = setup("eglGetPlatformDisplay(GBM)", unsafe {
-            egl.get_platform_display(
-                PLATFORM_GBM,
-                gbm.as_raw() as *mut c_void,
-                &[egl::ATTRIB_NONE],
-            )
+            egl.get_platform_display(PLATFORM_GBM, gbm.as_ptr(), &[egl::ATTRIB_NONE])
         })?;
         setup("eglInitialize", egl.initialize(display))?;
         setup(

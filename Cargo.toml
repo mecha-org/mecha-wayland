@@ -82,11 +82,11 @@ mechanix-widgets = { path = "crates/mechanix-widgets" }
 chrono = "0.4"
 bitflags = "2"
 fontdue = "0.9"
-gbm = { version = "0.18", default-features = false }
 glow = "0.17"
 io-uring = "0.7"
 khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"
+libloading = "0.8"
 png = "0.18"
 resvg = { version = "0.44", default-features = false }
 smallvec = "1"

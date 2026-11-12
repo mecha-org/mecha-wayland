@@ -1093,17 +1093,26 @@ mod tests {
             .tick_width(px(4.0));
         assert_eq!(a.tick_spec(), b.tick_spec());
         // Width as given; height is the vertical default (thin along the track).
-        assert_eq!((a.tick_spec().width, a.tick_spec().height), (px(4.0), px(2.0)));
+        assert_eq!(
+            (a.tick_spec().width, a.tick_spec().height),
+            (px(4.0), px(2.0))
+        );
         assert_eq!(a.tick_spec().gap, 8.0);
         assert_eq!(b.tick_spec().gap, 8.0);
 
         let r = slider().tick_radius(3.0).size(SliderSize::XSmall);
         assert_eq!(r.tick_spec().radius, 3.0);
-        assert_eq!((r.tick_spec().width, r.tick_spec().height), (px(2.0), px(16.0)));
+        assert_eq!(
+            (r.tick_spec().width, r.tick_spec().height),
+            (px(2.0), px(16.0))
+        );
 
         // Flipping orientation twice is a no-op for overrides.
         let f = slider().tick_height(px(30.0)).vertical().horizontal();
-        assert_eq!((f.tick_spec().width, f.tick_spec().height), (px(2.0), px(30.0)));
+        assert_eq!(
+            (f.tick_spec().width, f.tick_spec().height),
+            (px(2.0), px(30.0))
+        );
     }
 
     #[test]

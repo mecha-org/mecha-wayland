@@ -3,14 +3,13 @@
 //! renderbuffer, one FBO. Made and freed through the device.
 #![allow(unsafe_code)]
 
-use std::ffi::c_void;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
-use gbm::{AsRaw, BufferObjectFlags, Format, Modifier};
 use glow::HasContext;
 use khronos_egl as egl;
 
 use crate::egl::Gpu;
+use crate::gbm::{BufferObject, USE_LINEAR, USE_RENDERING};
 
 /// `DRM_FORMAT_XRGB8888`: an opaque target's format.
 pub const XRGB8888: u32 = 0x3432_5258;
@@ -50,7 +49,7 @@ pub struct Target {
     image: egl::Image,
     /// Must outlive `image`; dropped last by declaration order. Mapped
     /// on the CPU by [`first_row`].
-    bo: gbm::BufferObject<()>,
+    bo: BufferObject,
 }
 
 impl Target {
@@ -103,18 +102,13 @@ fn buffer(
     gpu: &Gpu,
     width: u32,
     height: u32,
-    format: Format,
+    fourcc: u32,
     modifiers: &[u64],
-) -> (gbm::BufferObject<()>, u64) {
+) -> (BufferObject, u64) {
     let linear = || {
         let bo = gpu
             .gbm
-            .create_buffer_object::<()>(
-                width,
-                height,
-                format,
-                BufferObjectFlags::RENDERING | BufferObjectFlags::LINEAR,
-            )
+            .create_buffer(width, height, fourcc, USE_RENDERING | USE_LINEAR)
             .unwrap_or_else(|e| panic!("gles: gbm_bo_create({width}x{height}, linear): {e}"));
         // `GBM_BO_USE_LINEAR` is a linear layout, but this entry point
         // records no modifier and the buffer reports `INVALID`, which is
@@ -125,15 +119,12 @@ fn buffer(
     if modifiers.is_empty() {
         return linear();
     }
-    match gpu.gbm.create_buffer_object_with_modifiers2::<()>(
-        width,
-        height,
-        format,
-        modifiers.iter().map(|&m| Modifier::from(m)),
-        BufferObjectFlags::RENDERING,
-    ) {
+    match gpu
+        .gbm
+        .create_buffer_with_modifiers(width, height, fourcc, modifiers, USE_RENDERING)
+    {
         Ok(bo) => {
-            let m = u64::from(bo.modifier());
+            let m = bo.modifier();
             let m = if m == INVALID { LINEAR } else { m };
             (bo, m)
         }
@@ -142,13 +133,12 @@ fn buffer(
 }
 
 pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, fourcc: u32, modifiers: &[u64]) -> Target {
-    let format = match fourcc {
-        XRGB8888 => Format::Xrgb8888,
-        ARGB8888 => Format::Argb8888,
-        _ => unreachable!("gles: a target is XRGB8888 or ARGB8888"),
-    };
-    let (bo, modifier) = buffer(gpu, width, height, format, modifiers);
-    let planes = (0..bo.plane_count() as i32)
+    assert!(
+        matches!(fourcc, XRGB8888 | ARGB8888),
+        "gles: a target is XRGB8888 or ARGB8888"
+    );
+    let (bo, modifier) = buffer(gpu, width, height, fourcc, modifiers);
+    let planes = (0..bo.plane_count())
         .map(|i| PlaneData {
             fd: bo
                 .fd_for_plane(i)
@@ -164,7 +154,7 @@ pub(crate) fn create(gpu: &Gpu, width: u32, height: u32, fourcc: u32, modifiers:
             gpu.display,
             egl::Context::from_ptr(egl::NO_CONTEXT),
             NATIVE_PIXMAP,
-            egl::ClientBuffer::from_ptr(bo.as_raw() as *mut c_void),
+            egl::ClientBuffer::from_ptr(bo.as_ptr()),
             &[egl::ATTRIB_NONE],
         )
     }
@@ -267,6 +257,6 @@ pub(crate) fn first_row(gpu: &Gpu, t: &Target) -> Vec<u8> {
     // before the CPU maps it.
     unsafe { gpu.gl.finish() };
     let row = t.width as usize * 4;
-    t.bo.map(0, 0, t.width, 1, |m| m.buffer()[..row].to_vec())
+    t.bo.read_map(0, 0, t.width, 1, |bytes| bytes[..row].to_vec())
         .unwrap_or_else(|e| panic!("gles: gbm_bo_map({}x1): {e}", t.width))
 }

@@ -7,6 +7,8 @@
 //! - [`Device::open`] takes the first render node, a GBM device, an EGL
 //!   display over it and a GLES 3.0 context, current on the calling
 //!   thread for the device's life. No GPU, or no 3.0, is a panic.
+//!   `libgbm.so.1` and `libEGL.so.1` are loaded here, not linked, so
+//!   building needs neither library nor its headers.
 //! - The atlas lives in two array textures allocated once from a
 //!   [`Budget`] and never rebound: glyph and icon pages as layers of an
 //!   `R8` array on unit 0, image pages as layers of an `RGBA8` array on
@@ -61,6 +63,7 @@
 mod copy;
 mod draw;
 mod egl;
+mod gbm;
 mod program;
 mod target;
 mod textures;

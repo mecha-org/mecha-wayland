@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 atlas.workspace = true
-gbm.workspace = true
+libloading.workspace = true
 geometry.workspace = true
 glow.workspace = true
 khronos-egl.workspace = true

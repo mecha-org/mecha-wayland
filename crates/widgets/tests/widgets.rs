@@ -394,6 +394,210 @@ fn empty_text_paints_an_empty_run() {
     assert_eq!(rect(&app, label.id()).width(), 0.0);
 }
 
+/// The tile a sprite of the ellipsis carries in `font` at `px`.
+fn ellipsis_tile(app: &mut App, font: FontId, px: u16) -> AtlasTile {
+    fresh_tiles(app, font, "\u{2026}", px)[0]
+}
+
+#[test]
+fn an_ellipsis_text_wider_than_its_row_shrinks_and_ends_in_an_ellipsis() {
+    let mut app = app();
+    let root = root(&mut app, 40.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(
+        root,
+        text(font, "Hello world").overflow(TextOverflow::Ellipsis),
+    );
+    app.tick();
+    assert!(
+        rect(&app, label.id()).width() <= 40.0,
+        "min-content is the ellipsis, so the flex item shrinks to its row"
+    );
+    let tiles = sprite_tiles(&app, label.id());
+    assert!(tiles.len() < 10, "fewer than the ten inked glyphs");
+    assert_eq!(tiles.last(), Some(&ellipsis_tile(&mut app, font, 16)));
+}
+
+#[test]
+fn an_ellipsis_text_that_fits_is_drawn_whole() {
+    let mut app = app();
+    let root = root(&mut app, 200.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(root, text(font, "Hello").overflow(TextOverflow::Ellipsis));
+    app.tick();
+    assert_eq!(
+        sprite_tiles(&app, label.id()),
+        fresh_tiles(&mut app, font, "Hello", 16),
+        "a box rounded from the pen does not cut the line"
+    );
+}
+
+#[test]
+fn widening_an_ellipsis_texts_row_restores_the_whole_line() {
+    let mut app = app();
+    let root = root(&mut app, 40.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(
+        root,
+        text(font, "Hello world").overflow(TextOverflow::Ellipsis),
+    );
+    app.tick();
+    assert!(sprite_tiles(&app, label.id()).len() < 10);
+
+    app.component_mut::<LayoutStyle>(root).unwrap().width = px(400.0);
+    app.tick();
+    assert_eq!(
+        sprite_tiles(&app, label.id()),
+        fresh_tiles(&mut app, font, "Hello world", 16)
+    );
+}
+
+#[test]
+fn a_clip_text_keeps_its_whole_line_in_a_narrow_row() {
+    let mut app = app();
+    let root = root(&mut app, 40.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(root, text(font, "Hello world"));
+    app.tick();
+    assert_eq!(
+        sprite_tiles(&app, label.id()),
+        fresh_tiles(&mut app, font, "Hello world", 16)
+    );
+}
+
+#[test]
+fn text_context_set_overflow_cuts_a_fixed_box_without_a_layout_change() {
+    let mut app = app();
+    let root = root(&mut app, 200.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(
+        root,
+        text(font, "Hello world").style(LayoutStyle::default().width(px(40.0))),
+    );
+    app.tick();
+    assert_eq!(sprite_tiles(&app, label.id()).len(), 10);
+    take_moved();
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            ctx.at(label).unwrap().set_overflow(TextOverflow::Ellipsis);
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    assert!(
+        !take_moved().iter().flatten().any(|&id| id == label.id()),
+        "the fixed box did not move, so no layout change refitted it"
+    );
+    let tiles = sprite_tiles(&app, label.id());
+    assert!(tiles.len() < 10);
+    assert_eq!(tiles.last(), Some(&ellipsis_tile(&mut app, font, 16)));
+}
+
+#[test]
+fn an_ellipsis_text_switched_to_clip_and_back_is_cut_to_its_row_again() {
+    let mut app = app();
+    let root = root(&mut app, 40.0, 20.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(
+        root,
+        text(font, "Hello world").overflow(TextOverflow::Ellipsis),
+    );
+    app.tick();
+    let cut = sprite_tiles(&app, label.id());
+    assert!(cut.len() < 10);
+
+    let set = |app: &mut App, overflow: TextOverflow| {
+        let controller = app.spawn(
+            app.root(),
+            ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+                ctx.at(label).unwrap().set_overflow(overflow);
+            })),
+        );
+        poke(app, controller.id());
+        app.tick();
+    };
+    set(&mut app, TextOverflow::Clip);
+    assert_eq!(
+        sprite_tiles(&app, label.id()).len(),
+        10,
+        "clip draws it whole"
+    );
+    set(&mut app, TextOverflow::Ellipsis);
+    assert_eq!(
+        sprite_tiles(&app, label.id()),
+        cut,
+        "back in its 40 px row, it is cut as before, not fitted to the wider clip box"
+    );
+}
+
+#[test]
+fn an_ellipsis_text_refits_as_set_text_and_set_size_grow_and_shrink_it() {
+    let mut app = app();
+    let root = root(&mut app, 120.0, 100.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let label: Handle<Text> = app.spawn(
+        root,
+        text(font, "Hi").size(16).overflow(TextOverflow::Ellipsis),
+    );
+    app.tick();
+
+    // Runs one setter on the label through a real dispatch, then ticks.
+    let act = |app: &mut App, f: Box<dyn FnMut(&mut Context<'_, Text>)>| {
+        let mut f = f;
+        let controller = app.spawn(
+            app.root(),
+            ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+                f(&mut ctx.at(label).unwrap());
+            })),
+        );
+        poke(app, controller.id());
+        app.tick();
+    };
+    let whole = |app: &mut App, s: &str, px: u16, why: &str| {
+        assert_eq!(
+            sprite_tiles(app, label.id()),
+            fresh_tiles(app, font, s, px),
+            "{why}: drawn whole"
+        );
+    };
+    let cut = |app: &mut App, s: &str, px: u16, why: &str| {
+        let tiles = sprite_tiles(app, label.id());
+        assert!(
+            tiles.len() < fresh_tiles(app, font, s, px).len(),
+            "{why}: fewer glyphs than the whole line"
+        );
+        assert_eq!(
+            tiles.last(),
+            Some(&ellipsis_tile(app, font, px)),
+            "{why}: ends in the ellipsis"
+        );
+        assert!(
+            rect(app, label.id()).width() <= 120.0,
+            "{why}: box within the row"
+        );
+    };
+
+    whole(&mut app, "Hi", 16, "short text at build");
+
+    let long = "Hello world, how are you doing today";
+    act(&mut app, Box::new(move |c| c.set_text(long)));
+    cut(&mut app, long, 16, "set_text longer");
+
+    act(&mut app, Box::new(|c| c.set_text("Hi")));
+    whole(&mut app, "Hi", 16, "set_text shorter");
+
+    act(&mut app, Box::new(|c| c.set_text("Hello")));
+    whole(&mut app, "Hello", 16, "set_text that still fits");
+
+    act(&mut app, Box::new(|c| c.set_size(64)));
+    cut(&mut app, "Hello", 64, "set_size larger");
+
+    act(&mut app, Box::new(|c| c.set_size(16)));
+    whole(&mut app, "Hello", 16, "set_size back down");
+}
+
 // ── Icon ────────────────────────────────────────────────────────────────
 
 fn icon_sprite(app: &mut App) -> SpriteId {

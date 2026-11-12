@@ -1,11 +1,17 @@
 //! `Text`: one line of glyphs, shaped once at build and re-shaped by its
 //! `Context` setters. Single-line only.
 
-use app::{Build, Context, Handle, Spawner, Widget};
+use std::borrow::Cow;
+
+use app::{Build, Context, Handle, OnChanged, Spawner, Widget};
 use atlas::{Atlas, FontId, Rescaled};
 use geometry::{Color, Point, Size};
-use layout::{LayoutStyle, Measure};
+use layout::{Available, ComputedLayout, LayoutStyle, Measure};
 use paint::{MonochromeSprite, Paint, PaintContext};
+
+const ELLIPSIS: &str = "\u{2026}";
+
+const ELLIPSIS_FALLBACK: &str = "...";
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -201,32 +207,57 @@ impl Widget for Text {
     type Builder = TextBuilder;
     fn build(b: TextBuilder, me: Handle<Text>, s: &mut Spawner<'_, Text>) -> Text {
         *s.component_mut::<LayoutStyle>(me).unwrap() = b.style;
-        let (sprites, size) = {
+        let (sprites, m) = {
             let mut atlas = s.resource_mut::<Atlas>();
-            shape(
+            let (sprites, size) = shape(
                 &mut atlas,
                 b.props.font,
                 b.props.px,
                 &b.props.string,
                 b.props.color,
-            )
+            );
+            let m = line_measure(&atlas, b.props.font, b.props.px, size, b.props.overflow);
+            (sprites, m)
         };
         *s.component_mut::<Paint>(me).unwrap() = Paint::Monochrome(sprites);
-        *s.component_mut::<Measure>(me).unwrap() = Measure::fixed(size);
+        *s.component_mut::<Measure>(me).unwrap() = m;
 
         s.on::<Rescaled>(me, |ctx: &mut Context<'_, Text>, _| reshape_text(ctx));
+
+        let mut last_width = None;
+        s.on::<OnChanged<ComputedLayout>>(me, move |ctx: &mut Context<'_, Text>, _| {
+            let width = ctx
+                .component::<ComputedLayout>()
+                .map(|l| l.content().width());
+
+            // whenever last computed width didn't change, do not perform
+            // any computation
+            if std::mem::replace(&mut last_width, width) == width {
+                return;
+            }
+            match ctx.me().overflow {
+                TextOverflow::Clip | TextOverflow::Visible => {}
+                TextOverflow::Ellipsis => refit_text(ctx, width),
+            }
+        });
 
         Text { props: b.props }
     }
 }
 
-/// One glyph of a laid-out line: the byte offset of its char, the font
-/// and glyph it resolved to, and its pen origin.
+/// One laid-out glyph: its char's byte offset, font, glyph, pen origin
+/// and advance.
 struct Placed {
     byte: usize,
     font: FontId,
     glyph: u16,
     x: f32,
+    advance: f32,
+}
+
+struct Fit {
+    end: usize,
+    marker: bool,
 }
 
 /// The single pen loop behind `measure`, `hit_position` and `shape`: a
@@ -246,13 +277,15 @@ fn layout(atlas: &Atlas, font: FontId, px: u16, text: &str) -> (Vec<Placed>, f32
         if let Some(prev) = placed.last().filter(|p| p.font == f) {
             pen += atlas.kern(f, prev.glyph, id, px);
         }
+        let advance = atlas.advance(f, id, px);
         placed.push(Placed {
             byte,
             font: f,
             glyph: id,
             x: pen,
+            advance,
         });
-        pen += atlas.advance(f, id, px);
+        pen += advance;
     }
     (placed, pen)
 }
@@ -268,7 +301,7 @@ pub fn hit_position(atlas: &Atlas, font: FontId, px: u16, text: &str, x: f32) ->
     let mut best_d = x.abs(); // distance from the boundary at pen = 0
     for p in &placed {
         let end = p.byte + text[p.byte..].chars().next().map_or(0, char::len_utf8);
-        let d = (p.x + atlas.advance(p.font, p.glyph, px) - x).abs();
+        let d = (p.x + p.advance - x).abs();
         if d < best_d {
             best_d = d;
             best = end;
@@ -282,6 +315,75 @@ pub fn hit_position(atlas: &Atlas, font: FontId, px: u16, text: &str, x: f32) ->
 /// of `layout`, so it agrees with `shape` and `hit_position`.
 pub fn measure(atlas: &Atlas, font: FontId, px: u16, text: &str) -> f32 {
     layout(atlas, font, px, text).1
+}
+
+fn ellipsis(atlas: &Atlas, font: FontId) -> &'static str {
+    if atlas.lookup(&[font], '\u{2026}').is_some() {
+        ELLIPSIS
+    } else {
+        ELLIPSIS_FALLBACK
+    }
+}
+
+/// keeps its glyphs up to the first whose advance does not end within
+/// `width` less `marker_w`, drops trailing whitespace, and takes the
+/// marker; narrower than the marker, it keeps nothing but the marker.
+/// `Clip` and `Visible` keep it whole. Pure: no atlas, no state.
+fn fit_line(line: &[Placed], text: &str, width: f32, overflow: TextOverflow, marker_w: f32) -> Fit {
+    let whole = Fit {
+        end: text.len(),
+        marker: false,
+    };
+    let Some(last) = line.last() else {
+        return whole;
+    };
+    if last.x + last.advance <= width {
+        return whole;
+    }
+    match overflow {
+        TextOverflow::Ellipsis => {
+            let end = line
+                .iter()
+                .find(|p| p.x + p.advance + marker_w > width)
+                .map_or(text.len(), |p| p.byte);
+            Fit {
+                end: text[..end].trim_end().len(),
+                marker: true,
+            }
+        }
+        TextOverflow::Clip | TextOverflow::Visible => whole,
+    }
+}
+
+/// A line's natural height in `font` at `px`: `ascent - descent + gap`.
+fn line_height(atlas: &Atlas, font: FontId, px: u16) -> f32 {
+    let line = atlas.line(font, px);
+    line.ascent - line.descent + line.gap
+}
+
+/// A line's `Measure`. Under `Ellipsis`, its width is rounded up and it
+/// may shrink to the ellipsis; otherwise it is `size`.
+fn line_measure(
+    atlas: &Atlas,
+    font: FontId,
+    px: u16,
+    size: Size,
+    overflow: TextOverflow,
+) -> Measure {
+    match overflow {
+        TextOverflow::Ellipsis => {
+            let marker_w = measure(atlas, font, px, ellipsis(atlas, font));
+            let natural = Size::new(size.width.ceil(), size.height);
+            let min = Size::new(marker_w.ceil().min(natural.width), size.height);
+            Measure::with(move |c| match c.available_width {
+                // TODO: If the box width is forced to have less width than ellipsis,
+                // it will overflow
+                Available::MinContent => min,
+                Available::MaxContent | Available::Definite(_) => natural,
+            })
+        }
+        TextOverflow::Clip | TextOverflow::Visible => Measure::fixed(size),
+    }
 }
 
 /// One line of `text` in `font` at `px`, tinted `color`: a sprite per
@@ -313,7 +415,8 @@ fn shape(
             ));
         }
     }
-    let height = line.extent() + line.gap;
+
+    let height = line_height(atlas, font, px);
     (sprites, Size::new(width, height))
 }
 
@@ -404,12 +507,12 @@ impl TextContext for Context<'_, Text> {
         self.me().props.align = align;
     }
 
-    // Placeholder
     fn set_overflow(&mut self, overflow: TextOverflow) {
         if self.me().overflow == overflow {
             return;
         }
         self.me().props.overflow = overflow;
+        reshape_text(self);
     }
 
     // Placeholder
@@ -437,17 +540,88 @@ impl TextContext for Context<'_, Text> {
     }
 }
 
+/// The setters' path: repaint, then a new `Measure`.
 fn reshape_text(ctx: &mut Context<'_, Text>) {
-    let (font, px, color, string) = {
+    let width = ctx
+        .component::<ComputedLayout>()
+        .map(|l| l.content().width());
+    let natural = paint_line(ctx, width);
+    let (font, px, overflow) = {
         let w = ctx.me();
-        (w.font, w.px, w.color, w.string.clone())
+        (w.font, w.px, w.overflow)
     };
-    let (sprites, size) = {
+    let m = {
+        let atlas = ctx.resource::<Atlas>();
+        line_measure(&atlas, font, px, natural, overflow)
+    };
+    *ctx.component_mut::<Measure>().unwrap() = m;
+}
+
+/// The layout-change path: repaint only, never `Measure`.
+fn refit_text(ctx: &mut Context<'_, Text>, width: Option<f32>) {
+    paint_line(ctx, width);
+}
+
+/// Shape and paint what the modifiers show; returns the natural size.
+fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
+    let string = std::mem::take(&mut ctx.me().props.string);
+    let props = ctx.me().props.clone();
+    let (sprites, natural) = {
         let mut atlas = ctx.resource_mut::<Atlas>();
-        shape(&mut atlas, font, px, &string, color)
+        let shown = modify(&atlas, &props, &string, width);
+        let (sprites, drawn) = shape(&mut atlas, props.font, props.px, &shown.text, props.color);
+        let natural = match &shown.fit {
+            Some(f) if f.marker => {
+                Size::new(measure(&atlas, props.font, props.px, &string), drawn.height)
+            }
+            _ => drawn,
+        };
+        (sprites, natural)
     };
+    ctx.me().props.string = string;
     ctx.set_paint(Paint::Monochrome(sprites));
-    *ctx.component_mut::<Measure>().unwrap() = Measure::fixed(size);
+    natural
+}
+
+/// The text a line draws, and its fit if cut.
+struct Shown<'a> {
+    text: Cow<'a, str>,
+    fit: Option<Fit>,
+}
+
+/// The text modifiers, in order. Pure.
+fn modify<'a>(atlas: &Atlas, props: &TextProps, text: &'a str, width: Option<f32>) -> Shown<'a> {
+    apply_overflow(atlas, props, text, width)
+}
+
+/// What `props.overflow` shows of `text` in a box `width` wide.
+fn apply_overflow<'a>(
+    atlas: &Atlas,
+    props: &TextProps,
+    text: &'a str,
+    width: Option<f32>,
+) -> Shown<'a> {
+    match (props.overflow, width) {
+        (TextOverflow::Ellipsis, Some(width)) => {
+            let marker = ellipsis(atlas, props.font);
+            let marker_w = measure(atlas, props.font, props.px, marker);
+            let (placed, _) = layout(atlas, props.font, props.px, text);
+            let fit = fit_line(&placed, text, width, props.overflow, marker_w);
+            let text = if fit.marker {
+                Cow::Owned(format!("{}{marker}", &text[..fit.end]))
+            } else {
+                Cow::Borrowed(&text[..fit.end])
+            };
+            Shown {
+                text,
+                fit: Some(fit),
+            }
+        }
+        (TextOverflow::Ellipsis, None) | (TextOverflow::Clip | TextOverflow::Visible, _) => Shown {
+            text: Cow::Borrowed(text),
+            fit: None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -598,5 +772,123 @@ mod tests {
         let g = atlas.glyph(f, id, 14);
         assert_eq!(sprites[0].size, g.size);
         assert!((sprites[0].tile.bounds.width() - 2.0 * g.size.width).abs() <= 1.0);
+    }
+
+    /// `text` laid out at 14 px and fitted to `width`.
+    fn fit(atlas: &Atlas, font: FontId, text: &str, width: f32, overflow: TextOverflow) -> Fit {
+        let marker_w = measure(atlas, font, 14, ELLIPSIS);
+        let (placed, _) = layout(atlas, font, 14, text);
+        fit_line(&placed, text, width, overflow, marker_w)
+    }
+
+    #[test]
+    fn fit_line_keeps_a_line_that_fits_whole() {
+        let (atlas, font) = inter();
+        let text = "Hello";
+        let f = fit(
+            &atlas,
+            font,
+            text,
+            measure(&atlas, font, 14, text),
+            TextOverflow::Ellipsis,
+        );
+        assert_eq!(f.end, text.len());
+        assert!(!f.marker);
+    }
+
+    #[test]
+    fn fit_line_cuts_an_overflowing_line_and_takes_the_marker() {
+        let (atlas, font) = inter();
+        let marker_w = measure(&atlas, font, 14, ELLIPSIS);
+        assert!(marker_w > 0.0, "test assumes Inter has U+2026");
+        let text = "Hello world";
+        let width = measure(&atlas, font, 14, "Hello") + marker_w;
+        let f = fit(&atlas, font, text, width, TextOverflow::Ellipsis);
+        assert_eq!(
+            &text[..f.end],
+            "Hello",
+            "a glyph ending exactly at the edge is kept"
+        );
+        assert!(f.marker);
+    }
+
+    #[test]
+    fn fit_line_drops_whitespace_before_the_marker() {
+        let (atlas, font) = inter();
+        let marker_w = measure(&atlas, font, 14, ELLIPSIS);
+        let text = "Hello world";
+        let width = measure(&atlas, font, 14, "Hello ") + marker_w;
+        let f = fit(&atlas, font, text, width, TextOverflow::Ellipsis);
+        assert_eq!(&text[..f.end], "Hello");
+        assert!(f.marker);
+    }
+
+    #[test]
+    fn fit_line_narrower_than_the_marker_keeps_only_the_marker() {
+        let (atlas, font) = inter();
+        let marker_w = measure(&atlas, font, 14, ELLIPSIS);
+        let f = fit(
+            &atlas,
+            font,
+            "Hello",
+            marker_w / 2.0,
+            TextOverflow::Ellipsis,
+        );
+        assert_eq!(f.end, 0);
+        assert!(f.marker);
+    }
+
+    #[test]
+    fn fit_line_cuts_on_a_char_boundary() {
+        let (atlas, font) = inter();
+        let marker_w = measure(&atlas, font, 14, ELLIPSIS);
+        let text = "café au lait";
+        let width = measure(&atlas, font, 14, "café") + marker_w;
+        let f = fit(&atlas, font, text, width, TextOverflow::Ellipsis);
+        assert_eq!(
+            &text[..f.end],
+            "café",
+            "the two bytes of 'é' are kept together"
+        );
+    }
+
+    #[test]
+    fn fit_line_with_no_marker_width_cuts_at_the_edge() {
+        let (atlas, font) = inter();
+        let text = "Hello world";
+        let (placed, _) = layout(&atlas, font, 14, text);
+        let width = measure(&atlas, font, 14, "Hello");
+        let f = fit_line(&placed, text, width, TextOverflow::Ellipsis, 0.0);
+        assert_eq!(
+            &text[..f.end],
+            "Hello",
+            "a zero-width marker cuts at the edge"
+        );
+        assert!(f.marker);
+    }
+
+    #[test]
+    fn fit_line_leaves_clip_and_visible_whole() {
+        let (atlas, font) = inter();
+        let text = "Hello world";
+        for overflow in [TextOverflow::Clip, TextOverflow::Visible] {
+            let f = fit(&atlas, font, text, 10.0, overflow);
+            assert_eq!(f.end, text.len(), "{overflow:?}");
+            assert!(!f.marker, "{overflow:?}");
+        }
+    }
+
+    #[test]
+    fn ellipsis_is_u2026_in_a_font_that_has_it() {
+        let (atlas, font) = inter();
+        assert_eq!(ellipsis(&atlas, font), ELLIPSIS);
+    }
+
+    #[test]
+    fn fit_line_of_an_empty_line_is_whole() {
+        let (atlas, font) = inter();
+        let f = fit(&atlas, font, "", 0.0, TextOverflow::Ellipsis);
+        assert_eq!(f.end, 0);
+        assert!(!f.marker);
     }
 }

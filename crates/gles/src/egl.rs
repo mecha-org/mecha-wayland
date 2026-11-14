@@ -36,6 +36,14 @@ fn setup<T>(step: &str, r: Result<T, impl std::fmt::Debug>) -> Result<T, crate::
 }
 
 fn render_node() -> Result<File, crate::Error> {
+    // GPUs without 3D (e.g. QEMU's virtio-gpu without host GL) can only allocate dumb buffers,
+    // which render nodes refuse; MECHA_GLES_DEVICE points such systems at a primary node instead.
+    if let Some(path) = std::env::var_os("MECHA_GLES_DEVICE") {
+        return setup(
+            "open MECHA_GLES_DEVICE",
+            File::options().read(true).write(true).open(path),
+        );
+    }
     (128..=255)
         .map(|i| format!("/dev/dri/renderD{i}"))
         .find_map(|p| File::options().read(true).write(true).open(p).ok())

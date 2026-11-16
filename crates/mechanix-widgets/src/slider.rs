@@ -3,7 +3,7 @@ use crate::text::{Text, TextContextExt, text};
 use app::{Build, Context, Event, Handle, OnChanged, Spawner, Widget};
 use geometry::{Color, Insets, Point, Rect};
 use interactivity::prelude::{ContactId, ContextClaim, Press, PressCancelled, PressMoved, Release};
-use layout::{Align, ComputedLayout, Justify, LayoutStyle, Val, auto, percent, px};
+use layout::{Align, ComputedLayout, Justify, LayoutStyle, Val, auto, px};
 use paint::{Paint, PaintContext, Quad};
 use theme::{ColorRole, SpawnerThemeExt, TextVariant, ThemeReader};
 use widgets::{Div, div};
@@ -107,10 +107,14 @@ pub fn default_value_format(value: f32) -> String {
     if s == "-0" { "0".into() } else { s.into() }
 }
 
+/// Opacity of the active ticks on a disabled slider, as a fraction of
+/// their normal opacity. The inactive ticks keep their color.
+pub const DISABLED_ACTIVE_OPACITY: f32 = 0.16;
+
 /// Default track length.
 pub const DEFAULT_LENGTH: Val = px(240.0);
 
-/// How many slots (divs) of `tick` px separated by `gap` px fit in
+/// How many ticks of `tick` px separated by `gap` px fit in
 /// `length` px: the slider's [`tick_count`](Slider::tick_count).
 /// `n` ticks need `n * tick + (n - 1) * gap`, so `n = (length + gap) / (tick + gap)`.
 /// `0` when not even one tick fits.
@@ -149,9 +153,8 @@ struct TickSpec {
 }
 
 impl TickSpec {
-    /// Number of ticks that fit in `length` px along the main axis. While
-    /// pressed, the thumb is drawn in place of one of them.
-    fn slots_in(self, length: f32, orientation: SliderOrientation) -> usize {
+    /// Number of ticks that fit in `length` px along the main axis.
+    fn ticks_in(self, length: f32, orientation: SliderOrientation) -> usize {
         fit_count(length, self.extent(orientation, length), self.gap)
     }
 
@@ -234,6 +237,11 @@ pub struct SliderBuilder {
     pub label_color: Option<ColorSource>,
     pub style: Option<LayoutStyle>,
     pub orientation: SliderOrientation,
+    /// Whether the slider ignores presses and drags; see [`disabled`](Self::disabled).
+    pub disabled: bool,
+    /// Whether the slider takes presses and drags itself; see
+    /// [`interactive`](Self::interactive).
+    pub interactive: bool,
 }
 
 impl Default for SliderBuilder {
@@ -265,6 +273,8 @@ impl SliderBuilder {
             label_color: None,
             style: None,
             orientation: SliderOrientation::Horizontal,
+            disabled: false,
+            interactive: true,
         }
     }
 
@@ -344,7 +354,7 @@ impl SliderBuilder {
     /// length, `None` when it depends on layout (`percent` / `auto`).
     pub fn tick_count(&self) -> Option<usize> {
         match self.length {
-            Val::Px(length) => Some(self.tick_spec().slots_in(length, self.orientation)),
+            Val::Px(length) => Some(self.tick_spec().ticks_in(length, self.orientation)),
             _ => None,
         }
     }
@@ -472,6 +482,27 @@ impl SliderBuilder {
         }
     }
 
+    /// Disables the slider: presses and drags are ignored (and not claimed,
+    /// so a scroll view around it still gets them), no thumb or label
+    /// appears, and the active ticks fade to
+    /// [`DISABLED_ACTIVE_OPACITY`]. The value can still be set from code.
+    /// Enabled by default.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Whether the slider takes presses and drags itself (it does by
+    /// default). A slider that doesn't leaves them unclaimed, so whatever
+    /// is around it gets them, and draws as usual: for a host that drives
+    /// it from its own gesture, setting the value with
+    /// [`SliderContextExt::set_value`] and showing the thumb with
+    /// [`SliderContextExt::set_held`].
+    pub fn interactive(mut self, interactive: bool) -> Self {
+        self.interactive = interactive;
+        self
+    }
+
     pub fn style(mut self, style: LayoutStyle) -> Self {
         self.style = Some(style);
         self
@@ -510,19 +541,32 @@ pub struct Slider {
     tick: TickSpec,
     /// Main-axis size of one tick in px, resolved against the laid-out track.
     extent: f32,
-    /// The `tick_count` tick divs (empty when no tick fits). While pressed,
-    /// slot [`thumb_index`](Slider::thumb_index) is drawn as the thumb.
+    /// The `tick_count` tick divs (empty when no tick fits).
     pub(crate) ticks: Vec<Handle<Div>>,
-    /// The slot currently styled as the thumb, if any.
-    pub(crate) thumb: Option<usize>,
+    /// The thumb while shown (only while pressed): its own absolutely placed
+    /// div, so it can sit anywhere along the track, between ticks too.
+    pub(crate) thumb: Option<Handle<Div>>,
     /// The contact currently dragging the slider, if any.
     pub(crate) dragging: Option<ContactId>,
+    /// Whether presses and drags are ignored.
+    disabled: bool,
+    /// Whether the slider takes presses and drags itself.
+    interactive: bool,
+    /// Whether the host shows the thumb as if pressed; see
+    /// [`SliderContextExt::set_held`].
+    held: bool,
     label_spec: LabelSpec,
     /// The value label while shown: its positioning box and the text.
     pub(crate) label: Option<(Handle<Div>, Handle<Text>)>,
 }
 
 impl Slider {
+    /// Whether the slider is disabled: it ignores presses and drags.
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
     /// Whether a contact is currently dragging the slider.
     #[inline]
     pub fn is_dragging(&self) -> bool {
@@ -556,9 +600,9 @@ impl Slider {
         self.orientation
     }
 
-    /// Number of ticks drawn, derived from the laid-out track length. While
-    /// pressed, one of them is drawn as the thumb. `0` before the first
-    /// layout of a `percent` / `auto` length, or when not even one fits.
+    /// Number of ticks drawn, derived from the laid-out track length. `0`
+    /// before the first layout of a `percent` / `auto` length, or when not
+    /// even one fits.
     #[inline]
     pub fn tick_count(&self) -> usize {
         self.tick_count
@@ -604,13 +648,19 @@ impl Slider {
         }
     }
 
-    /// The tick the thumb sits on for the current value, in
-    /// `0..tick_count`: `min` puts it on the first tick, `max` on the last.
-    /// The thumb is only drawn while pressed (see [`is_thumb_shown`](Self::is_thumb_shown));
-    /// otherwise this slot is drawn as a plain tick.
+    /// The tick nearest the thumb for the current value, in
+    /// `0..tick_count`: `min` is the first tick, `max` the last. The thumb
+    /// itself moves smoothly and can sit between two ticks.
     #[inline]
     pub fn thumb_index(&self) -> usize {
-        (self.fraction() * self.steps() as f32).round() as usize
+        self.tick_position().round() as usize
+    }
+
+    /// Where the thumb sits, counted in ticks: `0.0` on the first tick,
+    /// `tick_count - 1` on the last, `2.5` halfway between ticks 2 and 3.
+    #[inline]
+    fn tick_position(&self) -> f32 {
+        self.fraction() * self.steps() as f32
     }
 
     /// Whether the thumb is drawn: only while the slider is pressed or dragged.
@@ -620,29 +670,27 @@ impl Slider {
     }
 
     /// Number of ticks drawn lit while the slider is at rest, in
-    /// `0..=tick_count`: the ticks before the thumb's, plus the thumb's
-    /// own unless the value is `min`, so the lit run ends where the thumb
-    /// would appear. (While pressed the thumb's slot draws as the thumb.)
+    /// `0..=tick_count`: every tick at or before the thumb's position,
+    /// none at `min`. (While pressed, the ticks under the thumb are hidden.)
     #[inline]
     pub fn lit_ticks(&self) -> usize {
-        self.thumb_index() + usize::from(self.fraction() > 0.0)
-    }
-
-    /// Whether slot `i` is lit while the thumb is hidden; see [`lit_ticks`](Self::lit_ticks).
-    fn slot_lit(&self, i: usize) -> bool {
-        i < self.lit_ticks()
+        if self.tick_count == 0 || self.fraction() <= 0.0 {
+            return 0;
+        }
+        // Tolerate float error so a thumb exactly on a tick lights it.
+        let at_or_before = (self.tick_position() + 1e-4).floor() as usize + 1;
+        at_or_before.min(self.tick_count)
     }
 
     /// Fraction (`0.0..=1.0`) of the range under `pos`, from the left when
     /// horizontal or the bottom when vertical. `None` when there are no
     /// ticks to slide over.
     ///
-    /// With the thumb in slot `k`, its centre sits at
-    /// `extent / 2 + k * pitch` (the thumb takes exactly one slot), so
-    /// mapping the pointer through that line keeps the thumb under it.
+    /// The thumb's centre sits at [`thumb_center`](Self::thumb_center), on
+    /// the line through every tick's centre, so mapping the pointer
+    /// through that line keeps the thumb under it.
     fn fraction_at(&self, content: Rect, pos: Point) -> Option<f32> {
-        let pitch = self.extent + self.tick.gap.max(0.0);
-        let travel = self.steps() as f32 * pitch;
+        let travel = self.steps() as f32 * self.pitch();
         if travel <= 0.0 || !travel.is_finite() {
             return None;
         }
@@ -687,10 +735,35 @@ impl Slider {
         self.label.is_some()
     }
 
+    /// Distance between one tick's centre and the next, in px.
+    #[inline]
+    fn pitch(&self) -> f32 {
+        self.extent + self.tick.gap.max(0.0)
+    }
+
     /// Distance along the track from the content box's start (left, or
-    /// bottom when vertical) to the centre of the thumb in slot `k`.
-    fn thumb_center(&self, k: usize) -> f32 {
-        self.extent / 2.0 + k as f32 * (self.extent + self.tick.gap.max(0.0))
+    /// bottom when vertical) to the centre of tick `i`.
+    #[inline]
+    fn tick_center(&self, i: usize) -> f32 {
+        self.extent / 2.0 + i as f32 * self.pitch()
+    }
+
+    /// Distance along the track from the content box's start to the
+    /// thumb's centre. Moves smoothly with the value: on tick `i`'s centre
+    /// when the value is exactly that tick's, between ticks otherwise.
+    /// Known whether or not the thumb shows, for a host lining something
+    /// up with it.
+    #[inline]
+    pub fn thumb_center(&self) -> f32 {
+        self.extent / 2.0 + self.tick_position() * self.pitch()
+    }
+
+    /// While pressed, ticks whose centre is closer than this to the
+    /// thumb's centre are hidden: half the thumb plus the tick gap, so
+    /// there's always at least one gap of space on each side of the thumb.
+    #[inline]
+    fn clearance(&self) -> f32 {
+        self.extent / 2.0 + self.tick.gap.max(0.0)
     }
 
     /// Sets the value (clamped); returns whether it changed.
@@ -718,6 +791,12 @@ fn tick_colors(
     )
 }
 
+/// The active tick color as drawn on a disabled slider: faded to
+/// [`DISABLED_ACTIVE_OPACITY`] of its opacity.
+fn disabled_active(active: Color) -> Color {
+    active.with_alpha(active.a * DISABLED_ACTIVE_OPACITY)
+}
+
 fn thumb_color(thumb: Option<ColorSource>, reader: &impl ThemeReader) -> Color {
     thumb.unwrap_or(ColorRole::Primary.into()).resolve(reader)
 }
@@ -734,7 +813,7 @@ impl Widget for Slider {
         let label_spec = b.label_spec();
         // Both known up front only for a `px` length; otherwise set by `fit_ticks`.
         let slots = match b.length {
-            Val::Px(length) => tick.slots_in(length, b.orientation),
+            Val::Px(length) => tick.ticks_in(length, b.orientation),
             _ => 0,
         };
         let extent = match b.length {
@@ -797,16 +876,23 @@ impl Widget for Slider {
             ticks: Vec::new(),
             thumb: None,
             dragging: None,
+            disabled: b.disabled,
+            interactive: b.interactive,
+            held: false,
             label_spec,
             label: None,
         };
         slider.value = slider.clamp(slider.value);
 
         // No thumb yet: it only shows while the slider is pressed.
-        let (active, inactive) = tick_colors(b.active_color, b.inactive_color, s);
+        let (mut active, inactive) = tick_colors(b.active_color, b.inactive_color, s);
+        if b.disabled {
+            active = disabled_active(active);
+        }
+        let lit = slider.lit_ticks();
         slider.ticks = (0..slots)
             .map(|i| {
-                let color = if slider.slot_lit(i) { active } else { inactive };
+                let color = if i < lit { active } else { inactive };
                 s.spawn(me, tick_div(tick, b.orientation, extent, color))
             })
             .collect();
@@ -832,27 +918,103 @@ fn tick_style(tick: TickSpec, orientation: SliderOrientation, extent: f32) -> La
     LayoutStyle::default().width(w).height(h).shrink(0.0)
 }
 
-/// Layout of the thumb slot: exactly a tick's place along the track (so
-/// nothing around it moves), the thumb height across it, centred so it
-/// reaches past the ticks on both sides.
-fn thumb_style(tick: TickSpec, orientation: SliderOrientation, extent: f32) -> LayoutStyle {
-    let cross = px(tick.thumb_height);
-    let style = tick_style(tick, orientation, extent);
+/// Converts `along` (px along the track from the content box's start:
+/// left, or bottom when vertical) and the content box's cross-axis centre
+/// into `(main, cross)` offsets from the padding box's start edges (left
+/// and top), which is what absolute insets are measured from.
+fn padding_box_offsets(
+    layout: &ComputedLayout,
+    orientation: SliderOrientation,
+    along: f32,
+) -> (f32, f32) {
+    let content = layout.content();
+    let (left, top) = (
+        layout.rect.x() + layout.border.left,
+        layout.rect.y() + layout.border.top,
+    );
     match orientation {
-        SliderOrientation::Horizontal => style.height(cross),
-        SliderOrientation::Vertical => style.width(cross),
+        SliderOrientation::Horizontal => (
+            content.x() - left + along,
+            content.y() + content.height() / 2.0 - top,
+        ),
+        SliderOrientation::Vertical => (
+            content.bottom() - top - along,
+            content.x() + content.width() / 2.0 - left,
+        ),
+    }
+}
+
+/// Layout of the thumb: absolutely placed, so moving it never moves the
+/// ticks or resizes the slider. A tick's size along the track and
+/// `thumb_height` across it, centred on `main` along the track and on
+/// `cross` across it (both from [`padding_box_offsets`]).
+///
+/// The insets are rounded to whole pixels. Layout draws at whole pixels
+/// anyway, so this changes nothing on screen, but it keeps the style the
+/// same for pointer moves under a pixel, and [`restyle`] then skips the
+/// write and the relayout it would cause.
+fn thumb_box_style(
+    tick: TickSpec,
+    orientation: SliderOrientation,
+    extent: f32,
+    (main, cross): (f32, f32),
+) -> LayoutStyle {
+    let along = (main - extent / 2.0).round();
+    let across = (cross - tick.thumb_height / 2.0).round();
+    let style = LayoutStyle::default().absolute().shrink(0.0);
+    match orientation {
+        SliderOrientation::Horizontal => style
+            .width(px(extent))
+            .height(px(tick.thumb_height))
+            .inset(Insets::new(px(across), auto(), auto(), px(along))),
+        SliderOrientation::Vertical => style
+            .width(px(tick.thumb_height))
+            .height(px(extent))
+            .inset(Insets::new(px(along), auto(), auto(), px(across))),
+    }
+}
+
+/// Shows the thumb centred `center` px along the track (or hides it, for
+/// `None`), in `color`.
+fn sync_thumb(ctx: &mut Context<'_, Slider>, center: Option<f32>, color: Color) {
+    let layout = ctx.component::<ComputedLayout>().copied();
+    let (Some(center), Some(layout)) = (center, layout) else {
+        if let Some(thumb) = ctx.me().thumb.take() {
+            ctx.remove(thumb);
+        }
+        return;
+    };
+    let (tick, orientation, extent) = {
+        let me = ctx.me();
+        (me.tick, me.orientation, me.extent)
+    };
+    let offsets = padding_box_offsets(&layout, orientation, center);
+    let style = thumb_box_style(tick, orientation, extent, offsets);
+    match ctx.me().thumb {
+        Some(thumb) => {
+            restyle(ctx, thumb, style);
+            paint_quad(ctx, thumb, color, tick.radius);
+        }
+        None => {
+            let me = ctx.handle();
+            let thumb = ctx.spawn(me, div().style(style).radius(tick.radius).background(color));
+            ctx.me().thumb = Some(thumb);
+        }
     }
 }
 
 /// Layout of the box holding the value label: absolutely placed so it never
 /// moves the ticks or resizes the slider. Zero-sized along the track at the
 /// thumb's centre (`center`, px from the padding box's start edge) so the
-/// text centres on the thumb, with its near edge at the slider's cross-axis
-/// centre and padded by half the thumb plus `gap`, so the text sits `gap`
-/// past the thumb's end: above it when horizontal, left of it when vertical.
+/// text centres on the thumb. Its near edge is at the thumb's centre across
+/// the track (`from_far`, px from the padding box's bottom edge, or right
+/// edge when vertical: the same centre the thumb uses), padded by half the
+/// thumb plus `gap`, so the text sits `gap` past the thumb's end: above it
+/// when horizontal, left of it when vertical.
 fn label_box_style(
     orientation: SliderOrientation,
     center: f32,
+    from_far: f32,
     thumb_height: f32,
     gap: f32,
 ) -> LayoutStyle {
@@ -863,21 +1025,22 @@ fn label_box_style(
             .column()
             .width(zero)
             .padding(Insets::new(zero, zero, reach, zero))
-            .inset(Insets::new(auto(), auto(), percent(50.0), px(center))),
+            .inset(Insets::new(auto(), auto(), px(from_far), px(center))),
         SliderOrientation::Vertical => style
             .row()
             .height(zero)
             .padding(Insets::new(zero, reach, zero, zero))
-            .inset(Insets::new(px(center), percent(50.0), auto(), auto())),
+            .inset(Insets::new(px(center), px(from_far), auto(), auto())),
     }
 }
 
-/// Shows the value label beside the thumb in slot `thumb` (or hides it,
-/// for `None`), keeping its text and position in line with the value.
-fn sync_label(ctx: &mut Context<'_, Slider>, thumb: Option<usize>) {
+/// Shows the value label beside the thumb centred `thumb` px along the
+/// track (or hides it, for `None`), keeping its text and position in line
+/// with the value.
+fn sync_label(ctx: &mut Context<'_, Slider>, thumb: Option<f32>) {
     let spec = ctx.me().label_spec;
     let layout = ctx.component::<ComputedLayout>().copied();
-    let (Some(k), true, Some(layout)) = (thumb, spec.show, layout) else {
+    let (Some(along), true, Some(layout)) = (thumb, spec.show, layout) else {
         if let Some((label_box, _)) = ctx.me().label.take() {
             ctx.remove(label_box);
         }
@@ -887,17 +1050,23 @@ fn sync_label(ctx: &mut Context<'_, Slider>, thumb: Option<usize>) {
     // Insets are measured from the padding box.
     let orientation = ctx.me().orientation;
     let thumb_height = ctx.me().tick.thumb_height;
-    let along = ctx.me().thumb_center(k);
-    let content = layout.content();
-    let center = match orientation {
-        SliderOrientation::Horizontal => {
-            content.x() - (layout.rect.x() + layout.border.left) + along
-        }
-        SliderOrientation::Vertical => {
-            content.bottom() - (layout.rect.y() + layout.border.top) - along
-        }
+    let (center, cross) = padding_box_offsets(&layout, orientation, along);
+    // The insets come from the far edge across the track (bottom, or right
+    // when vertical), so measure the thumb's cross centre from there.
+    let border = layout.border;
+    let from_far = match orientation {
+        SliderOrientation::Horizontal => layout.rect.height() - border.top - border.bottom - cross,
+        SliderOrientation::Vertical => layout.rect.width() - border.left - border.right - cross,
     };
-    let style = label_box_style(orientation, center, thumb_height, spec.gap);
+    // Whole pixels, like the thumb's: moves under a pixel leave the style
+    // unchanged, so `restyle` skips the relayout.
+    let style = label_box_style(
+        orientation,
+        center.round(),
+        from_far.round(),
+        thumb_height,
+        spec.gap,
+    );
     let value = ctx.me().value_text();
 
     match ctx.me().label {
@@ -962,12 +1131,11 @@ fn fit_ticks(ctx: &mut Context<'_, Slider>) {
     let extent = tick.extent(orientation, length);
     let want = fit_count(length, extent, tick.gap);
 
-    // A `percent` tick resizes with the track: restyle the existing slots.
-    // That drops the thumb's look too; `sync_ticks` puts it back.
+    // A `percent` tick resizes with the track: restyle the existing ticks.
+    // `sync_ticks` then moves and resizes the thumb to match.
     let resized = ctx.me().extent != extent;
     if resized {
         ctx.me().extent = extent;
-        ctx.me().thumb = None;
         let style = tick_style(tick, orientation, extent);
         let ticks = ctx.me().ticks.clone();
         for t in ticks {
@@ -1004,6 +1172,10 @@ fn fit_ticks(ctx: &mut Context<'_, Slider>) {
 /// Starts a drag: the slider claims the contact so an enclosing scroll view
 /// can't take it over, then jumps to the pressed position and shows the thumb.
 fn on_press(ctx: &mut Context<'_, Slider>, e: &Press) {
+    if ctx.me().disabled || !ctx.me().interactive {
+        // Not claimed either, so whatever is around the slider gets it.
+        return;
+    }
     if ctx.me().dragging.is_some() {
         // Another contact already drives the slider.
         return;
@@ -1057,78 +1229,69 @@ fn set_from_pointer(ctx: &mut Context<'_, Slider>, pos: Point) -> bool {
     true
 }
 
-/// Brings the slots in line with the value. While pressed, the thumb's slot
-/// gets the thumb look, its two neighbours are hidden, the ones before it
-/// get the active color and the rest the inactive one; otherwise every slot
-/// is a plain tick.
+/// Brings the ticks, the thumb and the label in line with the value.
+///
+/// At rest every tick at or before the value is active and the rest are
+/// inactive; there is no thumb. While pressed, the thumb is drawn at the
+/// value (between ticks too), the ticks within [`Slider::clearance`] of it
+/// are hidden, the ones before it are active and the ones after inactive.
 fn sync_ticks(ctx: &mut Context<'_, Slider>) {
-    let (thumb, count, tick, orientation, extent, pressed) = {
+    let (count, radius, pressed) = {
         let me = ctx.me();
         (
-            me.thumb_index(),
             me.ticks.len(),
-            me.tick,
-            me.orientation,
-            me.extent,
-            me.dragging.is_some(),
+            me.tick.radius,
+            me.dragging.is_some() || me.held,
         )
     };
     let (active, inactive, thumb_color) = {
         let me = ctx.me();
+        let me_disabled = me.disabled;
         let (a, i, t) = (me.active_color, me.inactive_color, me.thumb_color);
         let (a, i) = tick_colors(a, i, ctx);
+        let a = if me_disabled { disabled_active(a) } else { a };
         (a, i, thumb_color(t, ctx))
     };
 
-    // Move the thumb's look: restore the slot it leaves, restyle the new one.
-    let want = (pressed && count > 0).then_some(thumb);
-    let shown = ctx.me().thumb;
-    if shown != want {
-        if let Some(old) = shown
-            && let Some(&t) = ctx.me().ticks.get(old)
-        {
-            restyle(ctx, t, tick_style(tick, orientation, extent));
-        }
-        if let Some(new) = want
-            && let Some(&t) = ctx.me().ticks.get(new)
-        {
-            restyle(ctx, t, thumb_style(tick, orientation, extent));
-        }
-        ctx.me().thumb = want;
-    }
-    sync_label(ctx, want);
+    let center = (pressed && count > 0).then(|| ctx.me().thumb_center());
+    sync_thumb(ctx, center, thumb_color);
+    sync_label(ctx, center);
 
-    // While pressed, the ticks right beside the thumb are hidden (kept in
-    // place, drawn transparent) to give it room without moving anything.
-    let beside = |i: usize| want.is_some_and(|k| i + 1 == k || i == k + 1);
+    let (clearance, lit) = (ctx.me().clearance(), ctx.me().lit_ticks());
     for i in 0..count {
-        let slot = ctx.me().ticks[i];
-        let color = if want == Some(i) {
-            thumb_color
-        } else if beside(i) {
-            Color::TRANSPARENT
-        } else if ctx.me().slot_lit(i) {
-            active
-        } else {
-            inactive
+        let color = match center {
+            Some(c) => {
+                let at = ctx.me().tick_center(i);
+                if at <= c - clearance {
+                    active
+                } else if at >= c + clearance {
+                    inactive
+                } else {
+                    // Under or right beside the thumb: kept in place, not drawn.
+                    Color::TRANSPARENT
+                }
+            }
+            None if i < lit => active,
+            None => inactive,
         };
-        paint_slot(ctx, slot, color, tick.radius);
+        let tick = ctx.me().ticks[i];
+        paint_quad(ctx, tick, color, radius);
     }
 }
 
-/// Paints a slot as a `color` quad with the tick radius. The whole quad is
+/// Paints a tick or the thumb as a `color` quad with the tick radius. The whole quad is
 /// written (not just the colour, as `set_background` would): a transparent
 /// quad is stored as `Paint::None`, which forgets the radius, so a hidden
 /// neighbour would otherwise come back square. `set_paint` skips the write
-/// when the paint is unchanged, so a drag only touches the slots it moves.
-fn paint_slot(ctx: &mut Context<'_, Slider>, slot: Handle<Div>, color: Color, radius: f32) {
+/// when the paint is unchanged, so a drag only touches the ticks it changes.
+fn paint_quad(ctx: &mut Context<'_, Slider>, node: Handle<Div>, color: Color, radius: f32) {
     let quad = Quad::new(color).radius(radius);
     let paint = if quad.is_invisible() {
         Paint::None
     } else {
         Paint::Quad(quad)
     };
-    if let Some(mut c) = ctx.at(slot) {
+    if let Some(mut c) = ctx.at(node) {
         c.set_paint(paint);
     }
 }
@@ -1140,12 +1303,23 @@ pub trait SliderContextExt {
     fn fraction(&mut self) -> f32;
     fn lit_ticks(&mut self) -> usize;
     fn orientation(&mut self) -> SliderOrientation;
+    fn is_disabled(&mut self) -> bool;
     /// Clamps to `[min, max]` without emitting an event.
     fn set_value(&mut self, value: f32);
     fn set_range(&mut self, min: f32, max: f32);
     fn set_active_color(&mut self, color: impl IntoColorSource);
     fn set_inactive_color(&mut self, color: impl IntoColorSource);
     fn set_thumb_color(&mut self, color: impl IntoColorSource);
+    /// Disables or re-enables the slider; see [`SliderBuilder::disabled`].
+    /// Disabling it mid-drag ends the drag: the thumb and label go away and
+    /// the rest of that press is ignored.
+    fn set_disabled(&mut self, disabled: bool);
+    /// Shows the thumb (and the value label) as if the slider were
+    /// pressed, or stops; for a host driving a non-[`interactive`]
+    /// slider from its own gesture.
+    ///
+    /// [`interactive`]: SliderBuilder::interactive
+    fn set_held(&mut self, held: bool);
     fn sync_visuals(&mut self);
 }
 
@@ -1168,6 +1342,10 @@ impl SliderContextExt for Context<'_, Slider> {
 
     fn orientation(&mut self) -> SliderOrientation {
         self.me().orientation
+    }
+
+    fn is_disabled(&mut self) -> bool {
+        self.me().disabled
     }
 
     fn set_value(&mut self, value: f32) {
@@ -1197,6 +1375,25 @@ impl SliderContextExt for Context<'_, Slider> {
     fn set_thumb_color(&mut self, color: impl IntoColorSource) {
         self.me().thumb_color = color.into_color_source();
         sync_ticks(self);
+    }
+
+    fn set_disabled(&mut self, disabled: bool) {
+        let me = self.me();
+        if me.disabled == disabled {
+            return;
+        }
+        me.disabled = disabled;
+        if disabled {
+            me.dragging = None;
+        }
+        sync_ticks(self);
+    }
+
+    fn set_held(&mut self, held: bool) {
+        if self.me().held != held {
+            self.me().held = held;
+            sync_ticks(self);
+        }
     }
 
     fn sync_visuals(&mut self) {
@@ -1278,6 +1475,9 @@ mod tests {
             ticks: vec![],
             thumb: None,
             dragging: None,
+            disabled: false,
+            interactive: true,
+            held: false,
             label_spec: slider().label_spec(),
             label: None,
         }
@@ -1323,8 +1523,8 @@ mod tests {
 
     #[test]
     fn pointer_keeps_the_thumb_under_it() {
-        // 41 ticks: 2 px wide, 4 px gaps. The thumb takes exactly
-        // one tick's place, so in slot `k` its centre is at `x + 1 + 6k`.
+        // 41 ticks: 2 px wide, 4 px gaps. On tick `k` the thumb's centre is
+        // at `x + 1 + 6k`, the tick's own centre.
         let mut s = slider_at(0.0, 0.0, 100.0, 41);
         let track = Rect::new(10.0, 0.0, 260.0, 40.0);
         let at = |s: &Slider, x: f32| s.fraction_at(track, Point::new(x, 0.0));
@@ -1340,12 +1540,12 @@ mod tests {
         for k in [0usize, 7, 20, 40] {
             let f = at(&s, 11.0 + 6.0 * k as f32).unwrap();
             s.value = s.value_at_fraction(f);
-            assert_eq!(s.thumb_index(), k, "slot {k}");
+            assert_eq!(s.thumb_index(), k, "tick {k}");
             let lit = k + usize::from(k > 0);
             assert_eq!(
                 s.lit_ticks(),
                 lit,
-                "lit up to and including the thumb's slot"
+                "lit up to and including the thumb's tick"
             );
         }
 
@@ -1376,8 +1576,12 @@ mod tests {
         assert!(s.set(38.0));
         assert_eq!(s.value, 38.0);
         assert!(!s.set(38.0));
-        assert_eq!(s.thumb_index(), 2); // 1.52 ticks rounds to 2
-        assert_eq!(s.lit_ticks(), 3); // ...and that slot is lit too
+        // 1.52 ticks along: nearest tick 2, but only ticks 0 and 1 are at
+        // or before the thumb, so 2 are lit.
+        assert_eq!(s.thumb_index(), 2);
+        assert_eq!(s.lit_ticks(), 2);
+        assert!(s.set(50.0)); // exactly on tick 2: it's lit
+        assert_eq!(s.lit_ticks(), 3);
 
         assert!(s.set(-10.0));
         assert_eq!(s.value, 0.0);
@@ -1775,27 +1979,41 @@ mod tests {
             let me = app.widget::<Slider>(s).unwrap();
             app.component::<ComputedLayout>(me.ticks[i]).unwrap().rect
         };
-        let check = |app: &App, k: usize| {
+        // `pos` is where the thumb should be, counted in ticks (2.5 is
+        // halfway between ticks 2 and 3).
+        let check = |app: &App, pos: f32| {
             let me = app.widget::<Slider>(s).unwrap();
-            assert_eq!(me.thumb, Some(k));
-            let track = app.component::<ComputedLayout>(s).unwrap().content();
-            let thumb = rect(app, k);
+            let slider = app.component::<ComputedLayout>(s).unwrap();
+            let track = slider.content();
+            let thumb = app
+                .component::<ComputedLayout>(me.thumb.expect("thumb shown while pressed"))
+                .unwrap()
+                .rect;
             assert_eq!(thumb.height(), 68.0, "large thumb height");
             assert_eq!(thumb.width(), 2.0);
-            // Nothing moves: every slot, the thumb included, stays where it
-            // sits at rest.
+            // Tick `i`'s centre is 1 + 6i px along; the thumb's follows `pos`.
+            let center = thumb.x() + 1.0 - track.x();
+            let want = 1.0 + 6.0 * pos;
+            assert!(
+                (center - want).abs() <= 0.5,
+                "thumb at {center}, want {want}"
+            );
+            assert_eq!(thumb.y(), slider.rect.y(), "centred across the track");
+            // Nothing moves: every tick stays where it sits at rest.
             for i in 0..me.ticks.len() {
-                assert_eq!(rect(app, i).x() - track.x(), 6.0 * i as f32, "slot {i}");
+                assert_eq!(rect(app, i).x() - track.x(), 6.0 * i as f32, "tick {i}");
                 assert_eq!(rect(app, i).width(), 2.0);
+                assert_eq!(rect(app, i).height(), 56.0);
             }
-            // The ticks right beside the thumb are hidden; the rest show.
+            // Ticks closer than half the thumb + the gap (1 + 4 = 5 px) to
+            // its centre are hidden; the rest show.
             let shown = |i: usize| match app.component::<paint::Paint>(me.ticks[i]) {
                 Some(paint::Paint::Quad(q)) => q.color != Color::TRANSPARENT,
                 _ => false,
             };
             for i in 0..me.ticks.len() {
-                let beside = i + 1 == k || i == k + 1;
-                assert_eq!(shown(i), !beside, "slot {i} with the thumb in {k}");
+                let near = (6.0 * (i as f32 - pos)).abs() < 5.0;
+                assert_eq!(shown(i), !near, "tick {i} with the thumb at {pos}");
             }
         };
 
@@ -1817,20 +2035,20 @@ mod tests {
         let rest_box = app.component::<ComputedLayout>(s).unwrap().rect;
         assert_eq!(rest_box.height(), 68.0);
 
-        // Dragging moves the thumb under the pointer; the slot it leaves is
-        // a plain tick again. Slot `k`'s thumb centre is at `x + 1 + 6k`.
+        // Dragging moves the thumb under the pointer, smoothly: tick `k`'s
+        // centre is at `x + 1 + 6k`, and positions between ticks work too.
         let x0 = app.component::<ComputedLayout>(s).unwrap().content().x() + 1.0;
-        let at = |k: usize| Point::new(x0 + 6.0 * k as f32, 0.0);
+        let at = |pos: f32| Point::new(x0 + 6.0 * pos, 0.0);
         app.emit(
             Press {
                 contact: ContactId::Mouse,
-                position: at(25),
+                position: at(25.0),
                 time: 0,
             },
             s.id(),
         );
         settle(&mut app);
-        check(&app, 25);
+        check(&app, 25.0);
         assert_eq!(
             app.component::<ComputedLayout>(s).unwrap().rect,
             rest_box,
@@ -1839,24 +2057,60 @@ mod tests {
         assert_eq!(rect(&app, 10).height(), 56.0);
         assert_eq!(app.widget::<Slider>(s).unwrap().value(), 25.0);
 
-        for k in [0usize, 39, 3] {
+        // The thumb's insets are whole pixels, and a move of under half a
+        // pixel leaves its style untouched (no relayout).
+        let thumb_style = |app: &App| {
+            let me = app.widget::<Slider>(s).unwrap();
+            app.component::<LayoutStyle>(me.thumb.unwrap())
+                .unwrap()
+                .clone()
+        };
+        let before = thumb_style(&app);
+        for v in [before.inset.top, before.inset.left] {
+            let Val::Px(v) = v else {
+                panic!("px inset, got {v:?}")
+            };
+            assert_eq!(v, v.round(), "whole-pixel inset");
+        }
+        app.emit(
+            PressMoved {
+                contact: ContactId::Mouse,
+                position: at(25.0 + 0.3 / 6.0),
+                time: 0,
+            },
+            s.id(),
+        );
+        settle(&mut app);
+        assert!(
+            app.widget::<Slider>(s).unwrap().value() > 25.0,
+            "value moved"
+        );
+        assert_eq!(thumb_style(&app), before, "0.3 px move: style unchanged");
+
+        // On ticks, halfway between two, a third of the way, both ends.
+        for pos in [0.0, 39.0, 2.5, 2.0 + 1.0 / 3.0, 3.0] {
             app.emit(
                 PressMoved {
                     contact: ContactId::Mouse,
-                    position: at(k),
+                    position: at(pos),
                     time: 0,
                 },
                 s.id(),
             );
             settle(&mut app);
-            check(&app, k);
+            check(&app, pos);
+            let value = app.widget::<Slider>(s).unwrap().value();
+            assert!(
+                (value - pos).abs() < 1e-3,
+                "value {value} follows the thumb"
+            );
         }
 
-        // Releasing hides the thumb again; its slot goes back to a tick.
+        // Releasing hides the thumb again.
         app.emit(
             Release {
                 contact: ContactId::Mouse,
-                position: at(3),
+                position: at(3.0),
                 time: 0,
             },
             s.id(),
@@ -1866,7 +2120,7 @@ mod tests {
         assert!(!me.is_thumb_shown());
         assert_eq!(rect(&app, 3).height(), 56.0);
         assert_eq!(me.value(), 3.0, "the value stays where it was dropped");
-        // Every slot shows again, rounded, including the neighbours that were
+        // Every tick shows again, rounded, including the ones that were
         // hidden (a transparent quad is stored as `Paint::None`, radius lost).
         for i in 0..me.ticks.len() {
             match app.component::<paint::Paint>(me.ticks[i]) {
@@ -1885,13 +2139,13 @@ mod tests {
         app.emit(
             Press {
                 contact: ContactId::Mouse,
-                position: at(3),
+                position: at(3.0),
                 time: 0,
             },
             s.id(),
         );
         settle(&mut app);
-        check(&app, 3);
+        check(&app, 3.0);
     }
 
     #[test]
@@ -1928,7 +2182,7 @@ mod tests {
             let (_, text_node) = me.label.expect("label shown while pressed");
             assert_eq!(me.value_text(), k.to_string());
             let thumb = app
-                .component::<ComputedLayout>(me.ticks[me.thumb.unwrap()])
+                .component::<ComputedLayout>(me.thumb.unwrap())
                 .unwrap()
                 .rect;
             let label = app.component::<ComputedLayout>(text_node).unwrap().rect;
@@ -1980,7 +2234,7 @@ mod tests {
         let me = app.widget::<Slider>(s).unwrap();
         let (_, text_node) = me.label.expect("label shown while pressed");
         let thumb = app
-            .component::<ComputedLayout>(me.ticks[me.thumb.unwrap()])
+            .component::<ComputedLayout>(me.thumb.unwrap())
             .unwrap()
             .rect;
         let label = app.component::<ComputedLayout>(text_node).unwrap().rect;
@@ -1995,6 +2249,346 @@ mod tests {
             label.y() + label.height() / 2.0,
         );
         assert!((tc - lc).abs() <= 1.0, "centred on the thumb: {tc} vs {lc}");
+    }
+
+    #[test]
+    fn vertical_thumb_moves_smoothly_between_ticks() {
+        let (mut app, root) = pressable_app();
+        // Vertical ticks are 2 px tall with 4 px gaps: 236 px fits 40,
+        // one per unit of 0..=39, counted up from the bottom.
+        let s = app.spawn(
+            root,
+            slider()
+                .size(SliderSize::Large)
+                .vertical()
+                .length(px(236.0))
+                .range(0.0, 39.0)
+                .value(10.0),
+        );
+        settle(&mut app);
+        let track = app.component::<ComputedLayout>(s).unwrap().content();
+        // Tick `i`'s centre is 1 + 6i px up from the bottom.
+        let y_at = |pos: f32| track.bottom() - 1.0 - 6.0 * pos;
+        let point = |pos: f32| Point::new(track.x(), y_at(pos));
+
+        press(&mut app, s, point(25.0));
+        for pos in [25.0, 2.5, 2.0 + 1.0 / 3.0, 0.0, 39.0] {
+            app.emit(
+                PressMoved {
+                    contact: ContactId::Mouse,
+                    position: point(pos),
+                    time: 0,
+                },
+                s.id(),
+            );
+            settle(&mut app);
+
+            let me = app.widget::<Slider>(s).unwrap();
+            let slider = app.component::<ComputedLayout>(s).unwrap();
+            assert!(
+                (me.value() - pos).abs() < 1e-3,
+                "value {} at {pos}",
+                me.value()
+            );
+            let thumb = app
+                .component::<ComputedLayout>(me.thumb.expect("thumb shown while pressed"))
+                .unwrap()
+                .rect;
+            assert_eq!((thumb.width(), thumb.height()), (68.0, 2.0), "thumb size");
+            let center = thumb.y() + 1.0;
+            assert!(
+                (center - y_at(pos)).abs() <= 0.5,
+                "thumb at {center}, want {} for {pos}",
+                y_at(pos)
+            );
+            assert_eq!(thumb.x(), slider.rect.x(), "centred across the track");
+
+            // Ticks stay put; the ones within 5 px of the thumb are hidden.
+            for (i, &t) in me.ticks.iter().enumerate() {
+                let r = app.component::<ComputedLayout>(t).unwrap().rect;
+                assert_eq!(r.y(), track.bottom() - 2.0 - 6.0 * i as f32, "tick {i}");
+                assert_eq!((r.width(), r.height()), (56.0, 2.0));
+                let shown = matches!(
+                    app.component::<paint::Paint>(t),
+                    Some(paint::Paint::Quad(q)) if q.color != Color::TRANSPARENT
+                );
+                let near = (6.0 * (i as f32 - pos)).abs() < 5.0;
+                assert_eq!(shown, !near, "tick {i} with the thumb at {pos}");
+            }
+
+            // The label follows: 4 px left of the thumb, centred on it.
+            let (_, text_node) = me.label.expect("label shown while pressed");
+            let label = app.component::<ComputedLayout>(text_node).unwrap().rect;
+            assert!((thumb.x() - label.right() - 4.0).abs() <= 1.0, "4 px left");
+            let lc = label.y() + label.height() / 2.0;
+            assert!((center - lc).abs() <= 1.0, "centred: {center} vs {lc}");
+        }
+    }
+
+    #[test]
+    fn label_stays_4px_from_the_thumb_with_uneven_padding() {
+        let (mut app, root) = pressable_app();
+        // 20 px of padding on top only: the thumb centres on the ticks
+        // (the content box), so the label must measure from there too,
+        // not from the middle of the padded box.
+        let s = app.spawn(
+            root,
+            slider()
+                .size(SliderSize::Large)
+                .length(px(236.0))
+                .range(0.0, 39.0)
+                .style(LayoutStyle::default().padding(Insets::new(
+                    px(20.0),
+                    px(0.0),
+                    px(0.0),
+                    px(0.0),
+                ))),
+        );
+        settle(&mut app);
+        let c = app.component::<ComputedLayout>(s).unwrap().content();
+        press(&mut app, s, Point::new(c.x() + 1.0 + 6.0 * 10.0, c.y()));
+        let me = app.widget::<Slider>(s).unwrap();
+        let thumb = app
+            .component::<ComputedLayout>(me.thumb.unwrap())
+            .unwrap()
+            .rect;
+        let tick = app.component::<ComputedLayout>(me.ticks[0]).unwrap().rect;
+        let (tc, kc) = (
+            thumb.y() + thumb.height() / 2.0,
+            tick.y() + tick.height() / 2.0,
+        );
+        assert!(
+            (tc - kc).abs() <= 0.5,
+            "thumb centred on the ticks: {tc} vs {kc}"
+        );
+        let (_, text_node) = me.label.unwrap();
+        let label = app.component::<ComputedLayout>(text_node).unwrap().rect;
+        assert!(
+            (thumb.y() - label.bottom() - 4.0).abs() <= 1.0,
+            "4 px above the thumb: thumb top {}, label bottom {}",
+            thumb.y(),
+            label.bottom()
+        );
+    }
+
+    /// Spawns a slider and lets a test call [`SliderContextExt::set_disabled`]
+    /// on it by emitting [`SetDisabled`] at the host.
+    struct Host {
+        slider: Handle<Slider>,
+    }
+
+    struct HostBuilder(SliderBuilder);
+
+    impl Build for HostBuilder {
+        type Widget = Host;
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct SetDisabled(bool);
+
+    impl Event for SetDisabled {}
+
+    impl Widget for Host {
+        type Builder = HostBuilder;
+
+        fn build(b: HostBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+            let slider = s.spawn(me, b.0);
+            s.on::<SetDisabled>(me, move |ctx, e: &SetDisabled| {
+                if let Some(mut c) = ctx.at(slider) {
+                    c.set_disabled(e.0);
+                }
+            });
+            Host { slider }
+        }
+    }
+
+    /// Whether `node` is drawn: a quad that isn't transparent.
+    fn drawn_color(app: &app::App, node: Handle<Div>) -> Option<Color> {
+        match app.component::<paint::Paint>(node) {
+            Some(paint::Paint::Quad(q)) if q.color != Color::TRANSPARENT => Some(q.color),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn disabled_slider_ignores_presses_and_fades_active_ticks() {
+        assert!(!slider().disabled, "enabled by default");
+        let (mut app, root) = pressable_app();
+        let s = app.spawn(
+            root,
+            slider()
+                .length(px(236.0))
+                .range(0.0, 39.0)
+                .value(10.0)
+                .disabled(true),
+        );
+        settle(&mut app);
+        assert!(app.widget::<Slider>(s).unwrap().is_disabled());
+
+        // Active ticks fade to 16% of their opacity; inactive ones keep theirs.
+        let (active, inactive) = tick_colors(None, None, &app);
+        let faded = active.with_alpha(active.a * DISABLED_ACTIVE_OPACITY);
+        {
+            let me = app.widget::<Slider>(s).unwrap();
+            assert_eq!(me.lit_ticks(), 11);
+            assert_eq!(drawn_color(&app, me.ticks[10]), Some(faded));
+            assert_eq!(drawn_color(&app, me.ticks[11]), Some(inactive));
+        }
+
+        // A press and drag change nothing: no value, no thumb, no label.
+        let c = app.component::<ComputedLayout>(s).unwrap().content();
+        press(&mut app, s, Point::new(c.x() + 1.0 + 6.0 * 30.0, c.y()));
+        app.emit(
+            PressMoved {
+                contact: ContactId::Mouse,
+                position: Point::new(c.x() + 1.0, c.y()),
+                time: 0,
+            },
+            s.id(),
+        );
+        settle(&mut app);
+        let me = app.widget::<Slider>(s).unwrap();
+        assert_eq!(me.value(), 10.0, "value unchanged");
+        assert!(!me.is_dragging());
+        assert!(!me.is_thumb_shown());
+        assert!(!me.is_label_shown());
+    }
+
+    /// Spawns a non-interactive slider and lets a test hold it.
+    struct HeldHost;
+    struct HeldHostWidget {
+        slider: Handle<Slider>,
+    }
+    struct Hold(bool, f32);
+    impl Event for Hold {}
+    impl Build for HeldHost {
+        type Widget = HeldHostWidget;
+    }
+    impl Widget for HeldHostWidget {
+        type Builder = HeldHost;
+        fn build(_: HeldHost, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+            let slider = s.spawn(
+                me,
+                crate::slider::slider()
+                    .length(px(236.0))
+                    .range(0.0, 39.0)
+                    .show_value(false)
+                    .interactive(false),
+            );
+            s.on::<Hold>(me, |ctx, e| {
+                let slider = ctx.me().slider;
+                if let Some(mut c) = ctx.at(slider) {
+                    c.set_value(e.1);
+                    c.set_held(e.0);
+                }
+            });
+            HeldHostWidget { slider }
+        }
+    }
+
+    #[test]
+    fn a_non_interactive_slider_ignores_presses_and_shows_the_thumb_when_held() {
+        assert!(slider().interactive, "interactive by default");
+        let (mut app, root) = pressable_app();
+        let host = app.spawn(root, HeldHost);
+        settle(&mut app);
+        let s = app.widget::<HeldHostWidget>(host).unwrap().slider;
+
+        let c = app.component::<ComputedLayout>(s).unwrap().content();
+        press(&mut app, s, Point::new(c.x() + 1.0 + 6.0 * 30.0, c.y()));
+        settle(&mut app);
+        {
+            let me = app.widget::<Slider>(s).unwrap();
+            assert_eq!(me.value(), 0.0, "value unchanged");
+            assert!(!me.is_dragging());
+            assert!(!me.is_thumb_shown());
+        }
+
+        app.emit(Hold(true, 20.0), host.id());
+        settle(&mut app);
+        {
+            let me = app.widget::<Slider>(s).unwrap();
+            assert_eq!(me.value(), 20.0);
+            assert!(me.is_thumb_shown());
+        }
+
+        app.emit(Hold(false, 0.0), host.id());
+        settle(&mut app);
+        let me = app.widget::<Slider>(s).unwrap();
+        assert_eq!(me.value(), 0.0);
+        assert!(!me.is_thumb_shown());
+    }
+
+    #[test]
+    fn set_disabled_ends_a_drag_and_can_be_undone() {
+        let (mut app, root) = pressable_app();
+        let host = app.spawn(
+            root,
+            HostBuilder(slider().length(px(236.0)).range(0.0, 39.0).value(10.0)),
+        );
+        settle(&mut app);
+        let s = app.widget::<Host>(host).unwrap().slider;
+        let c = app.component::<ComputedLayout>(s).unwrap().content();
+        let at = |pos: f32| Point::new(c.x() + 1.0 + 6.0 * pos, c.y());
+        let move_to = |app: &mut app::App, pos: f32| {
+            app.emit(
+                PressMoved {
+                    contact: ContactId::Mouse,
+                    position: at(pos),
+                    time: 0,
+                },
+                s.id(),
+            );
+            settle(app);
+        };
+        let (active, _) = tick_colors(None, None, &app);
+
+        // Dragging, then disabled mid-drag: the drag ends on the spot.
+        press(&mut app, s, at(20.0));
+        let pressed = app.widget::<Slider>(s).unwrap().value();
+        assert!((pressed - 20.0).abs() < 1e-3);
+        assert!(app.widget::<Slider>(s).unwrap().is_thumb_shown());
+        app.emit(SetDisabled(true), host.id());
+        settle(&mut app);
+        {
+            let me = app.widget::<Slider>(s).unwrap();
+            assert!(me.is_disabled());
+            assert!(!me.is_dragging());
+            assert!(!me.is_thumb_shown(), "thumb gone");
+            assert!(!me.is_label_shown(), "label gone");
+            assert_eq!(
+                drawn_color(&app, me.ticks[0]),
+                Some(active.with_alpha(active.a * DISABLED_ACTIVE_OPACITY)),
+                "active ticks faded"
+            );
+        }
+        // The rest of that press is ignored.
+        move_to(&mut app, 5.0);
+        assert_eq!(
+            app.widget::<Slider>(s).unwrap().value(),
+            pressed,
+            "unchanged"
+        );
+        app.emit(
+            Release {
+                contact: ContactId::Mouse,
+                position: at(5.0),
+                time: 0,
+            },
+            s.id(),
+        );
+        settle(&mut app);
+
+        // Enabled again: full colors, and presses work.
+        app.emit(SetDisabled(false), host.id());
+        settle(&mut app);
+        let me = app.widget::<Slider>(s).unwrap();
+        assert!(!me.is_disabled());
+        assert_eq!(drawn_color(&app, me.ticks[0]), Some(active), "full color");
+        press(&mut app, s, at(30.0));
+        let me = app.widget::<Slider>(s).unwrap();
+        assert!((me.value() - 30.0).abs() < 1e-3, "value {}", me.value());
+        assert!(me.is_thumb_shown());
     }
 
     #[test]

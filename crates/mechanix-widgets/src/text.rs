@@ -134,6 +134,12 @@ impl TextBuilder {
         self
     }
 
+    /// See [`TextProps::opaque`]. Opaque by default.
+    pub fn opaque(mut self, opaque: bool) -> Self {
+        self.props.opaque = opaque;
+        self
+    }
+
     /// Resolves theme tokens and overrides into concrete [`TextProps`].
     pub fn resolve_native_props(&self, env: &(impl ThemeReader + FontContextExt)) -> TextProps {
         let (font, px, color) = resolve_text_visuals(

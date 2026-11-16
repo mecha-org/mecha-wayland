@@ -73,6 +73,7 @@ pub struct TextProps {
     pub decoration: TextDecoration,
     pub wrap: TextWrap,
     pub max_lines: Option<usize>,
+    pub opaque: bool,
 }
 
 impl TextProps {
@@ -90,6 +91,7 @@ impl TextProps {
             decoration: TextDecoration::None,
             wrap: TextWrap::NoWrap,
             max_lines: None,
+            opaque: true,
         }
     }
 }
@@ -158,6 +160,12 @@ impl TextBuilder {
         self
     }
 
+    /// See [`TextProps::opaque`]. Opaque by default.
+    pub fn opaque(mut self, opaque: bool) -> Self {
+        self.props.opaque = opaque;
+        self
+    }
+
     pub fn line_height(mut self, height: f32) -> Self {
         self.props.line_height = Some(height);
         self
@@ -209,13 +217,14 @@ impl Widget for Text {
         *s.component_mut::<LayoutStyle>(me).unwrap() = b.style;
         let (sprites, m) = {
             let mut atlas = s.resource_mut::<Atlas>();
-            let (sprites, size) = shape(
+            let (mut sprites, size) = shape(
                 &mut atlas,
                 b.props.font,
                 b.props.px,
                 &b.props.string,
                 b.props.color,
             );
+            set_opaque(&mut sprites, b.props.opaque);
             let m = line_measure(&atlas, b.props.font, b.props.px, size, b.props.overflow);
             (sprites, m)
         };
@@ -420,6 +429,13 @@ fn shape(
     (sprites, Size::new(width, height))
 }
 
+/// Applies [`TextProps::opaque`] to shaped glyphs.
+fn set_opaque(sprites: &mut [MonochromeSprite], opaque: bool) {
+    for sprite in sprites {
+        sprite.is_opaque = opaque;
+    }
+}
+
 pub trait TextContext {
     fn set_text(&mut self, text: impl Into<String>);
     fn set_size(&mut self, px: u16);
@@ -569,7 +585,9 @@ fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
     let (sprites, natural) = {
         let mut atlas = ctx.resource_mut::<Atlas>();
         let shown = modify(&atlas, &props, &string, width);
-        let (sprites, drawn) = shape(&mut atlas, props.font, props.px, &shown.text, props.color);
+        let (mut sprites, drawn) =
+            shape(&mut atlas, props.font, props.px, &shown.text, props.color);
+        set_opaque(&mut sprites, props.opaque);
         let natural = match &shown.fit {
             Some(f) if f.marker => {
                 Size::new(measure(&atlas, props.font, props.px, &string), drawn.height)

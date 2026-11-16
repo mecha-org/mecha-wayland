@@ -2,6 +2,7 @@
 //! `Context` setters. Single-line only.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use app::{Build, Context, Handle, OnChanged, Spawner, Widget};
 use atlas::{Atlas, FontId, Rescaled};
@@ -207,19 +208,25 @@ impl Widget for Text {
     type Builder = TextBuilder;
     fn build(b: TextBuilder, me: Handle<Text>, s: &mut Spawner<'_, Text>) -> Text {
         *s.component_mut::<LayoutStyle>(me).unwrap() = b.style;
-        let (sprites, m) = {
+        let (paint, m) = {
             let mut atlas = s.resource_mut::<Atlas>();
-            let (sprites, size) = shape(
-                &mut atlas,
-                b.props.font,
-                b.props.px,
-                &b.props.string,
-                b.props.color,
-            );
-            let m = line_measure(&atlas, b.props.font, b.props.px, size, b.props.overflow);
-            (sprites, m)
+            // Do not paint anything for the first build.
+            if b.props.wrap == TextWrap::Word {
+                let m = text_measure(&atlas, &b.props, Size::new(0.0, 0.0));
+                (Paint::None, m)
+            } else {
+                let (sprites, size) = shape(
+                    &mut atlas,
+                    b.props.font,
+                    b.props.px,
+                    &b.props.string,
+                    b.props.color,
+                );
+                let m = text_measure(&atlas, &b.props, size);
+                (Paint::Monochrome(sprites), m)
+            }
         };
-        *s.component_mut::<Paint>(me).unwrap() = Paint::Monochrome(sprites);
+        *s.component_mut::<Paint>(me).unwrap() = paint;
         *s.component_mut::<Measure>(me).unwrap() = m;
 
         s.on::<Rescaled>(me, |ctx: &mut Context<'_, Text>, _| reshape_text(ctx));
@@ -235,9 +242,9 @@ impl Widget for Text {
             if std::mem::replace(&mut last_width, width) == width {
                 return;
             }
-            match ctx.me().overflow {
-                TextOverflow::Clip | TextOverflow::Visible => {}
-                TextOverflow::Ellipsis => refit_text(ctx, width),
+            match (ctx.me().wrap, ctx.me().overflow) {
+                (TextWrap::Word, _) | (_, TextOverflow::Ellipsis) => refit_text(ctx, width),
+                _ => {}
             }
         });
 
@@ -355,6 +362,77 @@ fn fit_line(line: &[Placed], text: &str, width: f32, overflow: TextOverflow, mar
     }
 }
 
+fn x_at(placed: &[Placed], byte: usize) -> f32 {
+    let i = placed.partition_point(|p| p.byte < byte);
+    match placed.get(i) {
+        Some(p) => p.x,
+        None => placed.last().map_or(0.0, |p| p.x + p.advance),
+    }
+}
+
+/// Splits text by word and check whether it fits the line. If not, then
+/// append it to the next line
+fn break_lines(placed: &[Placed], text: &str, width: f32) -> Vec<Range<usize>> {
+    let mut lines = Vec::new();
+    let mut line: Option<Range<usize>> = None; // None: no word yet
+
+    let mut at = 0;
+    for word in text.split(' ') {
+        let word_start = at;
+        let word_end = at + word.len();
+        at = word_end + 1;
+
+        if word.is_empty() {
+            continue;
+        }
+
+        match &mut line {
+            Some(l) if x_at(placed, word_end) - x_at(placed, l.start) <= width => {
+                l.end = word_end;
+            }
+            _ => lines.extend(line.replace(word_start..word_end)),
+        }
+    }
+
+    lines.extend(line);
+    if lines.is_empty() {
+        lines.push(0..0);
+    }
+    lines
+}
+
+fn wrap_measure(placed: Vec<Placed>, text: String, line_h: f32) -> Measure {
+    Measure::with(move |c| {
+        let width = match (c.known_width, c.available_width) {
+            (Some(w), _) | (None, Available::Definite(w)) => w,
+            (None, Available::MinContent) => 0.0,
+            (None, Available::MaxContent) => f32::MAX,
+        };
+        let lines = break_lines(&placed, &text, width);
+        let widest = lines
+            .iter()
+            .map(|l| x_at(&placed, l.end) - x_at(&placed, l.start))
+            .fold(0.0, f32::max);
+        Size::new(
+            c.known_width.unwrap_or(widest.ceil()),
+            lines.len() as f32 * line_h,
+        )
+    })
+}
+
+fn text_measure(atlas: &Atlas, props: &TextProps, natural: Size) -> Measure {
+    match props.wrap {
+        TextWrap::Word => {
+            let (placed, _) = layout(atlas, props.font, props.px, &props.string);
+            let line_h = line_height(atlas, props.font, props.px);
+            wrap_measure(placed, props.string.clone(), line_h)
+        }
+        TextWrap::NoWrap | TextWrap::BreakAll => {
+            line_measure(atlas, props.font, props.px, natural, props.overflow)
+        }
+    }
+}
+
 /// A line's natural height in `font` at `px`: `ascent - descent + gap`.
 fn line_height(atlas: &Atlas, font: FontId, px: u16) -> f32 {
     let line = atlas.line(font, px);
@@ -418,6 +496,32 @@ fn shape(
 
     let height = line_height(atlas, font, px);
     (sprites, Size::new(width, height))
+}
+
+fn shape_lines(
+    atlas: &mut Atlas,
+    font: FontId,
+    px: u16,
+    text: &str,
+    width: f32,
+    color: Color,
+) -> (Vec<MonochromeSprite>, Size) {
+    let (placed, _) = layout(atlas, font, px, text);
+    let lines = break_lines(&placed, text, width);
+    let line_h = line_height(atlas, font, px);
+
+    let mut sprites = Vec::new();
+    let mut widest: f32 = 0.0;
+    for (i, range) in lines.iter().enumerate() {
+        let (line, size) = shape(atlas, font, px, &text[range.clone()], color);
+        let y = i as f32 * line_h;
+        sprites.extend(line.into_iter().map(|mut sprite| {
+            sprite.offset.y += y;
+            sprite
+        }));
+        widest = widest.max(size.width);
+    }
+    (sprites, Size::new(widest, lines.len() as f32 * line_h))
 }
 
 pub trait TextContext {
@@ -523,12 +627,12 @@ impl TextContext for Context<'_, Text> {
         self.me().props.decoration = decoration;
     }
 
-    // Placeholder
     fn set_wrap(&mut self, wrap: TextWrap) {
         if self.me().wrap == wrap {
             return;
         }
         self.me().props.wrap = wrap;
+        reshape_text(self);
     }
 
     // Placeholder
@@ -546,13 +650,10 @@ fn reshape_text(ctx: &mut Context<'_, Text>) {
         .component::<ComputedLayout>()
         .map(|l| l.content().width());
     let natural = paint_line(ctx, width);
-    let (font, px, overflow) = {
-        let w = ctx.me();
-        (w.font, w.px, w.overflow)
-    };
+    let props = ctx.me().props.clone();
     let m = {
         let atlas = ctx.resource::<Atlas>();
-        line_measure(&atlas, font, px, natural, overflow)
+        text_measure(&atlas, &props, natural)
     };
     *ctx.component_mut::<Measure>().unwrap() = m;
 }
@@ -566,7 +667,17 @@ fn refit_text(ctx: &mut Context<'_, Text>, width: Option<f32>) {
 fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
     let string = std::mem::take(&mut ctx.me().props.string);
     let props = ctx.me().props.clone();
-    let (sprites, natural) = {
+    let (sprites, natural) = if let (TextWrap::Word, Some(width)) = (props.wrap, width) {
+        let mut atlas = ctx.resource_mut::<Atlas>();
+        shape_lines(
+            &mut atlas,
+            props.font,
+            props.px,
+            &string,
+            width,
+            props.color,
+        )
+    } else {
         let mut atlas = ctx.resource_mut::<Atlas>();
         let shown = modify(&atlas, &props, &string, width);
         let (sprites, drawn) = shape(&mut atlas, props.font, props.px, &shown.text, props.color);
@@ -890,5 +1001,132 @@ mod tests {
         let f = fit(&atlas, font, "", 0.0, TextOverflow::Ellipsis);
         assert_eq!(f.end, 0);
         assert!(!f.marker);
+    }
+
+    fn wrap<'a>(atlas: &Atlas, font: FontId, text: &'a str, at: &str) -> Vec<&'a str> {
+        let width = measure(atlas, font, 14, at) + 0.5;
+        let (placed, _) = layout(atlas, font, 14, text);
+        break_lines(&placed, text, width)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect()
+    }
+
+    #[test]
+    fn break_lines_keeps_text_that_fits_on_one_line() {
+        let (atlas, font) = inter();
+        assert_eq!(wrap(&atlas, font, "aaa bbb", "aaa bbb"), ["aaa bbb"]);
+    }
+
+    #[test]
+    fn break_lines_moves_the_overflowing_word_whole_to_the_next_line() {
+        let (atlas, font) = inter();
+        assert_eq!(wrap(&atlas, font, "aaa bbb", "aaa b"), ["aaa", "bbb"]);
+    }
+
+    #[test]
+    fn break_lines_keeps_breaking_as_long_as_text_remains() {
+        let (atlas, font) = inter();
+        assert_eq!(
+            wrap(&atlas, font, "aa bb cc dd", "aa bb c"),
+            ["aa bb", "cc dd"]
+        );
+        assert_eq!(wrap(&atlas, font, "aa bb cc", "aa b"), ["aa", "bb", "cc"]);
+    }
+
+    #[test]
+    fn break_lines_does_not_count_trailing_spaces() {
+        let (atlas, font) = inter();
+        assert_eq!(wrap(&atlas, font, "aaa bbb   ", "aaa bbb"), ["aaa bbb"]);
+    }
+
+    #[test]
+    fn break_lines_drops_spaces_at_a_break_and_at_the_start() {
+        let (atlas, font) = inter();
+        assert_eq!(wrap(&atlas, font, "aaa   bbb", "aaa  "), ["aaa", "bbb"]);
+        assert_eq!(wrap(&atlas, font, "  aaa", "aaa"), ["aaa"]);
+    }
+
+    #[test]
+    fn break_lines_gives_a_too_wide_word_a_line_of_its_own() {
+        let (atlas, font) = inter();
+        assert_eq!(
+            wrap(&atlas, font, "a bbbbbbbbbb c", "a bb"),
+            ["a", "bbbbbbbbbb", "c"]
+        );
+    }
+
+    #[test]
+    fn break_lines_of_text_without_words_is_one_empty_line() {
+        let (atlas, font) = inter();
+        assert_eq!(wrap(&atlas, font, "", "aaa"), [""]);
+        assert_eq!(wrap(&atlas, font, "   ", "aaa"), [""]);
+    }
+
+    fn wrapped(atlas: &Atlas, font: FontId, text: &str) -> Measure {
+        let props = TextProps {
+            px: 14,
+            wrap: TextWrap::Word,
+            ..TextProps::new(font, text)
+        };
+        text_measure(atlas, &props, Size::new(0.0, 0.0))
+    }
+
+    fn offered(known_width: Option<f32>, available_width: Available) -> layout::Constraints {
+        layout::Constraints {
+            known_width,
+            known_height: None,
+            available_width,
+            available_height: Available::MaxContent,
+        }
+    }
+
+    #[test]
+    fn wrap_measure_is_one_line_tall_per_wrapped_line() {
+        let (atlas, font) = inter();
+        let m = wrapped(&atlas, font, "aaa bbb ccc");
+        let line_h = line_height(&atlas, font, 14);
+
+        let one = measure(&atlas, font, 14, "aaa bbb ccc") + 0.5;
+        let two = measure(&atlas, font, 14, "aaa bbb") + 0.5;
+        let three = measure(&atlas, font, 14, "aaa b") + 0.5;
+        for (width, lines) in [(one, 1.0), (two, 2.0), (three, 3.0)] {
+            let size = m.measure(offered(None, Available::Definite(width)));
+            assert_eq!(size.height, lines * line_h, "at width {width}");
+            assert!(size.width <= width.ceil(), "the widest line fits");
+        }
+    }
+
+    #[test]
+    fn wrap_measure_at_max_content_keeps_one_line() {
+        let (atlas, font) = inter();
+        let size =
+            wrapped(&atlas, font, "aaa bbb ccc").measure(offered(None, Available::MaxContent));
+        assert_eq!(size.height, line_height(&atlas, font, 14));
+        assert_eq!(size.width, measure(&atlas, font, 14, "aaa bbb ccc").ceil());
+    }
+
+    #[test]
+    fn wrap_measure_at_min_content_is_the_widest_word() {
+        let (atlas, font) = inter();
+        let size =
+            wrapped(&atlas, font, "a bbbbb cc").measure(offered(None, Available::MinContent));
+        assert_eq!(size.height, 3.0 * line_height(&atlas, font, 14));
+        let widest = measure(&atlas, font, 14, "bbbbb").ceil();
+        assert!(
+            (size.width - widest).abs() <= 1.0,
+            "{} vs {widest}",
+            size.width
+        );
+    }
+
+    #[test]
+    fn wrap_measure_keeps_a_known_width() {
+        let (atlas, font) = inter();
+        let width = measure(&atlas, font, 14, "aaa bbb") + 0.5;
+        let size = wrapped(&atlas, font, "aaa bbb ccc")
+            .measure(offered(Some(width), Available::MaxContent));
+        assert_eq!(size.width, width);
+        assert_eq!(size.height, 2.0 * line_height(&atlas, font, 14));
     }
 }

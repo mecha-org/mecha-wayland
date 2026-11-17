@@ -1297,3 +1297,65 @@ fn the_caret_follows_the_text_in_a_padded_input() {
         "the caret starts with the text and is a line tall: caret {caret:?}, text {text:?}, {line:?}"
     );
 }
+
+// ── Text wrap ───────────────────────────────────────────────────────────
+
+/// `root`, but children keep their own height instead of stretching to
+/// the root's.
+fn top_root(app: &mut App, width: f32, height: f32) -> NodeId {
+    let style = LayoutStyle::default()
+        .size(px(width), px(height))
+        .align_items(Align::Start);
+    app.spawn_with(app.root(), div().style(style), (LayoutRoot(true),))
+        .id()
+}
+
+/// Each sprite's y offset in `id`'s Monochrome run.
+fn sprite_ys(app: &App, id: NodeId) -> Vec<f32> {
+    match app.component::<Paint>(id).unwrap() {
+        Paint::Monochrome(sprites) => sprites.iter().map(|s| s.offset.y).collect(),
+        other => panic!("expected a Monochrome run, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_word_wrapped_text_narrower_than_its_line_grows_taller_and_paints_every_line() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let wide = top_root(&mut app, 400.0, 200.0);
+    let one_line: Handle<Text> = app.spawn(wide, text(font, "aaa bbb ccc ddd"));
+    let narrow = top_root(&mut app, 60.0, 200.0);
+    let wrapped: Handle<Text> =
+        app.spawn(narrow, text(font, "aaa bbb ccc ddd").wrap(TextWrap::Word));
+    app.tick();
+
+    let line_h = rect(&app, one_line.id()).height();
+    let r = rect(&app, wrapped.id());
+    assert!(r.width() <= 60.0, "fits its row: {r:?}");
+    assert!(r.height() >= 2.0 * line_h, "more than one line tall: {r:?}");
+
+    let ys = sprite_ys(&app, wrapped.id());
+    assert_eq!(ys.len(), 12, "every inked glyph is painted");
+    let lowest = ys.iter().copied().fold(f32::MIN, f32::max);
+    assert!(lowest >= line_h, "some glyphs sit on a lower line");
+    assert!(lowest < r.height(), "and inside the box");
+}
+
+#[test]
+fn widening_a_word_wrapped_texts_row_puts_it_back_on_one_line() {
+    let mut app = app();
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let root = top_root(&mut app, 60.0, 200.0);
+    let label: Handle<Text> = app.spawn(root, text(font, "aaa bbb ccc").wrap(TextWrap::Word));
+    app.tick();
+    let tall = rect(&app, label.id()).height();
+
+    app.component_mut::<LayoutStyle>(root).unwrap().width = px(400.0);
+    app.tick();
+    let r = rect(&app, label.id());
+    assert!(r.height() < tall, "one line now: {r:?}");
+    let ys = sprite_ys(&app, label.id());
+    let spread =
+        ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min);
+    assert!(spread < r.height(), "all glyphs on the one line");
+}

@@ -272,3 +272,40 @@ fn dropping_the_ring_does_not_wait_out_a_pending_timeout() {
     drop(ring);
     assert!(start.elapsed() < Duration::from_secs(1));
 }
+
+/// A pipe with a non-blocking read end, like an inotify fd.
+fn non_blocking_pipe() -> (std::io::PipeReader, std::io::PipeWriter) {
+    let (r, w) = std::io::pipe().unwrap();
+    // SAFETY: `r` is an open fd for the whole call.
+    let set = unsafe { libc::fcntl(r.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+    assert_eq!(set, 0);
+    (r, w)
+}
+
+#[test]
+fn a_read_on_a_non_blocking_fd_waits_for_data() {
+    let (r, mut w) = non_blocking_pipe();
+    let mut ring = Ring::new(8);
+    let read = ring.read(r.as_fd(), Vec::with_capacity(64));
+    let timer = ring.timeout(Duration::from_millis(20));
+    let first = ring.wait();
+    assert_eq!(first[0].token, timer, "the read completed empty: {first:?}");
+
+    w.write_all(b"hi").unwrap();
+    wait_for(&mut ring, &[read]);
+    let done = ring.finish(read).unwrap();
+    assert_eq!(done.buf, b"hi");
+}
+
+#[test]
+fn a_read_takes_at_most_the_capacity_and_leaves_the_rest() {
+    let (r, mut w) = non_blocking_pipe();
+    w.write_all(b"abcdef").unwrap();
+    let mut ring = Ring::new(8);
+    let first = ring.read(r.as_fd(), Vec::with_capacity(4));
+    wait_for(&mut ring, &[first]);
+    assert_eq!(ring.finish(first).unwrap().buf, b"abcd");
+    let rest = ring.read(r.as_fd(), Vec::with_capacity(4));
+    wait_for(&mut ring, &[rest]);
+    assert_eq!(ring.finish(rest).unwrap().buf, b"ef");
+}

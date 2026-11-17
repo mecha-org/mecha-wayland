@@ -15,6 +15,7 @@ use crate::Completed;
 
 pub(crate) enum Kind {
     Recv,
+    Read,
     Send,
     Timeout,
     /// Readiness interests belong only to poll operations.
@@ -81,6 +82,23 @@ impl Op {
             op.msg.msg_controllen = op.cmsg.len() as _;
         }
         op
+    }
+
+    /// A read into `buf`'s whole capacity, for fds that are not sockets.
+    pub(crate) fn read(mut buf: Vec<u8>) -> Box<Op> {
+        buf.clear();
+        // SAFETY: as in `recv`.
+        Box::new(Op {
+            kind: Kind::Read,
+            buf,
+            fds: Vec::new(),
+            raw_fds: Vec::new(),
+            iov: unsafe { mem::zeroed() },
+            msg: unsafe { mem::zeroed() },
+            cmsg: Vec::new(),
+            ts: types::Timespec::new(),
+            result: None,
+        })
     }
 
     /// A send of `buf` with `fds` as `SCM_RIGHTS`.
@@ -189,6 +207,13 @@ impl Op {
             Kind::Recv => opcode::RecvMsg::new(types::Fd(fd), &mut self.msg)
                 .flags(libc::MSG_CMSG_CLOEXEC as u32)
                 .build(),
+            // `u64::MAX` reads from the current position, not at an offset.
+            Kind::Read => {
+                let len = self.buf.capacity().min(u32::MAX as usize) as u32;
+                opcode::Read::new(types::Fd(fd), self.buf.as_mut_ptr(), len)
+                    .offset(u64::MAX)
+                    .build()
+            }
             Kind::Send => opcode::SendMsg::new(types::Fd(fd), &self.msg)
                 .flags(libc::MSG_NOSIGNAL as u32)
                 .build(),
@@ -198,14 +223,16 @@ impl Op {
         }
     }
 
-    /// After the completion: a receive is truncated to the bytes received
-    /// and its fds decoded; a send gives its buffers back untouched.
+    /// After the completion: a receive or read is truncated to the bytes received
+    /// and a receive's fds decoded; a send gives its buffers back untouched.
     pub(crate) fn complete(mut self: Box<Self>) -> Completed {
-        if let Kind::Recv = self.kind {
+        if let Kind::Recv | Kind::Read = self.kind {
             let n = self.result.unwrap_or(0).max(0) as usize;
             // SAFETY: the kernel wrote `n` bytes into the capacity, `n` is
             // at most the capacity `iov_len` offered.
             unsafe { self.buf.set_len(n.min(self.buf.capacity())) };
+        }
+        if let Kind::Recv = self.kind {
             // SAFETY: `msg_control` and `msg_controllen` are what the kernel
             // filled; each fd found was passed to us and is owned once.
             self.fds = unsafe { take_fds(&self.msg) };

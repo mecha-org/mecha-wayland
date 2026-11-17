@@ -28,6 +28,7 @@ fn main() {
         "protocols/ext-idle-notify-v1.xml",
         "protocols/wlr-output-power-management-unstable-v1.xml",
         phosh.to_str().expect("utf-8 OUT_DIR"),
+        "protocols/mx-shell-surface-v1.xml",
     ]);
 }
 

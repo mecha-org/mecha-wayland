@@ -429,6 +429,7 @@ fn a_layer_window_gets_a_layer_surface_with_its_role() {
         exclusive_zone: 32,
         namespace: "bar".into(),
         keyboard_interactivity: KeyboardInteractivity::None,
+        shell_role: None,
     });
     f.app.spawn_with(
         root,
@@ -643,6 +644,7 @@ fn a_layer_configure_acks_and_draws_too() {
         exclusive_zone: 0,
         namespace: "bar".into(),
         keyboard_interactivity: KeyboardInteractivity::None,
+        shell_role: None,
     });
     f.app.spawn_with(
         root,
@@ -684,6 +686,7 @@ fn layer_role() -> Role {
         exclusive_zone: 0,
         namespace: "bar".into(),
         keyboard_interactivity: KeyboardInteractivity::None,
+        shell_role: None,
     })
 }
 
@@ -832,6 +835,7 @@ fn remapping_resends_the_layer_state_the_unmap_reset() {
         exclusive_zone: 32,
         namespace: "bar".into(),
         keyboard_interactivity: KeyboardInteractivity::None,
+        shell_role: None,
     });
     let win = f
         .app
@@ -1926,6 +1930,7 @@ fn close_and_closed_are_advice_at_the_window() {
         exclusive_zone: -1,
         namespace: "wall".into(),
         keyboard_interactivity: KeyboardInteractivity::None,
+        shell_role: None,
     });
     let win = f.app.spawn_with(root, window(), (role,)).id();
     f.app.tick();

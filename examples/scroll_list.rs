@@ -215,6 +215,7 @@ impl Widget for Shell {
             exclusive_zone: -1,
             namespace: "scroll_list".into(),
             keyboard_interactivity: KeyboardInteractivity::None,
+            shell_role: None,
         });
         let win = s.spawn_with(
             b.root,

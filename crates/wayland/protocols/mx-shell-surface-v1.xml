@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="mx_shell_surface_v1">
+  <copyright>
+    Copyright © 2026 Mecha Systems
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <interface name="mx_shell_surface_manager_v1" version="1">
+    <description summary="assign shell roles to layer surfaces">
+      This interface lets a shell tell the compositor what each of its
+      zwlr_layer_surface_v1 surfaces is for. Layer shell alone orders
+      surfaces only by layer; a role places a surface among the shell's other
+      surfaces and the apps, and for some roles changes how input reaches it.
+      Everything else about the surface (anchors, size, exclusive zone,
+      keyboard interactivity) stays as layer shell defines it.
+
+      A role takes effect only while the surface is on the top or overlay
+      layer. On the bottom or background layer it has no effect, and the
+      surface stacks as layer shell defines.
+
+      While in effect, surfaces stack front to back by role, in this order:
+
+      1. prompt
+      2. edge
+      3. bar
+      4. osd
+      5. osk
+      6. view
+      7. overlay-layer surfaces without a role
+      8. a fullscreen toplevel and its dialogs
+      9. top-layer surfaces without a role
+      10. other toplevels, then the bottom and background layers
+
+      The one exception is osk: while a prompt surface has keyboard focus, osk
+      stacks above prompts instead, so the prompt can be typed into. Several
+      surfaces with one role stack among themselves newest first.
+
+      The compositor may offer this interface to privileged clients only. It
+      may also give a layer surface without a role one by its own means, such
+      as treating the namespace "osk" as the osk role.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_role" value="0" summary="role value is invalid"/>
+      <entry name="already_set" value="1" summary="layer_surface already has a role or was already configured"/>
+    </enum>
+
+    <enum name="role">
+      <description summary="shell roles for layer surfaces">
+        What a layer surface is for. Each role's description says where it
+        stacks and how input reaches it; see the interface description for the
+        whole order.
+      </description>
+      <entry name="view" value="1" summary="full-screen shell screen">
+        <description summary="full-screen shell screen">
+          A screen of the shell that covers the apps, such as a home screen,
+          an app switcher or a settings panel. It stacks above every toplevel,
+          a fullscreen one included, and below every other role. Input reaches
+          it as layer shell defines.
+        </description>
+      </entry>
+      <entry name="osk" value="2" summary="on-screen keyboard">
+        <description summary="on-screen keyboard">
+          An on-screen keyboard. It stacks above views and below OSDs, except
+          while a prompt surface has keyboard focus: then it stacks above
+          prompts, so the prompt can be typed into.
+        </description>
+      </entry>
+      <entry name="osd" value="3" summary="on-screen display">
+        <description summary="on-screen display">
+          Short-lived feedback such as a volume or brightness indicator. It
+          stacks above the keyboard and views, below bars.
+        </description>
+      </entry>
+      <entry name="bar" value="4" summary="status bar">
+        <description summary="status bar">
+          Persistent shell chrome such as a status bar, usually with an
+          exclusive zone. It stacks above OSDs, below edge regions.
+        </description>
+      </entry>
+      <entry name="edge" value="5" summary="edge gesture region">
+        <description summary="edge gesture region">
+          An input-only region along one edge of the output, for swipes in
+          from that edge. The edge is the one the surface's anchors span: the
+          surface is anchored to it, and to both edges beside it or to
+          neither. Swipes away from that edge, towards the middle, are inward.
+
+          Edge regions stack above bars, below prompts. The compositor need
+          not draw them, so their content may never be shown: it still sends
+          frame callbacks, and answers wp_presentation feedback as discarded.
+
+          Pointer input passes through to what is beneath. A touch that
+          begins on the region is held until the compositor decides whose it
+          is. An inward swipe gives the whole touch sequence, from its start,
+          to the region. Any other movement, the touch ending, another touch
+          point, or the touch staying still for a short time gives it to what
+          is beneath. Distances and times are compositor policy.
+        </description>
+      </entry>
+      <entry name="prompt" value="6" summary="system prompt">
+        <description summary="system prompt">
+          A question from the system that the user must answer, such as a
+          power menu or a password dialog. It stacks above every other role,
+          except the keyboard while a prompt has keyboard focus.
+        </description>
+      </entry>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the manager object. Roles assigned through this interface
+        remain valid.
+      </description>
+    </request>
+
+    <request name="set_role">
+      <description summary="assign a role to a layer surface">
+        Assign a shell role to a zwlr_layer_surface_v1. The surface keeps it
+        for as long as it exists.
+
+        This request must be made before the initial wl_surface.commit that
+        precedes the first zwlr_layer_surface_v1.configure event. Calling it
+        after the surface has been configured or calling it more than once on
+        the same zwlr_layer_surface_v1 raises the already_set protocol error.
+        A role value this version doesn't define raises invalid_role.
+      </description>
+      <arg name="layer_surface" type="object" interface="zwlr_layer_surface_v1"/>
+      <arg name="role" type="uint" enum="role"/>
+    </request>
+  </interface>
+</protocol>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="mx_foreign_toplevel_info_v1">
+  <copyright>
+    Copyright © 2026 Mecha Systems
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <interface name="mx_foreign_toplevel_info_manager_v1" version="1">
+    <description summary="more about the toplevels a shell lists">
+      This interface lets a privileged shell client learn more about the
+      toplevels zwlr_foreign_toplevel_manager_v1 lists: which process each
+      belongs to and whether it is a modal dialog.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the manager object. Info objects already created stay valid.
+      </description>
+    </request>
+
+    <request name="get_info">
+      <description summary="get the info for a toplevel">
+        Create an info object for a toplevel handle. Its initial events are
+        sent right away, followed by a zwlr_foreign_toplevel_handle_v1.done
+        that applies them. A handle that was already closed gets an inert
+        info object that sends nothing.
+      </description>
+      <arg name="id" type="new_id" interface="mx_foreign_toplevel_info_v1"/>
+      <arg name="handle" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+  </interface>
+
+  <interface name="mx_foreign_toplevel_info_v1" version="1">
+    <description summary="more about one toplevel">
+      Like the handle's own events, these are double-buffered: they apply
+      with the handle's next zwlr_foreign_toplevel_handle_v1.done. Once the
+      handle is closed, the object is inert.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the info object"/>
+    </request>
+
+    <event name="pid">
+      <description summary="the process the toplevel's client is">
+        Sent once, at creation. 0 if the compositor does not know.
+      </description>
+      <arg name="pid" type="int" summary="process id, in the compositor's pid namespace"/>
+    </event>
+
+    <event name="modal">
+      <description summary="whether the toplevel is a modal dialog">
+        Sent at creation and whenever it changes. A modal dialog blocks
+        input to its parent, as xdg_dialog_v1.set_modal asks.
+      </description>
+      <arg name="modal" type="uint" summary="1 if modal, 0 if not"/>
+    </event>
+  </interface>
+</protocol>

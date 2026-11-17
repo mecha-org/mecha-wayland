@@ -29,6 +29,7 @@ fn main() {
         "protocols/wlr-output-power-management-unstable-v1.xml",
         phosh.to_str().expect("utf-8 OUT_DIR"),
         "protocols/mx-shell-surface-v1.xml",
+        "protocols/mx-foreign-toplevel-info-v1.xml",
     ]);
 }
 

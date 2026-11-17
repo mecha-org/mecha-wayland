@@ -1010,6 +1010,10 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
         } => ack_and_settle(app, layer_surface.id(), (*width, *height), |wl| {
             layer_surface.ack_configure(wl, *serial)
         }),
+        // FIXME: the compositor closes a layer surface when its output goes
+        // away, or when there is none. Most windows ignore `CloseRequested`,
+        // so they stay without a surface. Drop the dead surface but keep the
+        // window, and give it a new one when an output appears.
         ZwlrLayerSurfaceV1Event::Closed { layer_surface } => {
             if let Some(w) = app
                 .resource::<Surfaces>()

@@ -81,7 +81,7 @@ fn type_ident(iface: &str) -> Ident {
 /// is `layer_surface`, `xdg_wm_base` is `wm_base`.
 fn sender_name(iface: &str) -> String {
     let mut s = iface;
-    for prefix in ["wl_", "xdg_", "zwlr_", "zwp_", "ext_", "wp_"] {
+    for prefix in ["wl_", "xdg_", "zwlr_", "zwp_", "ext_", "wp_", "mx_"] {
         if let Some(rest) = s.strip_prefix(prefix) {
             s = rest;
             break;

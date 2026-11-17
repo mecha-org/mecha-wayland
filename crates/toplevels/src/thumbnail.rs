@@ -1,12 +1,9 @@
-//! `phosh_private` thumbnail views: the compositor draws a toplevel's
-//! live contents into a region of one of our layer surfaces.
+//! `mx_thumbnail_view_v1`: the compositor draws a toplevel's live contents
+//! into a region of one of our layer surfaces.
 
 use wayland::prelude::*;
 
 use crate::{ToplevelId, Toplevels};
-
-/// The oldest `phosh_private` that has `add_thumbnail_view`.
-pub(crate) const MIN_VERSION: u32 = 8;
 
 /// One live view of a toplevel on a layer surface. Not `Copy`: give it
 /// back with [`Thumbnail::destroy`]. Dropping it without `destroy` leaks
@@ -16,7 +13,7 @@ pub(crate) const MIN_VERSION: u32 = 8;
 /// on a layer surface before destroying the surface. Destroying a
 /// thumbnail after its toplevel closed is fine.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Thumbnail(PhoshPrivateThumbnail);
+pub struct Thumbnail(MxThumbnailViewV1);
 
 impl Thumbnail {
     /// Place the view: top-left at (`x`, `y`) in the layer surface's
@@ -36,24 +33,25 @@ impl Thumbnail {
 }
 
 impl Toplevels {
-    /// Whether the compositor offers `phosh_private` at version 8 or
-    /// later, which is when [`Toplevels::add_thumbnail`] can work.
+    /// Whether the compositor offers `mx_thumbnail_view_manager_v1`, which
+    /// is when [`Toplevels::add_thumbnail`] can work.
     pub fn thumbnails_available(&self) -> bool {
-        self.phosh.is_some()
+        self.thumbnail_manager.is_some()
     }
 
     /// Ask the compositor to draw `id` into `layer`. `None` when
-    /// thumbnails are unavailable or `id` has already closed.
+    /// `mx_thumbnail_view_manager_v1` was not offered or `id` is already
+    /// closed.
     pub fn add_thumbnail(
         &self,
         wl: &mut Wayland,
         id: ToplevelId,
         layer: ZwlrLayerSurfaceV1,
     ) -> Option<Thumbnail> {
-        let phosh = self.phosh?;
+        let manager = self.thumbnail_manager?;
         if !self.holds(id) {
             return None;
         }
-        Some(Thumbnail(phosh.add_thumbnail_view(wl, id.handle(), layer)))
+        Some(Thumbnail(manager.get_thumbnail(wl, id.handle(), layer)))
     }
 }

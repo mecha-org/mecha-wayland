@@ -223,13 +223,14 @@ impl Widget for Text {
                 let m = text_measure(&atlas, &b.props, Size::new(0.0, 0.0));
                 (Paint::None, m)
             } else {
-                let (sprites, size) = shape(
+                let (mut sprites, size) = shape(
                     &mut atlas,
                     b.props.font,
                     b.props.px,
                     &b.props.string,
                     b.props.color,
                 );
+                set_opaque(&mut sprites, b.props.opaque);
                 let m = text_measure(&atlas, &b.props, size);
                 (Paint::Monochrome(sprites), m)
             }
@@ -682,7 +683,7 @@ fn refit_text(ctx: &mut Context<'_, Text>, width: Option<f32>) {
 fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
     let string = std::mem::take(&mut ctx.me().props.string);
     let props = ctx.me().props.clone();
-    let (sprites, natural) = if let (TextWrap::Word, Some(width)) = (props.wrap, width) {
+    let (mut sprites, natural) = if let (TextWrap::Word, Some(width)) = (props.wrap, width) {
         let mut atlas = ctx.resource_mut::<Atlas>();
         shape_lines(
             &mut atlas,
@@ -695,9 +696,7 @@ fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
     } else {
         let mut atlas = ctx.resource_mut::<Atlas>();
         let shown = modify(&atlas, &props, &string, width);
-        let (mut sprites, drawn) =
-            shape(&mut atlas, props.font, props.px, &shown.text, props.color);
-        set_opaque(&mut sprites, props.opaque);
+        let (sprites, drawn) = shape(&mut atlas, props.font, props.px, &shown.text, props.color);
         let natural = match &shown.fit {
             Some(f) if f.marker => {
                 Size::new(measure(&atlas, props.font, props.px, &string), drawn.height)
@@ -706,6 +705,7 @@ fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
         };
         (sprites, natural)
     };
+    set_opaque(&mut sprites, props.opaque);
     ctx.me().props.string = string;
     ctx.set_paint(Paint::Monochrome(sprites));
     natural

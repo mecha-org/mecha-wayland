@@ -152,6 +152,22 @@ impl Message {
         self
     }
 
+    /// A body of values known only at run time, each encoded by its signature.
+    pub fn with_values(mut self, values: &[Value]) -> Message {
+        let mut e = Encoder::new();
+        let mut signature = String::new();
+        for value in values {
+            signature.push_str(value.signature().as_str());
+            value.encode_raw(&mut e);
+        }
+        let (bytes, fds) = e.into_parts();
+        self.signature = Signature::from_valid(signature);
+        self.body = bytes;
+        self.fds = fds;
+        self.big_endian = false;
+        self
+    }
+
     /// A body as given, unchecked: for tests that need a malformed one.
     pub fn with_raw_body(mut self, signature: impl Into<Signature>, body: Vec<u8>) -> Message {
         self.signature = signature.into();

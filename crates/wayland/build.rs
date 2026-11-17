@@ -30,5 +30,6 @@ fn main() {
         "protocols/mx-foreign-toplevel-info-v1.xml",
         "protocols/mx-thumbnail-view-v1.xml",
         "protocols/mx-accelerators-v1.xml",
+        "protocols/xdg-activation-v1.xml",
     ]);
 }

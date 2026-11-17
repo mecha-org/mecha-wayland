@@ -21,14 +21,18 @@
 //! `mx_thumbnail_view_manager_v1` is bound too, when offered, for live
 //! window previews: see [`Thumbnail`](prelude::Thumbnail). So is
 //! `mx_foreign_toplevel_info_manager_v1`, for each toplevel's pid and modal
-//! hint; without it, the pid is `None` and nothing is modal.
+//! hint; without it, the pid is `None` and nothing is modal. And so is
+//! `xdg_activation_v1`, for tokens that let a started app's window take
+//! focus: see [`Toplevels::request_activation_token`].
 
 use app::prelude::*;
 use wayland::prelude::*;
 
+mod activation;
 mod thumbnail;
 
 pub mod prelude {
+    pub use crate::activation::{ActivationToken, TokenRequest};
     pub use crate::thumbnail::Thumbnail;
     pub use crate::{ToplevelId, ToplevelInfo, Toplevels, ToplevelsChanged, ToplevelsModule};
 }
@@ -99,6 +103,7 @@ pub struct Toplevels {
     manager: Option<ZwlrForeignToplevelManagerV1>,
     info_manager: Option<MxForeignToplevelInfoManagerV1>,
     thumbnail_manager: Option<MxThumbnailViewManagerV1>,
+    activation: Option<XdgActivationV1>,
     entries: Vec<Entry>,
     stamp: u64,
     /// The list changed since the last `ToplevelsChanged`.
@@ -159,23 +164,27 @@ impl Module for ToplevelsModule {
     fn install(self, app: &mut App) {
         // The list needs only foreign-toplevel; without the thumbnail
         // manager, there are just no previews.
-        let (manager, info_manager, thumbnail_manager): (
+        let (manager, info_manager, thumbnail_manager, activation): (
             Option<ZwlrForeignToplevelManagerV1>,
             Option<MxForeignToplevelInfoManagerV1>,
             Option<MxThumbnailViewManagerV1>,
+            Option<XdgActivationV1>,
         ) = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
             (
                 globals.bind_if_offered(&mut wl, 1),
                 globals.bind_if_offered(&mut wl, 1),
                 globals.bind_if_offered(&mut wl, 1),
+                globals.bind_if_offered(&mut wl, 1),
             )
         };
         let available = manager.is_some();
+        let activates = activation.is_some();
         app.insert_resource(Toplevels {
             manager,
             info_manager,
             thumbnail_manager,
+            activation,
             entries: Vec::new(),
             stamp: 0,
             dirty: false,
@@ -185,6 +194,9 @@ impl Module for ToplevelsModule {
                 .system(on_handle)
                 .system(on_info)
                 .system(on_post_tick);
+        }
+        if activates {
+            app.system(activation::on_token);
         }
     }
 }

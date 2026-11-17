@@ -115,14 +115,16 @@ use slots::Slots;
 
 pub use lock::{LockState, SessionLock, SessionLockFinished, SessionLocked};
 pub use wayland::{
-    ZwlrLayerShellV1Layer as Layer, ZwlrLayerSurfaceV1Anchor as Anchor,
+    MxShellSurfaceManagerV1Role as ShellRole, ZwlrLayerShellV1Layer as Layer,
+    ZwlrLayerSurfaceV1Anchor as Anchor,
     ZwlrLayerSurfaceV1KeyboardInteractivity as KeyboardInteractivity,
 };
 
 pub mod prelude {
     pub use crate::{
         Anchor, BUFFERS, DEFAULT_SIZE, KeyboardInteractivity, Layer, LayerRole, LockState,
-        PresentationModule, Role, SessionLock, SessionLockFinished, SessionLocked, Surfaces,
+        PresentationModule, Role, SessionLock, SessionLockFinished, SessionLocked, ShellRole,
+        Surfaces,
     };
 }
 
@@ -159,6 +161,7 @@ pub struct LayerRole {
     pub exclusive_zone: i32,
     pub namespace: String,
     pub keyboard_interactivity: KeyboardInteractivity,
+    pub shell_role: Option<ShellRole>,
 }
 
 enum Shell {
@@ -221,6 +224,7 @@ pub struct Surfaces {
     rescale: Rescale,
     owner: HashMap<ObjectId, NodeId>,
     layer_shell: Option<ZwlrLayerShellV1>,
+    shell_surface_mgr: Option<MxShellSurfaceManagerV1>,
     compositor: WlCompositor,
     app_id: String,
     device: Device,
@@ -290,7 +294,7 @@ impl Surfaces {
 
     /// Make `window`'s next `Frame` commit its surface even when nothing
     /// in it needs drawing, so state the compositor applies on commit
-    /// (such as a `phosh_private` thumbnail's placement) is applied then.
+    /// (such as a thumbnail's placement) is applied then.
     /// A frame that draws commits anyway; one with no damage sends a bare
     /// `wl_surface.commit`. Does not itself request the frame: call it
     /// from a `Frame` system of `window`, or signal `RequestFrame` too.
@@ -619,9 +623,12 @@ impl Module for PresentationModule {
         );
         let device = Device::open(self.budget);
         // Version 2 for `set_layer`.
-        let layer_shell = {
+        let (layer_shell, shell_surface_mgr) = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
-            globals.bind_if_offered(&mut wl, 2)
+            (
+                globals.bind_if_offered(&mut wl, 2),
+                globals.bind_if_offered(&mut wl, 1),
+            )
         };
         app.register_component::<Role>().insert_resource(Surfaces {
             entries: HashMap::new(),
@@ -631,6 +638,7 @@ impl Module for PresentationModule {
             rescale: Rescale::Settled,
             owner: HashMap::new(),
             layer_shell,
+            shell_surface_mgr,
             app_id: self.app_id,
             device,
             compositor,
@@ -751,6 +759,9 @@ fn on_spawned(app: &mut App, s: &Spawned) {
                 "presentation: a Role::Layer window needs zwlr_layer_shell_v1, which the compositor does not offer",
             );
             let ls = shell.get_layer_surface(&mut wl, surface, None, l.layer, &l.namespace);
+            if let (Some(mgr), Some(shell_role)) = (surfaces.shell_surface_mgr, l.shell_role) {
+                mgr.set_role(&mut wl, ls, shell_role);
+            }
             ls.set_anchor(&mut wl, l.anchor);
             ls.set_exclusive_zone(&mut wl, l.exclusive_zone);
             ls.set_keyboard_interactivity(&mut wl, l.keyboard_interactivity);
@@ -999,6 +1010,10 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
         } => ack_and_settle(app, layer_surface.id(), (*width, *height), |wl| {
             layer_surface.ack_configure(wl, *serial)
         }),
+        // FIXME: the compositor closes a layer surface when its output goes
+        // away, or when there is none. Most windows ignore `CloseRequested`,
+        // so they stay without a surface. Drop the dead surface but keep the
+        // window, and give it a new one when an output appears.
         ZwlrLayerSurfaceV1Event::Closed { layer_surface } => {
             if let Some(w) = app
                 .resource::<Surfaces>()

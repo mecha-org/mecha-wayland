@@ -84,6 +84,59 @@ fn get(f: &Fake, id: u32) -> ToplevelInfo {
         .expect("toplevel listed")
 }
 
+/// After the seat (4) and the wlr manager (5).
+const INFO_MANAGER: u32 = 6;
+const OP_GET_INFO: u16 = 1;
+const OP_INFO_DESTROY: u16 = 0;
+const EV_PID: u16 = 0;
+const EV_MODAL: u16 = 1;
+
+#[test]
+fn pid_and_modal_come_with_the_handles_done() {
+    let mut f = fake_with(&[
+        ("wl_seat", 9),
+        ("zwlr_foreign_toplevel_manager_v1", 3),
+        ("mx_foreign_toplevel_info_manager_v1", 1),
+    ]);
+    open(&mut f, A);
+    f.turn();
+    let req = f.expect(INFO_MANAGER, OP_GET_INFO);
+    let mut r = req.reader();
+    let info = r.uint().unwrap();
+    assert_eq!(r.object(), Some(ObjectId(A)));
+
+    f.send(info, EV_PID, |w| w.int(1234));
+    f.send(info, EV_MODAL, |w| w.uint(1));
+    settle(&mut f);
+    // Nothing is listed before the handle's `done`.
+    let listed = f.app.resource::<Toplevels>().iter().count();
+    assert_eq!(listed, 0);
+    done(&mut f, A);
+    settle(&mut f);
+    let a = get(&f, A);
+    assert_eq!((a.pid, a.modal), (Some(1234), true));
+
+    f.send(info, EV_MODAL, |w| w.uint(0));
+    done(&mut f, A);
+    settle(&mut f);
+    assert!(!get(&f, A).modal);
+
+    // Closing destroys the info object with the handle.
+    f.send(A, EV_CLOSED, |_| {});
+    settle(&mut f);
+    f.expect(info, OP_INFO_DESTROY);
+}
+
+#[test]
+fn without_the_info_global_there_is_no_pid() {
+    let mut f = fake();
+    open(&mut f, A);
+    done(&mut f, A);
+    settle(&mut f);
+    let a = get(&f, A);
+    assert_eq!((a.pid, a.modal), (None, false));
+}
+
 #[test]
 fn a_toplevel_appears_after_done() {
     let mut f = fake();

@@ -18,15 +18,21 @@
 //! [`ToplevelsChanged`]; requests made with its id in between are
 //! dropped rather than sent on a dead object.
 //!
-//! `phosh_private` (version 8 or later) is bound too, when offered, for
-//! live window previews: see [`Thumbnail`](prelude::Thumbnail).
+//! `mx_thumbnail_view_manager_v1` is bound too, when offered, for live
+//! window previews: see [`Thumbnail`](prelude::Thumbnail). So is
+//! `mx_foreign_toplevel_info_manager_v1`, for each toplevel's pid and modal
+//! hint; without it, the pid is `None` and nothing is modal. And so is
+//! `xdg_activation_v1`, for tokens that let a started app's window take
+//! focus: see [`Toplevels::request_activation_token`].
 
 use app::prelude::*;
 use wayland::prelude::*;
 
+mod activation;
 mod thumbnail;
 
 pub mod prelude {
+    pub use crate::activation::{ActivationToken, TokenRequest};
     pub use crate::thumbnail::Thumbnail;
     pub use crate::{ToplevelId, ToplevelInfo, Toplevels, ToplevelsChanged, ToplevelsModule};
 }
@@ -57,6 +63,10 @@ pub struct ToplevelInfo {
     /// Fullscreen, as the compositor reports it (protocol version 2 on).
     pub fullscreen: bool,
     pub parent: Option<ToplevelId>,
+    /// The process the window's client is, when the compositor says.
+    pub pid: Option<u32>,
+    /// A modal dialog: it blocks input to its parent.
+    pub modal: bool,
     /// A counter bumped at each `done` that newly reports `activated`;
     /// 0 means never activated.
     pub last_activated: u64,
@@ -75,11 +85,15 @@ struct Pending {
     activated: bool,
     fullscreen: bool,
     parent: Option<ToplevelId>,
+    pid: Option<u32>,
+    modal: bool,
 }
 
 struct Entry {
     info: ToplevelInfo,
     pending: Pending,
+    /// Its mx info object, when the compositor offers them.
+    extra: Option<MxForeignToplevelInfoV1>,
     /// Whether a `done` has published this toplevel.
     mapped: bool,
 }
@@ -87,8 +101,9 @@ struct Entry {
 /// The open windows. See the module docs.
 pub struct Toplevels {
     manager: Option<ZwlrForeignToplevelManagerV1>,
-    /// `phosh_private`, bound only when it is version 8 or later.
-    phosh: Option<PhoshPrivate>,
+    info_manager: Option<MxForeignToplevelInfoManagerV1>,
+    thumbnail_manager: Option<MxThumbnailViewManagerV1>,
+    activation: Option<XdgActivationV1>,
     entries: Vec<Entry>,
     stamp: u64,
     /// The list changed since the last `ToplevelsChanged`.
@@ -147,19 +162,29 @@ pub struct ToplevelsModule;
 
 impl Module for ToplevelsModule {
     fn install(self, app: &mut App) {
-        // The list needs only foreign-toplevel; without `phosh_private`
-        // new enough for thumbnails, there are just no previews.
-        let (manager, phosh): (Option<ZwlrForeignToplevelManagerV1>, Option<PhoshPrivate>) = {
+        // The list needs only foreign-toplevel; without the thumbnail
+        // manager, there are just no previews.
+        let (manager, info_manager, thumbnail_manager, activation): (
+            Option<ZwlrForeignToplevelManagerV1>,
+            Option<MxForeignToplevelInfoManagerV1>,
+            Option<MxThumbnailViewManagerV1>,
+            Option<XdgActivationV1>,
+        ) = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
             (
                 globals.bind_if_offered(&mut wl, 1),
-                globals.bind_if_offered(&mut wl, thumbnail::MIN_VERSION),
+                globals.bind_if_offered(&mut wl, 1),
+                globals.bind_if_offered(&mut wl, 1),
+                globals.bind_if_offered(&mut wl, 1),
             )
         };
         let available = manager.is_some();
+        let activates = activation.is_some();
         app.insert_resource(Toplevels {
             manager,
-            phosh,
+            info_manager,
+            thumbnail_manager,
+            activation,
             entries: Vec::new(),
             stamp: 0,
             dirty: false,
@@ -167,7 +192,11 @@ impl Module for ToplevelsModule {
         if available {
             app.system(on_manager)
                 .system(on_handle)
+                .system(on_info)
                 .system(on_post_tick);
+        }
+        if activates {
+            app.system(activation::on_token);
         }
     }
 }
@@ -176,7 +205,9 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
     match e {
         ZwlrForeignToplevelManagerV1Event::Toplevel { toplevel, .. } => {
             let id = ToplevelId(*toplevel);
-            app.resource_mut::<Toplevels>().entries.push(Entry {
+            let (mut t, mut wl) = app.query::<(ResMut<Toplevels>, ResMut<Wayland>)>();
+            let extra = t.info_manager.map(|m| m.get_info(&mut wl, *toplevel));
+            t.entries.push(Entry {
                 info: ToplevelInfo {
                     id,
                     title: String::new(),
@@ -184,6 +215,8 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     activated: false,
                     fullscreen: false,
                     parent: None,
+                    pid: None,
+                    modal: false,
                     last_activated: 0,
                 },
                 pending: Pending {
@@ -192,7 +225,10 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     activated: false,
                     fullscreen: false,
                     parent: None,
+                    pid: None,
+                    modal: false,
                 },
+                extra,
                 mapped: false,
             });
         }
@@ -203,6 +239,9 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
             let changed = entries.iter().any(|e| e.mapped);
             for e in &entries {
                 e.info.id.0.destroy(&mut wl);
+                if let Some(extra) = e.extra {
+                    extra.destroy(&mut wl);
+                }
             }
             drop((t, wl));
             if changed {
@@ -281,6 +320,8 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
                     activated: p.activated,
                     fullscreen: p.fullscreen,
                     parent: p.parent,
+                    pid: p.pid,
+                    modal: p.modal,
                     last_activated: if newly { stamp } else { e.info.last_activated },
                 };
                 if !e.mapped || next != e.info {
@@ -298,10 +339,14 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
         } => {
             let id = ToplevelId(*h);
             if let Some(at) = t.entries.iter().position(|e| e.info.id == id) {
-                changed = t.entries.remove(at).mapped;
+                let entry = t.entries.remove(at);
+                changed = entry.mapped;
                 drop(t);
                 let mut wl = app.resource_mut::<Wayland>();
                 h.destroy(&mut wl);
+                if let Some(extra) = entry.extra {
+                    extra.destroy(&mut wl);
+                }
             }
         }
         // Outputs are not tracked.
@@ -309,5 +354,28 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
     }
     if changed {
         app.resource_mut::<Toplevels>().dirty = true;
+    }
+}
+
+/// The mx info events, pending like the handle's own until its `done`.
+fn on_info(app: &mut App, e: &MxForeignToplevelInfoV1Event) {
+    use MxForeignToplevelInfoV1Event as E;
+    let mut t = app.resource_mut::<Toplevels>();
+    let from = match e {
+        E::Pid {
+            foreign_toplevel_info: i,
+            ..
+        }
+        | E::Modal {
+            foreign_toplevel_info: i,
+            ..
+        } => *i,
+    };
+    let Some(entry) = t.entries.iter_mut().find(|e| e.extra == Some(from)) else {
+        return;
+    };
+    match e {
+        E::Pid { pid, .. } => entry.pending.pid = u32::try_from(*pid).ok().filter(|&p| p > 0),
+        E::Modal { modal, .. } => entry.pending.modal = *modal != 0,
     }
 }

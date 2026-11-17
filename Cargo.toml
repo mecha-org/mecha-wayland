@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 animation.workspace = true
 app.workspace = true
+config.workspace = true
 dbus.workspace = true
 atlas = { workspace = true, features = ["svg"] }
 geometry.workspace = true
@@ -34,6 +35,7 @@ libc.workspace = true
 [workspace]
 members = [
     "crates/app",
+    "crates/config",
     "crates/dbus",
     "crates/animation",
     "crates/atlas",
@@ -60,6 +62,7 @@ resolver = "3"
 [workspace.dependencies]
 animation = { path = "crates/animation" }
 app = { path = "crates/app" }
+config = { path = "crates/config" }
 dbus = { path = "crates/dbus" }
 atlas = { path = "crates/atlas" }
 geometry = { path = "crates/geometry" }

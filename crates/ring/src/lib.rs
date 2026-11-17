@@ -4,8 +4,8 @@
 //! # Model
 //!
 //! - [`Ring`] is a resource over one io_uring. A module submits a typed
-//!   op, [`Ring::recvmsg`], [`Ring::sendmsg`], [`Ring::timeout`] or
-//!   [`Ring::poll`], and gets a [`Token`].
+//!   op, [`Ring::recvmsg`], [`Ring::sendmsg`], [`Ring::read`],
+//!   [`Ring::timeout`] or [`Ring::poll`], and gets a [`Token`].
 //!   The ring owns the op's buffers until [`Ring::finish`] gives them
 //!   back as a [`Completed`]; the submitter keeps the fd open until then.
 //! - Every completion is one [`IoEvent`] signal. The module that owns
@@ -137,6 +137,11 @@ impl Ring {
     /// bytes received and `fds` the fds that came with them.
     pub fn recvmsg(&mut self, fd: BorrowedFd<'_>, buf: Vec<u8>, max_fds: usize) -> Token {
         self.submit(fd, Op::recv(buf, max_fds))
+    }
+
+    /// Read into `buf`'s capacity from a non-socket fd, such as inotify.
+    pub fn read(&mut self, fd: BorrowedFd<'_>, buf: Vec<u8>) -> Token {
+        self.submit(fd, Op::read(buf))
     }
 
     /// Send `buf` with `fds` attached. On finish, both come back so the

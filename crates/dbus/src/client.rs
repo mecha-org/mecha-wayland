@@ -67,6 +67,12 @@ impl MethodCall {
         self
     }
 
+    /// A body of values known only at run time.
+    pub fn values(mut self, values: &[Value]) -> Self {
+        self.msg = self.msg.with_values(values);
+        self
+    }
+
     /// Let the callee ask the user (polkit) before answering.
     pub fn allow_interactive_auth(mut self) -> Self {
         let flags = self.msg.flags() | Flags::ALLOW_INTERACTIVE_AUTHORIZATION;

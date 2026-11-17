@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="mx_thumbnail_view_v1">
+  <copyright>
+    Copyright © 2026 Mecha Systems
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <interface name="mx_thumbnail_view_manager_v1" version="1">
+    <description summary="draw toplevels into a shell's layer surfaces">
+      This interface lets a privileged shell client show live thumbnails of
+      toplevels, drawn by the compositor onto the client's layer surfaces.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the manager object. Thumbnails already created stay valid.
+      </description>
+    </request>
+
+    <request name="get_thumbnail">
+      <description summary="attach a toplevel's thumbnail to a layer surface">
+        Create a thumbnail that draws the contents of toplevel onto
+        layer_surface.
+
+        The layer surface acts as an anchor providing depth and position
+        (layer, output and geometry). The compositor draws the thumbnail and
+        the fade instead of the client's content where they overlap, so the
+        client should keep that part of its buffer fully transparent.
+
+        A toplevel handle that was already closed, or a layer surface that
+        is already gone, gives an inert thumbnail: its requests do nothing.
+      </description>
+      <arg name="id" type="new_id" interface="mx_thumbnail_view_v1"/>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="layer_surface" type="object" interface="zwlr_layer_surface_v1"/>
+    </request>
+  </interface>
+
+  <interface name="mx_thumbnail_view_v1" version="1">
+    <description summary="a toplevel drawn onto a layer surface">
+      A thumbnail of a toplevel, drawn by the compositor onto a layer
+      surface. The client drives its movement and fade by setting its
+      properties each frame. Nothing is drawn before the first properties
+      apply.
+    </description>
+
+    <request name="set_properties">
+      <description summary="place and fade the thumbnail">
+        x and y give the thumbnail's top-left corner in surface-local
+        coordinates, scale is applied to the toplevel's size, and alpha is
+        the opacity of the thumbnail and its fade. Double-buffered: they
+        apply on the layer surface's next commit. A scale that is not
+        positive, or a NaN alpha, is ignored; alpha is clamped to 0..1.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="scale" type="fixed"/>
+      <arg name="alpha" type="fixed"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the thumbnail"/>
+    </request>
+  </interface>
+</protocol>

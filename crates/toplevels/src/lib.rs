@@ -18,8 +18,8 @@
 //! [`ToplevelsChanged`]; requests made with its id in between are
 //! dropped rather than sent on a dead object.
 //!
-//! `phosh_private` (version 8 or later) is bound too, when offered, for
-//! live window previews: see [`Thumbnail`](prelude::Thumbnail). So is
+//! `mx_thumbnail_view_manager_v1` is bound too, when offered, for live
+//! window previews: see [`Thumbnail`](prelude::Thumbnail). So is
 //! `mx_foreign_toplevel_info_manager_v1`, for each toplevel's pid and modal
 //! hint; without it, the pid is `None` and nothing is modal.
 
@@ -98,8 +98,7 @@ struct Entry {
 pub struct Toplevels {
     manager: Option<ZwlrForeignToplevelManagerV1>,
     info_manager: Option<MxForeignToplevelInfoManagerV1>,
-    /// `phosh_private`, bound only when it is version 8 or later.
-    phosh: Option<PhoshPrivate>,
+    thumbnail_manager: Option<MxThumbnailViewManagerV1>,
     entries: Vec<Entry>,
     stamp: u64,
     /// The list changed since the last `ToplevelsChanged`.
@@ -158,25 +157,25 @@ pub struct ToplevelsModule;
 
 impl Module for ToplevelsModule {
     fn install(self, app: &mut App) {
-        // The list needs only foreign-toplevel; without `phosh_private`
-        // new enough for thumbnails, there are just no previews.
-        let (manager, info_manager, phosh): (
+        // The list needs only foreign-toplevel; without the thumbnail
+        // manager, there are just no previews.
+        let (manager, info_manager, thumbnail_manager): (
             Option<ZwlrForeignToplevelManagerV1>,
             Option<MxForeignToplevelInfoManagerV1>,
-            Option<PhoshPrivate>,
+            Option<MxThumbnailViewManagerV1>,
         ) = {
             let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
             (
                 globals.bind_if_offered(&mut wl, 1),
                 globals.bind_if_offered(&mut wl, 1),
-                globals.bind_if_offered(&mut wl, thumbnail::MIN_VERSION),
+                globals.bind_if_offered(&mut wl, 1),
             )
         };
         let available = manager.is_some();
         app.insert_resource(Toplevels {
             manager,
             info_manager,
-            phosh,
+            thumbnail_manager,
             entries: Vec::new(),
             stamp: 0,
             dirty: false,

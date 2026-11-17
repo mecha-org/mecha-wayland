@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="mx_accelerators_v1">
+  <copyright>
+    Copyright © 2019 Purism SPC
+    Copyright © 2026 Mecha Systems
+
+    Permission to use, copy, modify, distribute, and sell this
+    software and its documentation for any purpose is hereby granted
+    without fee, provided that the above copyright notice appear in
+    all copies and that both that copyright notice and this permission
+    notice appear in supporting documentation, and that the name of
+    the copyright holders not be used in advertising or publicity
+    pertaining to distribution of the software without specific,
+    written prior permission.  The copyright holders make no
+    representations about the suitability of this software for any
+    purpose.  It is provided "as is" without express or implied
+    warranty.
+
+    THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
+    SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+    FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+    ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+    THIS SOFTWARE.
+  </copyright>
+
+  <interface name="mx_accelerators_v1" version="1">
+    <description summary="grab key combinations for the shell">
+      This interface lets a privileged shell client grab accelerators: key
+      combinations whose presses go to the client instead of the focused
+      surface. While a grabbed key is held, the compositor repeats the
+      pressed event; the released event ends it.
+    </description>
+
+    <enum name="grab_error">
+      <entry name="invalid_accelerator" value="0"
+             summary="not a known key, or an unknown modifier"/>
+      <entry name="already_grabbed" value="1"
+             summary="the accelerator is already grabbed"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="release every grab">
+        Destroy the object, releasing every accelerator it grabbed.
+      </description>
+    </request>
+
+    <request name="grab">
+      <description summary="grab an accelerator">
+        Grab an accelerator. The answer is a grabbed event with its action
+        id, or a grab_failed event.
+      </description>
+      <arg name="accelerator" type="string"
+           summary="modifiers in angle brackets, then an XKB keysym name: &lt;Super&gt;&lt;Shift&gt;a, XF86AudioRaiseVolume"/>
+    </request>
+
+    <request name="ungrab">
+      <description summary="release an accelerator">
+        Release a grab. An action id that is not one of this object's grabs
+        is ignored.
+      </description>
+      <arg name="action_id" type="uint" summary="the id from the grabbed event"/>
+    </request>
+
+    <event name="grabbed">
+      <description summary="an accelerator is grabbed"/>
+      <arg name="accelerator" type="string" summary="as it was asked for"/>
+      <arg name="action_id" type="uint" summary="the grab's id"/>
+    </event>
+
+    <event name="grab_failed">
+      <description summary="an accelerator could not be grabbed"/>
+      <arg name="accelerator" type="string" summary="as it was asked for"/>
+      <arg name="error" type="uint" enum="grab_error" summary="why"/>
+    </event>
+
+    <event name="pressed">
+      <description summary="a grabbed accelerator is pressed">
+        Sent on a press, and again for each repeat while the key is held.
+      </description>
+      <arg name="action_id" type="uint" summary="the grab's id"/>
+      <arg name="time" type="uint" summary="timestamp, in milliseconds"/>
+    </event>
+
+    <event name="released">
+      <description summary="a grabbed accelerator is released">
+        Sent when the held key is released, or another grabbed key is
+        pressed before it is.
+      </description>
+      <arg name="action_id" type="uint" summary="the grab's id"/>
+      <arg name="time" type="uint" summary="timestamp, in milliseconds"/>
+    </event>
+  </interface>
+</protocol>

@@ -294,7 +294,7 @@ impl Surfaces {
 
     /// Make `window`'s next `Frame` commit its surface even when nothing
     /// in it needs drawing, so state the compositor applies on commit
-    /// (such as a `phosh_private` thumbnail's placement) is applied then.
+    /// (such as a thumbnail's placement) is applied then.
     /// A frame that draws commits anyway; one with no damage sends a bare
     /// `wl_surface.commit`. Does not itself request the frame: call it
     /// from a `Frame` system of `window`, or signal `RequestFrame` too.

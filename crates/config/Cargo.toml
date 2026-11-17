@@ -1,0 +1,14 @@
+[package]
+name = "config"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+app.workspace = true
+dbus.workspace = true
+ring.workspace = true
+mxconfig = { git = "https://github.com/mecha-org/mxconfig", rev = "d20b7409f7a27c5d44ded5f5e4a3ee7c4b928eb3" }
+
+[dev-dependencies]
+dbus = { workspace = true, features = ["fake"] }
+tempfile = "3"

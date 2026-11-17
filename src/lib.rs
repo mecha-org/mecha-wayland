@@ -2,6 +2,7 @@
 //! Each member crate's prelude is folded into [`prelude`] as it is rewritten
 //! against the new `app` core.
 
+pub use config;
 pub use dbus;
 pub use mechanix_widgets;
 
@@ -9,6 +10,7 @@ pub mod prelude {
     pub use animation::prelude::*;
     pub use app::prelude::*;
     pub use atlas::prelude::*;
+    pub use config::prelude::*;
     pub use dbus::prelude::*;
     pub use geometry::prelude::*;
     pub use gles::prelude::*;

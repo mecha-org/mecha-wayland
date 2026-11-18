@@ -66,6 +66,20 @@ impl Range {
     pub(crate) fn contains(self, offset: f64) -> bool {
         offset >= self.min && offset <= self.max
     }
+
+    /// Whether content resting at `offset` can move by `delta` (positive
+    /// toward the end) without overscrolling: false when it all fits, or
+    /// when `offset` is within `slack` of the end `delta` heads for.
+    pub(crate) fn can_move(self, offset: f64, delta: f64, slack: f64) -> bool {
+        if self.max <= self.min {
+            return false;
+        }
+        if delta > 0.0 {
+            offset < self.max - slack
+        } else {
+            offset > self.min + slack
+        }
+    }
 }
 
 /// The offset after the finger moves `delta` from `offset`. Inside the

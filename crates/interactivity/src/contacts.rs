@@ -91,25 +91,25 @@ impl Contacts {
         contact: ContactId,
         node: NodeId,
     ) -> Option<(HitSet, HitSet, Point)> {
+        let taken = self.hold(contact, node)?;
+        self.live.get_mut(&contact)?.claimed = Some(node);
+        Some(taken)
+    }
+
+    /// [`Contacts::claim`] without making `node` the claimer.
+    pub(crate) fn hold(
+        &mut self,
+        contact: ContactId,
+        node: NodeId,
+    ) -> Option<(HitSet, HitSet, Point)> {
         let state = self.live.get_mut(&contact)?;
         let captured = state.captured.as_mut().filter(|c| c.contains(&node))?;
         let cancelled = captured.iter().copied().filter(|&id| id != node).collect();
         *captured = HitSet::from_slice(&[node]);
-        let exited = state.hit.iter().copied().filter(|&id| id != node).collect();
+        let exited: SmallVec<[NodeId; 8]> =
+            state.hit.iter().copied().filter(|&id| id != node).collect();
         state.hit.retain(|id| *id == node);
-        state.claimed = Some(node);
         Some((cancelled, exited, state.position))
-    }
-
-    /// Ends `contact`'s capture, unclaimed, and returns it with the position.
-    /// `None` if `node` is not in the capture.
-    pub(crate) fn cancel(&mut self, contact: ContactId, node: NodeId) -> Option<(HitSet, Point)> {
-        let state = self.live.get_mut(&contact)?;
-        if !state.captured.as_ref()?.contains(&node) {
-            return None;
-        }
-        state.claimed = None;
-        Some((state.captured.take()?, state.position))
     }
 
     /// Removes and returns `contact`'s state, if any.

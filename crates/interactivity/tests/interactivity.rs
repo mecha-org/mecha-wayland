@@ -931,17 +931,17 @@ fn claim_is_signalled_and_readable_until_release() {
     assert_eq!(app.resource::<Contacts>().claimed(ContactId::Mouse), None);
 }
 
-/// Cancels its contact's press once it has moved 10 px or more.
+/// Holds its contact once a press on it has moved 10 px or more.
 #[derive(Default)]
-struct Canceller {
+struct Holder {
     start: Option<Point>,
 }
-impl Build for Canceller {
-    type Widget = Canceller;
+impl Build for Holder {
+    type Widget = Holder;
 }
-impl Widget for Canceller {
-    type Builder = Canceller;
-    fn build(b: Canceller, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+impl Widget for Holder {
+    type Builder = Holder;
+    fn build(b: Holder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         s.on::<Press>(me, |ctx, e| ctx.me().start = Some(e.position));
         s.on::<PressMoved>(me, |ctx, e| {
             if ctx
@@ -950,7 +950,7 @@ impl Widget for Canceller {
                 .is_some_and(|s| (e.position.x - s.x).abs() >= 10.0)
             {
                 ctx.me().start = None;
-                ctx.cancel_contact(e.contact);
+                ctx.hold_contact(e.contact);
             }
         });
         b
@@ -958,13 +958,13 @@ impl Widget for Canceller {
 }
 
 #[test]
-fn cancel_contact_ends_the_press_unclaimed() {
+fn hold_contact_keeps_the_press_unclaimed() {
     let mut app = claim_app();
     app.system(log_claimed);
     let win = app.spawn(app.root(), a_window());
-    let canceller = app.spawn_with(win, Canceller::default(), (at(10.0, 10.0, 150.0, 150.0),));
+    let holder = app.spawn_with(win, Holder::default(), (at(10.0, 10.0, 150.0, 150.0),));
     let button = app.spawn_with(
-        canceller,
+        holder,
         Leaf,
         (LayoutStyle::default().size(px(40.0), px(40.0)),),
     );
@@ -979,10 +979,7 @@ fn cancel_contact_ends_the_press_unclaimed() {
 
     app.signal(moved(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
     app.flush();
-    assert_eq!(
-        take_press_cancelled(),
-        vec![button.id(), canceller.id(), win.id()]
-    );
+    assert_eq!(take_press_cancelled(), vec![button.id(), win.id()]);
     assert!(take_claims().is_empty());
     assert_eq!(
         app.resource::<Contacts>().claimed(ContactId::Touch(1)),
@@ -991,8 +988,8 @@ fn cancel_contact_ends_the_press_unclaimed() {
 
     app.signal(released(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
     app.flush();
-    assert!(take_release().is_empty());
-    assert!(take_clicked().is_empty());
+    assert_eq!(take_release(), vec![holder.id()]);
+    assert_eq!(take_clicked(), vec![holder.id()]);
 }
 
 #[test]

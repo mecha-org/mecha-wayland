@@ -33,7 +33,7 @@ pub(crate) struct ContactState {
 }
 
 /// Every live contact — the mouse pointer plus each active touch — keyed
-/// by [`ContactId`]. The two reads here are its only public surface.
+/// by [`ContactId`]. The three reads here are its only public surface.
 #[derive(Debug, Default)]
 pub struct Contacts {
     live: HashMap<ContactId, ContactState>,
@@ -53,6 +53,11 @@ impl Contacts {
     /// seen, or has since been torn down.
     pub fn position(&self, contact: ContactId) -> Option<Point> {
         self.live.get(&contact).map(|s| s.position)
+    }
+
+    /// Check whether the widget claimed the contact or not
+    pub fn claimed(&self, contact: ContactId) -> Option<NodeId> {
+        self.live.get(&contact).and_then(|s| s.claimed)
     }
 
     /// `contact`'s state, creating it at `window` with a zero position, an
@@ -94,6 +99,17 @@ impl Contacts {
         state.hit.retain(|id| *id == node);
         state.claimed = Some(node);
         Some((cancelled, exited, state.position))
+    }
+
+    /// Ends `contact`'s capture, unclaimed, and returns it with the position.
+    /// `None` if `node` is not in the capture.
+    pub(crate) fn cancel(&mut self, contact: ContactId, node: NodeId) -> Option<(HitSet, Point)> {
+        let state = self.live.get_mut(&contact)?;
+        if !state.captured.as_ref()?.contains(&node) {
+            return None;
+        }
+        state.claimed = None;
+        Some((state.captured.take()?, state.position))
     }
 
     /// Removes and returns `contact`'s state, if any.

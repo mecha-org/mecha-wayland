@@ -120,7 +120,7 @@ mod hit_test;
 mod keyboard;
 mod module;
 
-pub use claim::{ContextClaim, GrabPresses};
+pub use claim::{ContactClaimed, ContextClaim, GrabPresses};
 pub use contact::{ContactId, ContactInput, ContactPhase};
 pub use contacts::Contacts;
 pub use events::{
@@ -132,9 +132,9 @@ pub use module::InteractivityModule;
 
 pub mod prelude {
     pub use crate::{
-        Clicked, ContactId, ContactInput, ContactPhase, Contacts, ContextClaim, Enter, Exit,
-        Focusable, GrabPresses, InteractivityModule, KeyMeaning, KeyPress, KeyRelease, KeyRepeat,
-        KeyState, KeyboardFocus, KeyboardInput, Modifiers, Press, PressCancelled, PressMoved,
-        Release,
+        Clicked, ContactClaimed, ContactId, ContactInput, ContactPhase, Contacts, ContextClaim,
+        Enter, Exit, Focusable, GrabPresses, InteractivityModule, KeyMeaning, KeyPress, KeyRelease,
+        KeyRepeat, KeyState, KeyboardFocus, KeyboardInput, Modifiers, Press, PressCancelled,
+        PressMoved, Release,
     };
 }

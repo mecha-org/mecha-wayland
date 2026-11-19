@@ -113,6 +113,13 @@ impl Window {
         self.pending
     }
 
+    /// Let the next `RequestFrame` through though one is out: for a WSI
+    /// that has taken the request in and will answer it with the frame a
+    /// later request asks for.
+    pub fn reopen(&mut self) {
+        self.pending = false;
+    }
+
     /// The colour the window clears to: black unless the builder said
     /// otherwise. What a renderer knows is behind everything at the top
     /// level.

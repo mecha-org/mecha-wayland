@@ -9,9 +9,11 @@
 //!   [`Role::Lock`] (see [`lock`]). The role is read once.
 //! - A toplevel or layer surface is committed empty at once, for its first
 //!   configure; a lock surface is not (see [`lock`]).
-//! - The shell's configure is acked and settled: the shell's size where
-//!   it gave one, else the window's `Layout`, else [`DEFAULT_SIZE`]; the
-//!   window hears `Resized`. `preferred_buffer_scale` becomes
+//! - Of the configures a window gets between ticks, only the last is acked
+//!   and settled, at the next `Tick`, before that tick's layout: at the
+//!   shell's size where it gave one, else the window's `Layout`, else
+//!   [`DEFAULT_SIZE`]; the window hears `Resized`, and its frame draws the
+//!   new layout. `preferred_buffer_scale` becomes
 //!   `ScaleFactorChanged`; `close` and `closed` become `CloseRequested`,
 //!   which this module only reports.
 //! - The frame loop: `FrameRequested` marks the window wanting; when it
@@ -199,6 +201,15 @@ struct Entry {
     /// [`Surfaces::request_commit`]: the next `Frame` commits even with
     /// nothing to draw.
     commit_wanted: bool,
+    /// The shell's latest configure, until the next `Tick` settles it.
+    configure: Option<Configure>,
+}
+
+/// A configure from the shell, held until the next `Tick` settles it.
+#[derive(Debug, Clone, Copy)]
+struct Configure {
+    serial: u32,
+    size: (i32, i32),
 }
 
 impl Entry {
@@ -380,6 +391,9 @@ impl Surfaces {
             if entry.frames > 0 {
                 entry.surface.attach(wl, None, 0, 0);
                 entry.surface.commit(wl);
+                // An ack after this unmap may name a serial the shell has
+                // dropped; the next initial commit gets a fresh configure.
+                entry.configure = None;
                 entry.configured = false;
                 entry.drop_callback(&mut self.owner);
                 if let Some(slots) = entry.slots.as_mut() {
@@ -392,8 +406,10 @@ impl Surfaces {
             entry.wanting = true;
             // Every hide of a drawn window attached null, so the window
             // needs a fresh initial commit even if a configure sent before
-            // the unmap arrived while hidden and marked it configured.
+            // the unmap arrived while hidden and marked it configured, or is
+            // still held.
             if entry.frames > 0 {
+                entry.configure = None;
                 entry.configured = false;
                 if let (Shell::Layer(ls), Some((l, size))) = (&entry.shell, &entry.layer) {
                     ls.set_layer(wl, l.layer);
@@ -659,6 +675,7 @@ impl Module for PresentationModule {
             .system(on_xdg_surface)
             .system(on_toplevel)
             .system(on_layer_surface)
+            .system(on_settle)
             .system(on_surface)
             .system(on_frame_requested)
             .system(on_atlas_changed)
@@ -804,6 +821,7 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             layer,
             transparent,
             commit_wanted: false,
+            configure: None,
         },
     );
 }
@@ -858,7 +876,7 @@ fn replace_slots(
 }
 
 /// The shell configured `w`: settle the size, make slots if the device
-/// size changed, report `Resized`, and kick.
+/// size changed, report `Resized`, and have a frame follow.
 ///
 /// A new device size also drops the outstanding frame callback: the
 /// configure must be answered with a buffer of the new size, and a
@@ -867,14 +885,13 @@ fn replace_slots(
 /// the window drawn, and hit-tested, at its old size forever. A dropped
 /// callback that fires after all has no owner and is ignored.
 ///
-/// The kick is unconditional
-/// because `window` swallows every `RequestFrame` while one is pending
-/// and only a `Frame` clears that bit: the request a window raises for
-/// its own content arrives before the first configure, so a configure
-/// that declined to kick would leave it pending forever. When the size
-/// the queue was built at is not yet the slots', `on_frame` declines to
-/// draw and wants again, and the relayout this `Resized` causes requests
-/// the frame that fits.
+/// A frame always follows, and only one. A new size relayouts, and that
+/// relayout's own `RequestFrame` asks for the frame, after everything the
+/// layout change set off has run; an unchanged size asks for it here.
+/// `window` swallows every `RequestFrame` while one is pending, and a
+/// window often is (the request it raised for its own content comes
+/// before its first configure): its pending bit is cleared, as `wanting`
+/// already holds that request, so the next one gets through.
 fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
     let layout = app
         .component::<ComputedLayout>(w)
@@ -921,11 +938,17 @@ fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
         entry.wanting = true;
     }
     app.emit(Resized { size }, w);
-    kick(app, w);
+    // Its standing request is wanted already; the frame is asked for below.
+    if let Some(window) = app.widget_mut::<Window>(w) {
+        window.reopen();
+    }
+    if size == layout {
+        app.signal(RequestFrame(w));
+    }
 }
 
 /// The one decision: configured, no callback outstanding, a slot free
-/// and wanting gives `Frame(w)`. Otherwise the next configure, `done` or
+/// and wanting gives `Frame(w)`. Otherwise the next request, `done` or
 /// `release` kicks again.
 fn kick(app: &mut App, w: NodeId) {
     let ready = app.resource::<Surfaces>().entries.get(&w).is_some_and(|e| {
@@ -973,30 +996,40 @@ fn on_toplevel(app: &mut App, e: &XdgToplevelEvent) {
 
 fn on_xdg_surface(app: &mut App, e: &XdgSurfaceEvent) {
     let XdgSurfaceEvent::Configure { surface, serial } = e;
-    let found = {
-        let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.entry_of(surface.id()).map(|(w, entry)| {
-            surface.ack_configure(&mut wl, *serial);
-            (w, entry.proposed)
-        })
-    };
-    if let Some((w, proposed)) = found {
-        settle(app, w, proposed);
+    hold(app, surface.id(), *serial, None);
+}
+
+/// Hold a configure of ours for the next `Tick`, over any held. `None` is
+/// a toplevel's: its size came in the `xdg_toplevel.configure` before.
+fn hold(app: &mut App, role: ObjectId, serial: u32, size: Option<(u32, u32)>) {
+    let mut surfaces = app.resource_mut::<Surfaces>();
+    if let Some((_, entry)) = surfaces.entry_of(role) {
+        let size = size.map_or(entry.proposed, |(w, h)| (w as i32, h as i32));
+        entry.configure = Some(Configure { serial, size });
     }
 }
 
-/// A layer or lock surface's configure: if the role object is one of
-/// ours, `ack` it and settle its window at `size`.
-fn ack_and_settle(app: &mut App, role: ObjectId, size: (u32, u32), ack: impl FnOnce(&mut Wayland)) {
-    let found = {
+/// Ack and settle every held configure. Every shell protocol here lets a
+/// client ack only the latest of several. At `Tick`, before `PostTick`'s
+/// layout, so the frame a settle asks for draws the new layout.
+fn on_settle(app: &mut App, _: &Tick) {
+    let mut held = Vec::new();
+    {
         let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.entry_of(role).map(|(w, _)| {
-            ack(&mut wl);
-            w
-        })
-    };
-    if let Some(w) = found {
-        settle(app, w, (size.0 as i32, size.1 as i32));
+        for (&w, entry) in &mut surfaces.entries {
+            let Some(Configure { serial, size }) = entry.configure.take() else {
+                continue;
+            };
+            match &entry.shell {
+                Shell::Toplevel { xdg, .. } => xdg.ack_configure(&mut wl, serial),
+                Shell::Layer(ls) => ls.ack_configure(&mut wl, serial),
+                Shell::Lock(ls) => ls.ack_configure(&mut wl, serial),
+            }
+            held.push((w, size));
+        }
+    }
+    for (w, size) in held {
+        settle(app, w, size);
     }
 }
 
@@ -1007,9 +1040,7 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
             serial,
             width,
             height,
-        } => ack_and_settle(app, layer_surface.id(), (*width, *height), |wl| {
-            layer_surface.ack_configure(wl, *serial)
-        }),
+        } => hold(app, layer_surface.id(), *serial, Some((*width, *height))),
         // FIXME: the compositor closes a layer surface when its output goes
         // away, or when there is none. Most windows ignore `CloseRequested`,
         // so they stay without a surface. Drop the dead surface but keep the
@@ -1034,9 +1065,12 @@ fn on_lock_surface(app: &mut App, e: &ExtSessionLockSurfaceV1Event) {
         width,
         height,
     } = e;
-    ack_and_settle(app, session_lock_surface.id(), (*width, *height), |wl| {
-        session_lock_surface.ack_configure(wl, *serial)
-    });
+    hold(
+        app,
+        session_lock_surface.id(),
+        *serial,
+        Some((*width, *height)),
+    );
 }
 
 fn on_frame_requested(app: &mut App, r: &FrameRequested) {

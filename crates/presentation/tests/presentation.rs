@@ -287,6 +287,10 @@ fn damage(reqs: &[wayland::fake::Request]) -> Vec<(i32, i32, i32, i32)> {
         .collect()
 }
 
+fn log_clear(f: &mut Fake) {
+    f.app.resource_mut::<Log>().0.clear();
+}
+
 fn log(f: &Fake) -> Vec<String> {
     f.app.resource::<Log>().0.clone()
 }
@@ -487,7 +491,11 @@ fn a_configure_acks_makes_two_dmabuf_slots_and_the_layout_frame_draws() {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
     f.turn();
-    // The ack and the slots, but no frame yet: the size changed the layout.
+    assert!(f.requests().is_empty(), "held until the tick");
+    // The tick settles it before its layout: the ack, the slots and the
+    // frame at the new layout, together.
+    f.app.tick();
+    f.turn();
     let reqs = f.requests();
     let s: Vec<(u32, u16)> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
     assert_eq!(
@@ -502,6 +510,10 @@ fn a_configure_acks_makes_two_dmabuf_slots_and_the_layout_frame_draws() {
             (PARAMS_B, op::PARAMS_ADD),
             (PARAMS_B, op::PARAMS_CREATE_IMMED),
             (PARAMS_B, op::PARAMS_DESTROY),
+            (SURFACE, op::ATTACH),
+            (SURFACE, op::DAMAGE_BUFFER),
+            (SURFACE, op::FRAME),
+            (SURFACE, op::COMMIT),
         ]
     );
     let mut add = reqs[2].reader();
@@ -530,49 +542,21 @@ fn a_configure_acks_makes_two_dmabuf_slots_and_the_layout_frame_draws() {
     assert_eq!(immed.object(), Some(ObjectId(BUF_A)));
     assert_eq!((immed.int(), immed.int()), (Some(320), Some(200)));
     assert_eq!(immed.uint(), Some(XRGB));
-    // The configure kicks whatever the layout says, and that frame draws
-    // nothing: the queue is still the old size. It must kick — `window`
-    // lets one frame request stand per window until a `Frame` answers it.
-    // `Frame` logs before `Resized` for the ordering reason the scale test
-    // spells out: `kick`'s signal queues ahead of the emitted event.
-    assert_eq!(
-        log(&f),
-        vec![format!("Frame {win:?}"), "Resized 320x200".to_string()]
-    );
-    assert!(f.app.resource::<Surfaces>().is_configured(win));
-    assert_eq!(
-        f.app.component::<LayoutStyle>(win).unwrap().width,
-        px(320.0)
-    );
-
-    // The layout change requests the frame; it is drawn on the next tick.
-    f.app.tick();
-    f.turn();
-    let reqs = f.requests();
-    let s: Vec<(u32, u16)> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
-    assert_eq!(
-        s,
-        vec![
-            (SURFACE, op::ATTACH),
-            (SURFACE, op::DAMAGE_BUFFER),
-            (SURFACE, op::FRAME),
-            (SURFACE, op::COMMIT),
-        ]
-    );
-    assert_eq!(reqs[0].reader().object(), Some(ObjectId(BUF_A)));
-    let mut dmg = reqs[1].reader();
+    assert_eq!(reqs[9].reader().object(), Some(ObjectId(BUF_A)));
+    let mut dmg = reqs[10].reader();
     assert_eq!(
         (dmg.int(), dmg.int(), dmg.int(), dmg.int()),
         (Some(0), Some(0), Some(320), Some(200))
     );
-    assert_eq!(reqs[2].reader().object(), Some(ObjectId(CALLBACK)));
+    assert_eq!(reqs[11].reader().object(), Some(ObjectId(CALLBACK)));
+    // One frame, at the new size: none drawn, or thrown away, at the old.
+    let frames = log(&f).iter().filter(|l| l.starts_with("Frame")).count();
+    assert_eq!(frames, 1);
+    assert!(log(&f).contains(&"Resized 320x200".to_string()));
+    assert!(f.app.resource::<Surfaces>().is_configured(win));
     assert_eq!(
-        log(&f),
-        vec![
-            format!("Frame {win:?}"),
-            "Resized 320x200".to_string(),
-            format!("Frame {win:?}"),
-        ]
+        f.app.component::<LayoutStyle>(win).unwrap().width,
+        px(320.0)
     );
 }
 
@@ -591,18 +575,16 @@ fn a_zero_configure_settles_on_the_layout_size_and_draws_at_once() {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
     f.turn();
-    // The settled size equals the layout's, so the frame is kicked now.
+    f.app.tick();
+    f.turn();
+    // The settled size equals the layout's: acked and drawn in the tick.
     let s = shape(&mut f);
     assert_eq!(s[0], (XDG, op::ACK_CONFIGURE));
     assert!(s.contains(&(SURFACE, op::ATTACH)), "{s:?}");
     assert!(s.contains(&(SURFACE, op::COMMIT)), "{s:?}");
-    // `kick`'s `app.signal(Frame(w))` is queued directly, ahead of
-    // `Resized`'s `Emitted<Resized>`, which only reaches the signal queue
-    // after `app.flush` drains the `Resized` event job itself: "Frame"
-    // logs before "Resized" every time settle's own kick fires.
     assert_eq!(
         log(&f),
-        vec![format!("Frame {win:?}"), "Resized 100x50".to_string()]
+        vec!["Resized 100x50".to_string(), format!("Frame {win:?}")]
     );
 }
 
@@ -618,11 +600,12 @@ fn a_zero_configure_with_no_layout_size_takes_the_default() {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
     f.turn();
-    // The configure's own kick draws nothing at the old size; the
-    // relayout's frame follows a tick later.
+    f.app.tick();
+    f.turn();
+    // Settled before the tick's layout, so its one frame is at the default.
     assert_eq!(
         log(&f),
-        vec![format!("Frame {win:?}"), "Resized 640x480".to_string(),]
+        vec!["Resized 640x480".to_string(), format!("Frame {win:?}")]
     );
     let reqs = f.requests();
     let immed = reqs
@@ -1444,6 +1427,130 @@ fn two_configures_in_one_turn_draw_one_frame() {
 }
 
 #[test]
+fn a_burst_of_configures_settles_once_at_the_last() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = spawn(&mut f, LayoutStyle::default().column());
+    f.requests();
+    for (serial, size) in [(1, 100), (2, 200), (3, 300)] {
+        f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+            w.int(size);
+            w.int(size);
+            w.array(&[]);
+        });
+        f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(serial));
+    }
+    f.turn();
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    let acks = acked(&reqs, XDG, op::ACK_CONFIGURE);
+    assert_eq!(acks, vec![3], "only the latest is acked");
+    let made = reqs
+        .iter()
+        .filter(|r| r.sender == ObjectId(DMABUF) && r.opcode == op::CREATE_PARAMS)
+        .count();
+    assert_eq!(made, 2, "slots made once, at the last size");
+    assert_eq!(resized(&f), vec!["Resized 300x300"]);
+    assert_eq!(
+        f.app.component::<LayoutStyle>(win).unwrap().width,
+        px(300.0)
+    );
+}
+
+/// The serials acked on `sender` with `opcode`, in order.
+fn acked(reqs: &[wayland::fake::Request], sender: u32, opcode: u16) -> Vec<u32> {
+    reqs.iter()
+        .filter(|r| r.sender == ObjectId(sender) && r.opcode == opcode)
+        .map(|r| r.reader().uint().unwrap())
+        .collect()
+}
+
+fn resized(f: &Fake) -> Vec<String> {
+    log(f)
+        .into_iter()
+        .filter(|l| l.starts_with("Resized"))
+        .collect()
+}
+
+#[test]
+fn a_burst_of_layer_configures_settles_once_at_the_last() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    spawn_layer(&mut f);
+    for (serial, height) in [(1, 30), (2, 31), (3, 32)] {
+        f.send(XDG, ev::LAYER_CONFIGURE, |w| {
+            w.uint(serial);
+            w.uint(800);
+            w.uint(height);
+        });
+    }
+    f.turn();
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    assert_eq!(acked(&reqs, XDG, op::LAYER_ACK), vec![3]);
+    assert_eq!(resized(&f), vec!["Resized 800x32"]);
+}
+
+#[test]
+fn configures_in_separate_ticks_are_each_acked() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    spawn(&mut f, LayoutStyle::default().column());
+    f.requests();
+    for (serial, size) in [(1, 100), (2, 200)] {
+        f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
+            w.int(size);
+            w.int(size);
+            w.array(&[]);
+        });
+        f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(serial));
+        f.turn();
+        f.app.tick();
+        f.turn();
+    }
+    let reqs = f.requests();
+    assert_eq!(acked(&reqs, XDG, op::ACK_CONFIGURE), vec![1, 2]);
+    assert_eq!(resized(&f), vec!["Resized 100x100", "Resized 200x200"]);
+}
+
+/// The window a layer configure shows, from the same read: once.
+#[derive(Default)]
+struct ShowOnConfigure(Option<NodeId>);
+impl Resource for ShowOnConfigure {}
+
+fn show_on_configure(app: &mut App, _: &ZwlrLayerSurfaceV1Event) {
+    let Some(win) = app.resource_mut::<ShowOnConfigure>().0.take() else {
+        return;
+    };
+    let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+    surfaces.set_mapped(win, true, &mut wl);
+}
+
+#[test]
+fn a_configure_held_across_a_remap_is_dropped_for_a_fresh_one() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_mapped(&mut f, win, false);
+    f.requests();
+    // Shown by a handler of the read that brings configure 4, before it
+    // is settled: 4 answered the unmapped surface, not the remapped one.
+    f.app.insert_resource(ShowOnConfigure(Some(win)));
+    f.app.system(show_on_configure);
+    layer_configure(&mut f, 4);
+    let reqs = f.requests();
+    assert!(acked(&reqs, XDG, op::LAYER_ACK).is_empty(), "{reqs:?}");
+    assert!(!f.app.resource::<Surfaces>().is_configured(win));
+
+    layer_configure(&mut f, 5);
+    let reqs = f.requests();
+    assert_eq!(acked(&reqs, XDG, op::LAYER_ACK), vec![5]);
+    assert!(
+        reqs.iter()
+            .any(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::ATTACH),
+        "the remap draws after the fresh configure"
+    );
+}
+
+#[test]
 fn a_frame_with_nothing_changed_commits_nothing() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = configured(&mut f, 320, 200);
@@ -1455,14 +1562,16 @@ fn a_frame_with_nothing_changed_commits_nothing() {
     // window", so nothing-changed could never be demonstrated on it.
     f.send(BUF_A, ev::RELEASE, |_| {});
     f.turn();
-    // A second configure of the same size kicks a Frame; render's scissor
-    // is empty, so nothing is attached or committed.
+    // A second configure of the same size asks for a Frame; render's
+    // scissor is empty, so nothing is attached or committed.
     f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
         w.int(320);
         w.int(200);
         w.array(&[]);
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(2));
+    f.turn();
+    f.app.tick();
     f.turn();
     let s = shape(&mut f);
     assert_eq!(s, vec![(XDG, op::ACK_CONFIGURE)]);
@@ -1489,22 +1598,14 @@ fn a_configure_at_a_new_size_draws_though_the_first_request_is_still_pending() {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
     f.turn();
-    let s = shape(&mut f);
-    assert!(
-        !s.contains(&(SURFACE, op::ATTACH)),
-        "the queue is still the old size, so that frame draws nothing: {s:?}"
-    );
-    assert!(
-        log(&f).contains(&format!("Frame {win:?}")),
-        "but the frame ran, which is what clears the window's pending bit: {:?}",
-        log(&f)
-    );
     f.app.tick();
     f.turn();
     assert!(
         !attaches(&mut f).is_empty(),
-        "the relayout the configure caused draws the first frame"
+        "the kick answers the standing request, at the settled layout"
     );
+    let frames = log(&f).iter().filter(|l| l.starts_with("Frame")).count();
+    assert_eq!(frames, 1, "{:?}", log(&f));
     assert_eq!(
         f.app.component::<LayoutStyle>(win).unwrap().width,
         px(320.0)
@@ -1565,13 +1666,11 @@ fn a_preferred_scale_rescales_the_slots_and_redraws_at_once() {
     // `kick`'s `app.signal(Frame(w))` inside `on_surface` queues directly,
     // ahead of `ScaleFactorChanged`'s `Emitted<ScaleFactorChanged>`, which
     // only reaches the signal queue after the event that carried it is
-    // fully flushed: the same ordering Task 5 hit with `Resized`, so
-    // "Frame" logs before "Scale 2" even though `on_surface` emitted the
-    // scale change first.
+    // fully flushed: so "Frame" logs before "Scale 2" even though
+    // `on_surface` emitted the scale change first.
     assert_eq!(
         log(&f),
         vec![
-            format!("Frame {win:?}"),
             "Resized 320x200".to_string(),
             format!("Frame {win:?}"),
             format!("Frame {win:?}"),
@@ -1600,30 +1699,29 @@ fn a_configure_to_a_new_size_waits_for_the_layout_and_draws_the_new_size() {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(2));
     f.turn();
-    let s = shape(&mut f);
-    assert!(
-        !s.contains(&(SURFACE, op::ATTACH)),
-        "no frame before the layout: {s:?}"
-    );
-    assert_eq!(
-        s.iter().filter(|r| r.1 == op::PARAMS_CREATE_IMMED).count(),
-        2,
-        "new slots"
-    );
+    assert!(shape(&mut f).is_empty(), "held until the tick");
+    log_clear(&mut f);
     f.app.tick();
     f.turn();
     let reqs = f.requests();
-    let attach = reqs
+    let creates = reqs
         .iter()
-        .find(|r| r.opcode == op::ATTACH)
-        .expect("the layout's frame");
-    let dmg = reqs.iter().find(|r| r.opcode == op::DAMAGE_BUFFER).unwrap();
+        .filter(|r| r.sender == ObjectId(DMABUF) && r.opcode == op::CREATE_PARAMS)
+        .count();
+    assert_eq!(creates, 2, "new slots");
+    let on_surface = |opcode| {
+        reqs.iter()
+            .filter(move |r| r.sender == ObjectId(SURFACE) && r.opcode == opcode)
+    };
+    assert_eq!(on_surface(op::ATTACH).count(), 1, "one frame, the layout's");
+    let dmg = on_surface(op::DAMAGE_BUFFER).next().unwrap();
     let mut d = dmg.reader();
     assert_eq!(
         (d.int(), d.int(), d.int(), d.int()),
         (Some(0), Some(0), Some(400), Some(300))
     );
-    let _ = attach;
+    let frames = log(&f).iter().filter(|l| l.starts_with("Frame")).count();
+    assert_eq!(frames, 1, "none at the old size: {:?}", log(&f));
     assert_eq!(
         f.app.component::<LayoutStyle>(win).unwrap().width,
         px(400.0)
@@ -1655,6 +1753,8 @@ fn the_first_frame_holds_the_clear_colour() {
         w.array(&[]);
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
+    f.turn();
+    f.app.tick();
     f.turn();
     let (w, h, px) = f
         .app
@@ -2317,9 +2417,12 @@ fn transparent_slot_formats(f: &mut Fake) -> Vec<u32> {
     });
     f.send(XDG, ev::XDG_CONFIGURE, |w| w.uint(1));
     f.turn();
+    f.app.tick();
+    f.turn();
+    // `wl_surface.frame` shares the opcode, and the frame draws this tick.
     f.requests()
         .iter()
-        .filter(|r| r.opcode == op::PARAMS_CREATE_IMMED)
+        .filter(|r| r.opcode == op::PARAMS_CREATE_IMMED && r.sender != ObjectId(SURFACE))
         .map(|r| {
             let mut a = r.reader();
             let (_buffer, _w, _h) = (a.object(), a.int(), a.int());

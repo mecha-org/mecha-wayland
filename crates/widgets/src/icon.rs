@@ -11,6 +11,14 @@ pub struct Icon {
     tile: AtlasTile,
     size: Size,
     color: Color,
+    opaque: bool,
+}
+
+/// The icon's one sprite.
+fn sprite_paint(tile: AtlasTile, size: Size, color: Color, opaque: bool) -> Paint {
+    Paint::Monochrome(vec![
+        MonochromeSprite::new(tile, Point::ZERO, size, color).opaque(opaque),
+    ])
 }
 
 impl Icon {
@@ -28,6 +36,7 @@ pub fn icon(sprite: SpriteId) -> IconBuilder {
         style: LayoutStyle::default(),
         color: Color::WHITE,
         size: None,
+        opaque: true,
     }
 }
 
@@ -36,6 +45,7 @@ pub struct IconBuilder {
     style: LayoutStyle,
     color: Color,
     size: Option<Size>,
+    opaque: bool,
 }
 
 impl IconBuilder {
@@ -52,6 +62,10 @@ impl IconBuilder {
         self.size = Some(size);
         self
     }
+    pub fn opaque(mut self, opaque: bool) -> Self {
+        self.opaque = opaque;
+        self
+    }
 }
 
 impl Build for IconBuilder {
@@ -66,26 +80,16 @@ impl Widget for Icon {
         // caller bug, the same class as an unregistered component.
         let sprite = s.resource::<Atlas>().sprite(b.sprite);
         let size = b.size.unwrap_or(sprite.size);
-        *s.component_mut::<Paint>(me).unwrap() = Paint::Monochrome(vec![MonochromeSprite::new(
-            sprite.tile,
-            Point::ZERO,
-            size,
-            b.color,
-        )]);
+        *s.component_mut::<Paint>(me).unwrap() = sprite_paint(sprite.tile, size, b.color, b.opaque);
         *s.component_mut::<Measure>(me).unwrap() = Measure::fixed(size);
         s.on::<Rescaled>(me, |ctx: &mut Context<'_, Icon>, _| {
             let id = ctx.me().sprite;
             let tile = ctx.resource::<Atlas>().sprite(id).tile;
-            let (size, color) = {
+            let (size, color, opaque) = {
                 let w = ctx.me();
-                (w.size, w.color)
+                (w.size, w.color, w.opaque)
             };
-            ctx.set_paint(Paint::Monochrome(vec![MonochromeSprite::new(
-                tile,
-                Point::ZERO,
-                size,
-                color,
-            )]));
+            ctx.set_paint(sprite_paint(tile, size, color, opaque));
             ctx.me().tile = tile;
         });
         Icon {
@@ -93,6 +97,7 @@ impl Widget for Icon {
             tile: sprite.tile,
             size,
             color: b.color,
+            opaque: b.opaque,
         }
     }
 }
@@ -113,16 +118,11 @@ impl IconContext for Context<'_, Icon> {
         if self.me().color == color {
             return;
         }
-        let (tile, size) = {
+        let (tile, size, opaque) = {
             let w = self.me();
-            (w.tile, w.size)
+            (w.tile, w.size, w.opaque)
         };
-        self.set_paint(Paint::Monochrome(vec![MonochromeSprite::new(
-            tile,
-            Point::ZERO,
-            size,
-            color,
-        )]));
+        self.set_paint(sprite_paint(tile, size, color, opaque));
         self.me().color = color;
     }
 
@@ -130,16 +130,11 @@ impl IconContext for Context<'_, Icon> {
         if self.me().size == size {
             return;
         }
-        let (tile, color) = {
+        let (tile, color, opaque) = {
             let w = self.me();
-            (w.tile, w.color)
+            (w.tile, w.color, w.opaque)
         };
-        self.set_paint(Paint::Monochrome(vec![MonochromeSprite::new(
-            tile,
-            Point::ZERO,
-            size,
-            color,
-        )]));
+        self.set_paint(sprite_paint(tile, size, color, opaque));
         *self.component_mut::<Measure>().unwrap() = Measure::fixed(size);
         self.me().size = size;
     }
@@ -149,13 +144,8 @@ impl IconContext for Context<'_, Icon> {
         if self.me().tile == sprite.tile && self.me().size == sprite.size {
             return;
         }
-        let color = self.me().color;
-        self.set_paint(Paint::Monochrome(vec![MonochromeSprite::new(
-            sprite.tile,
-            Point::ZERO,
-            sprite.size,
-            color,
-        )]));
+        let (color, opaque) = (self.me().color, self.me().opaque);
+        self.set_paint(sprite_paint(sprite.tile, sprite.size, color, opaque));
         *self.component_mut::<Measure>().unwrap() = Measure::fixed(sprite.size);
         let w = self.me();
         w.sprite = id;

@@ -17,8 +17,7 @@ pub use clock::{Clock, ClockBuilder, ClockContextExt, ClockInterval, ClockTick, 
 pub use color::{ColorSource, IntoColorSource};
 pub use font::{FontBook, FontContextExt, IntoWeight};
 pub use slider::{
-    Slider, SliderBuilder, SliderChange, SliderContextExt, SliderOrientation, SliderSize,
-    SliderVariant, slider,
+    Slider, SliderBuilder, SliderChange, SliderContextExt, SliderOrientation, SliderSize, slider,
 };
 pub use state::StateLayer;
 pub use text::{Text, TextBuilder, TextContextExt, text};
@@ -42,7 +41,7 @@ pub mod prelude {
     pub use crate::clock::{Clock, ClockBuilder, ClockContextExt, ClockInterval, ClockTick, clock};
     pub use crate::slider::{
         Slider, SliderBuilder, SliderChange, SliderContextExt, SliderOrientation, SliderSize,
-        SliderVariant, slider,
+        slider,
     };
 
     pub use crate::text::{Text, TextBuilder, TextContextExt, text};

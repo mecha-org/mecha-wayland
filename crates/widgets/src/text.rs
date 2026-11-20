@@ -74,6 +74,7 @@ pub struct TextProps {
     pub decoration: TextDecoration,
     pub wrap: TextWrap,
     pub max_lines: Option<usize>,
+    pub opaque: bool,
 }
 
 impl TextProps {
@@ -91,6 +92,7 @@ impl TextProps {
             decoration: TextDecoration::None,
             wrap: TextWrap::NoWrap,
             max_lines: None,
+            opaque: true,
         }
     }
 }
@@ -159,6 +161,12 @@ impl TextBuilder {
         self
     }
 
+    /// See [`TextProps::opaque`]. Opaque by default.
+    pub fn opaque(mut self, opaque: bool) -> Self {
+        self.props.opaque = opaque;
+        self
+    }
+
     pub fn line_height(mut self, height: f32) -> Self {
         self.props.line_height = Some(height);
         self
@@ -215,13 +223,14 @@ impl Widget for Text {
                 let m = text_measure(&atlas, &b.props, Size::new(0.0, 0.0));
                 (Paint::None, m)
             } else {
-                let (sprites, size) = shape(
+                let (mut sprites, size) = shape(
                     &mut atlas,
                     b.props.font,
                     b.props.px,
                     &b.props.string,
                     b.props.color,
                 );
+                set_opaque(&mut sprites, b.props.opaque);
                 let m = text_measure(&atlas, &b.props, size);
                 (Paint::Monochrome(sprites), m)
             }
@@ -524,6 +533,13 @@ fn shape_lines(
     (sprites, Size::new(widest, lines.len() as f32 * line_h))
 }
 
+/// Applies [`TextProps::opaque`] to shaped glyphs.
+fn set_opaque(sprites: &mut [MonochromeSprite], opaque: bool) {
+    for sprite in sprites {
+        sprite.is_opaque = opaque;
+    }
+}
+
 pub trait TextContext {
     fn set_text(&mut self, text: impl Into<String>);
     fn set_size(&mut self, px: u16);
@@ -667,7 +683,7 @@ fn refit_text(ctx: &mut Context<'_, Text>, width: Option<f32>) {
 fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
     let string = std::mem::take(&mut ctx.me().props.string);
     let props = ctx.me().props.clone();
-    let (sprites, natural) = if let (TextWrap::Word, Some(width)) = (props.wrap, width) {
+    let (mut sprites, natural) = if let (TextWrap::Word, Some(width)) = (props.wrap, width) {
         let mut atlas = ctx.resource_mut::<Atlas>();
         shape_lines(
             &mut atlas,
@@ -689,6 +705,7 @@ fn paint_line(ctx: &mut Context<'_, Text>, width: Option<f32>) -> Size {
         };
         (sprites, natural)
     };
+    set_opaque(&mut sprites, props.opaque);
     ctx.me().props.string = string;
     ctx.set_paint(Paint::Monochrome(sprites));
     natural

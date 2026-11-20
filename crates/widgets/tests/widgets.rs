@@ -1359,3 +1359,60 @@ fn widening_a_word_wrapped_texts_row_puts_it_back_on_one_line() {
         ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min);
     assert!(spread < r.height(), "all glyphs on the one line");
 }
+
+// ── opacity ─────────────────────────────────────────────────────────────
+
+fn all_opaque(app: &App, id: NodeId) -> Vec<bool> {
+    match app.component::<Paint>(id).unwrap() {
+        Paint::Monochrome(sprites) => sprites.iter().map(|s| s.is_opaque).collect(),
+        other => panic!("expected Monochrome, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_icon_is_opaque_unless_told_otherwise_and_keeps_it_through_setters() {
+    let mut app = app();
+    let root = root(&mut app, 100.0, 100.0);
+    let sprite = icon_sprite(&mut app);
+    let plain: Handle<Icon> = app.spawn(root, icon(sprite));
+    let see_through: Handle<Icon> = app.spawn(root, icon(sprite).opaque(false));
+    app.tick();
+    assert_eq!(all_opaque(&app, plain.id()), [true]);
+    assert_eq!(all_opaque(&app, see_through.id()), [false]);
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            let mut c = ctx.at(see_through).unwrap();
+            c.set_color(Color::BLACK);
+            c.set_size(geometry::Size::new(4.0, 4.0));
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    assert_eq!(all_opaque(&app, see_through.id()), [false]);
+}
+
+#[test]
+fn a_text_is_opaque_unless_told_otherwise_and_keeps_it_through_setters() {
+    let mut app = app();
+    let root = root(&mut app, 200.0, 100.0);
+    let font = app.resource_mut::<Atlas>().add_font(INTER).unwrap();
+    let plain: Handle<Text> = app.spawn(root, text(font, "hi"));
+    let see_through: Handle<Text> = app.spawn(root, text(font, "hi").opaque(false));
+    app.tick();
+    assert_eq!(all_opaque(&app, plain.id()), [true, true]);
+    assert_eq!(all_opaque(&app, see_through.id()), [false, false]);
+
+    let controller = app.spawn(
+        app.root(),
+        ControllerBuilder(Box::new(move |ctx: &mut Context<'_, Controller>| {
+            let mut c = ctx.at(see_through).unwrap();
+            c.set_text("hey");
+            c.set_color(Color::BLACK);
+        })),
+    );
+    poke(&mut app, controller.id());
+    app.tick();
+    assert_eq!(all_opaque(&app, see_through.id()), [false, false, false]);
+}

@@ -34,7 +34,9 @@ fn labeled_slider(
             LayoutStyle::default()
                 .column()
                 .center()
-                .gap(px(6.0))
+                // Room for the value label shown above the thumb while pressed:
+                // it takes no layout space and needs 4 px gap + 20 px line = 24 px.
+                .gap(px(28.0))
                 .width(percent(100.0)),
         ),
     );
@@ -44,6 +46,8 @@ fn labeled_slider(
             .variant(TextVariant::LabelMedium)
             .color(ColorRole::OnSurface),
     );
+    // The value label beside the thumb reads as a percent too.
+    let slider = slider.value_format(|v| format!("{}", (v * 100.0).round() as i32));
     let handle = s.spawn(col, slider);
     s.on::<SliderChange>(handle, move |ctx, e| {
         if let Some(mut t) = ctx.at(label) {

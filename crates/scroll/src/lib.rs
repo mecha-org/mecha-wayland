@@ -35,6 +35,8 @@
 //!   follows the driver 1:1 from there, with resistance past either end.
 //!   Motion across the axis never starts a drag. The other contacts are
 //!   ignored from then on.
+//! - [`Overscroll::Yield`] rubber-bands a drag that starts toward a resting
+//!   end without claiming its contact, so an outer gesture can take it too.
 //! - On release the finger's speed, read from the input timestamps,
 //!   becomes a fling: it coasts under friction and springs back at an
 //!   end. A release past an end springs back at once, carrying the
@@ -112,10 +114,10 @@ pub use module::ScrollClock;
 pub use module::ScrollModule;
 #[doc(hidden)]
 pub use physics::Tuning;
-pub use scrollable::{Axis, Scrollable, ScrollableBuilder, scrollable};
+pub use scrollable::{Axis, Overscroll, Scrollable, ScrollableBuilder, scrollable};
 #[doc(hidden)]
 pub use velocity::VelocityTracker;
 
 pub mod prelude {
-    pub use crate::{Axis, ScrollModule, Scrollable, ScrollableBuilder, scrollable};
+    pub use crate::{Axis, Overscroll, ScrollModule, Scrollable, ScrollableBuilder, scrollable};
 }

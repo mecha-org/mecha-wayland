@@ -33,7 +33,7 @@ pub(crate) struct ContactState {
 }
 
 /// Every live contact — the mouse pointer plus each active touch — keyed
-/// by [`ContactId`]. The two reads here are its only public surface.
+/// by [`ContactId`]. The three reads here are its only public surface.
 #[derive(Debug, Default)]
 pub struct Contacts {
     live: HashMap<ContactId, ContactState>,
@@ -53,6 +53,11 @@ impl Contacts {
     /// seen, or has since been torn down.
     pub fn position(&self, contact: ContactId) -> Option<Point> {
         self.live.get(&contact).map(|s| s.position)
+    }
+
+    /// Check whether the widget claimed the contact or not
+    pub fn claimed(&self, contact: ContactId) -> Option<NodeId> {
+        self.live.get(&contact).and_then(|s| s.claimed)
     }
 
     /// `contact`'s state, creating it at `window` with a zero position, an
@@ -86,13 +91,24 @@ impl Contacts {
         contact: ContactId,
         node: NodeId,
     ) -> Option<(HitSet, HitSet, Point)> {
+        let taken = self.hold(contact, node)?;
+        self.live.get_mut(&contact)?.claimed = Some(node);
+        Some(taken)
+    }
+
+    /// [`Contacts::claim`] without making `node` the claimer.
+    pub(crate) fn hold(
+        &mut self,
+        contact: ContactId,
+        node: NodeId,
+    ) -> Option<(HitSet, HitSet, Point)> {
         let state = self.live.get_mut(&contact)?;
         let captured = state.captured.as_mut().filter(|c| c.contains(&node))?;
         let cancelled = captured.iter().copied().filter(|&id| id != node).collect();
         *captured = HitSet::from_slice(&[node]);
-        let exited = state.hit.iter().copied().filter(|&id| id != node).collect();
+        let exited: SmallVec<[NodeId; 8]> =
+            state.hit.iter().copied().filter(|&id| id != node).collect();
         state.hit.retain(|id| *id == node);
-        state.claimed = Some(node);
         Some((cancelled, exited, state.position))
     }
 

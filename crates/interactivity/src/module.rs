@@ -10,7 +10,7 @@
 
 use app::{App, Module, NodeId};
 
-use crate::claim::GrabPresses;
+use crate::claim::{ContactClaimed, GrabPresses};
 use crate::contact::{ContactId, ContactInput, ContactPhase};
 use crate::contacts::{Contacts, HitSet};
 use crate::events::{
@@ -167,6 +167,10 @@ fn on_pressed(app: &mut App, input: &ContactInput) {
             state.claimed = Some(grabber);
             state.position = input.position;
         }
+        app.signal(ContactClaimed {
+            contact: input.contact,
+            by: grabber,
+        });
         if !exited.is_empty() {
             app.emit(
                 Exit {

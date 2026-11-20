@@ -29,6 +29,8 @@ struct Log {
     presses: Vec<NodeId>,
     clicks: Vec<NodeId>,
     cancels: Vec<NodeId>,
+    /// The node each `ContactClaimed` named.
+    claims: Vec<NodeId>,
 }
 impl Resource for Log {}
 
@@ -46,6 +48,9 @@ fn log_clicked(app: &mut App, e: &Emitted<Clicked>) {
 fn log_cancelled(app: &mut App, e: &Emitted<PressCancelled>) {
     app.resource_mut::<Log>().cancels.extend(e.targets.iter());
 }
+fn log_claimed(app: &mut App, e: &ContactClaimed) {
+    app.resource_mut::<Log>().claims.push(e.by);
+}
 
 struct Fixture {
     app: App,
@@ -56,6 +61,11 @@ struct Fixture {
 
 /// A 200×400 window filled by a `Scrollable` of `n` 50 px buttons.
 fn fixture(n: usize, axis: Axis) -> Fixture {
+    fixture_with(n, axis, Overscroll::Bounce)
+}
+
+/// [`fixture`] with the `Scrollable`'s [`Overscroll`] set.
+fn fixture_with(n: usize, axis: Axis, overscroll: Overscroll) -> Fixture {
     let mut app = App::new();
     app.add_module(LayoutModule)
         .add_module(PaintModule)
@@ -69,7 +79,8 @@ fn fixture(n: usize, axis: Axis) -> Fixture {
         .system(log_requested)
         .system(log_press)
         .system(log_clicked)
-        .system(log_cancelled);
+        .system(log_cancelled)
+        .system(log_claimed);
     app.resource_mut::<ScrollClock>().now = Some(Instant::now());
     let win = app.spawn(
         app.root(),
@@ -79,7 +90,10 @@ fn fixture(n: usize, axis: Axis) -> Fixture {
         Axis::Vertical => LayoutStyle::default().block().fill(),
         Axis::Horizontal => LayoutStyle::default().row().fill(),
     };
-    let list = app.spawn(win, scrollable().axis(axis).style(style));
+    let list = app.spawn(
+        win,
+        scrollable().axis(axis).overscroll(overscroll).style(style),
+    );
     let rows = (0..n)
         .map(|_| {
             let row = match axis {
@@ -395,4 +409,150 @@ fn a_moved_row_does_not_click_on_a_second_fingers_release() {
     assert!(!f.log().clicks.contains(&f.rows[2]));
     f.to(1, 100.0, 179.0, 24);
     assert_eq!(f.scroll(), Point::new(0.0, 110.0), "the first still drives");
+}
+
+#[test]
+fn a_drag_signals_its_claim() {
+    let mut f = fixture(20, Axis::Vertical);
+    f.down(1, 100.0, 300.0, 0);
+    f.to(1, 100.0, 289.0, 8);
+    assert_eq!(f.log().claims, vec![f.list]);
+    assert_eq!(
+        f.app.resource::<Contacts>().claimed(ContactId::Touch(1)),
+        Some(f.list)
+    );
+}
+
+#[test]
+fn yield_at_top_bounces_unclaimed() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::Yield);
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 111.0, 8);
+    f.to(1, 100.0, 211.0, 16);
+    let y = f.scroll().y;
+    assert!(y < 0.0, "rubber-bands past the top: {y}");
+    assert!(f.log().claims.is_empty());
+    assert!(f.log().cancels.contains(&f.rows[2]));
+    f.up(1, 100.0, 211.0, 300);
+    assert!(
+        !f.log().clicks.contains(&f.rows[2]),
+        "a yielded swipe taps nothing"
+    );
+    f.settle();
+    assert_eq!(f.scroll().y, 0.0);
+}
+
+#[test]
+fn yield_at_end_bounces_unclaimed() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::Yield);
+    // 20 rows of 50 px through 400 px: the end rests at 600.
+    f.app.component_mut::<Viewport>(f.list).unwrap().scroll.y = 600.0;
+    f.down(1, 100.0, 300.0, 0);
+    f.to(1, 100.0, 289.0, 8);
+    f.to(1, 100.0, 189.0, 16);
+    let y = f.scroll().y;
+    assert!(y > 600.0, "rubber-bands past the end: {y}");
+    assert!(f.log().claims.is_empty());
+}
+
+#[test]
+fn yield_over_short_content_never_claims() {
+    let mut f = fixture_with(3, Axis::Vertical, Overscroll::Yield);
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 75.0, 8);
+    f.to(1, 100.0, 50.0, 16);
+    assert_eq!(f.scroll(), Point::ZERO);
+    assert!(f.log().claims.is_empty());
+    f.up(1, 100.0, 50.0, 24);
+    assert!(f.log().cancels.contains(&f.rows[2]));
+    assert!(!f.log().clicks.contains(&f.rows[2]));
+}
+
+#[test]
+fn yield_still_drags_away_from_a_resting_end() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::Yield);
+    f.down(1, 100.0, 300.0, 0);
+    f.to(1, 100.0, 289.0, 8);
+    f.to(1, 100.0, 249.0, 16);
+    assert_eq!(f.scroll(), Point::new(0.0, 40.0));
+    assert_eq!(f.log().claims, vec![f.list]);
+}
+
+#[test]
+fn yield_mid_list_drags_toward_either_end() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::Yield);
+    f.app.component_mut::<Viewport>(f.list).unwrap().scroll.y = 300.0;
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 111.0, 8);
+    f.to(1, 100.0, 211.0, 16);
+    assert_eq!(f.scroll(), Point::new(0.0, 200.0));
+    assert_eq!(f.log().claims, vec![f.list]);
+}
+
+#[test]
+fn yield_keeps_a_started_drag_past_the_end() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::Yield);
+    f.app.component_mut::<Viewport>(f.list).unwrap().scroll.y = 20.0;
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 111.0, 8);
+    f.to(1, 100.0, 211.0, 16);
+    let y = f.scroll().y;
+    assert!(y < 0.0, "rubber-bands past the top: {y}");
+    assert_eq!(f.log().claims, vec![f.list]);
+}
+
+#[test]
+fn yield_horizontal_at_start_bounces_unclaimed() {
+    let mut f = fixture_with(20, Axis::Horizontal, Overscroll::Yield);
+    f.down(1, 50.0, 100.0, 0);
+    f.to(1, 61.0, 100.0, 8);
+    f.to(1, 150.0, 100.0, 16);
+    assert!(f.scroll().x < 0.0);
+    assert!(f.log().claims.is_empty());
+}
+
+#[test]
+fn yield_start_bounces_unclaimed_at_the_top() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::YieldStart);
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 111.0, 8);
+    f.to(1, 100.0, 211.0, 16);
+    assert!(f.scroll().y < 0.0);
+    assert!(f.log().claims.is_empty());
+}
+
+#[test]
+fn yield_start_bounces_at_the_end_every_time() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::YieldStart);
+    for k in 0..2u32 {
+        f.app.component_mut::<Viewport>(f.list).unwrap().scroll.y = 600.0;
+        let t = k * 1000;
+        f.down(1, 100.0, 300.0, t);
+        f.to(1, 100.0, 289.0, t + 8);
+        f.to(1, 100.0, 189.0, t + 16);
+        let y = f.scroll().y;
+        assert!(y > 600.0, "swipe {k} rubber-bands past the end: {y}");
+        f.up(1, 100.0, 189.0, t + 300);
+        f.settle();
+        assert_eq!(f.scroll().y, 600.0);
+    }
+    assert_eq!(f.log().claims, vec![f.list, f.list]);
+}
+
+#[test]
+fn yield_end_claims_only_at_the_top() {
+    let mut f = fixture_with(20, Axis::Vertical, Overscroll::YieldEnd);
+    f.down(1, 100.0, 100.0, 0);
+    f.to(1, 100.0, 111.0, 8);
+    f.to(1, 100.0, 211.0, 16);
+    assert!(f.scroll().y < 0.0, "bounces at the top");
+    f.up(1, 100.0, 211.0, 300);
+    f.settle();
+
+    f.app.component_mut::<Viewport>(f.list).unwrap().scroll.y = 600.0;
+    f.down(2, 100.0, 300.0, 1000);
+    f.to(2, 100.0, 289.0, 1008);
+    f.to(2, 100.0, 189.0, 1016);
+    assert!(f.scroll().y > 600.0, "bounces at the end too");
+    assert_eq!(f.log().claims, vec![f.list], "only the top drag claimed");
 }

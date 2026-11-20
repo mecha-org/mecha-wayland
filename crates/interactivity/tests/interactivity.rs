@@ -883,6 +883,141 @@ fn grab_presses_takes_the_press_before_children() {
     assert_eq!(take_clicked(), vec![outer.id()]);
 }
 
+thread_local! {
+    static CLAIMS: RefCell<Vec<ContactClaimed>> = const { RefCell::new(Vec::new()) };
+}
+fn log_claimed(_: &mut App, e: &ContactClaimed) {
+    CLAIMS.with(|l| l.borrow_mut().push(*e));
+}
+fn take_claims() -> Vec<ContactClaimed> {
+    CLAIMS.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+#[test]
+fn claim_is_signalled_and_readable_until_release() {
+    let mut app = claim_app();
+    app.system(log_claimed);
+    let win = app.spawn(app.root(), a_window());
+    let (claimer, _button) = claimer_and_button(&mut app, win);
+    app.tick();
+    take_claims();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Mouse, p));
+    app.signal(pressed(win, ContactId::Mouse, p));
+    app.flush();
+    assert_eq!(app.resource::<Contacts>().claimed(ContactId::Mouse), None);
+    assert!(take_claims().is_empty());
+
+    app.signal(moved(win, ContactId::Mouse, Point::new(40.0, 20.0)));
+    app.flush();
+    let claimed = ContactClaimed {
+        contact: ContactId::Mouse,
+        by: claimer.id(),
+    };
+    assert_eq!(
+        app.resource::<Contacts>().claimed(ContactId::Mouse),
+        Some(claimer.id())
+    );
+    assert_eq!(take_claims(), vec![claimed]);
+
+    // A claimed contact's later moves claim nothing new.
+    app.signal(moved(win, ContactId::Mouse, Point::new(60.0, 20.0)));
+    app.flush();
+    assert!(take_claims().is_empty());
+
+    app.signal(released(win, ContactId::Mouse, Point::new(60.0, 20.0)));
+    app.flush();
+    assert_eq!(app.resource::<Contacts>().claimed(ContactId::Mouse), None);
+}
+
+/// Holds its contact once a press on it has moved 10 px or more.
+#[derive(Default)]
+struct Holder {
+    start: Option<Point>,
+}
+impl Build for Holder {
+    type Widget = Holder;
+}
+impl Widget for Holder {
+    type Builder = Holder;
+    fn build(b: Holder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        s.on::<Press>(me, |ctx, e| ctx.me().start = Some(e.position));
+        s.on::<PressMoved>(me, |ctx, e| {
+            if ctx
+                .me()
+                .start
+                .is_some_and(|s| (e.position.x - s.x).abs() >= 10.0)
+            {
+                ctx.me().start = None;
+                ctx.hold_contact(e.contact);
+            }
+        });
+        b
+    }
+}
+
+#[test]
+fn hold_contact_keeps_the_press_unclaimed() {
+    let mut app = claim_app();
+    app.system(log_claimed);
+    let win = app.spawn(app.root(), a_window());
+    let holder = app.spawn_with(win, Holder::default(), (at(10.0, 10.0, 150.0, 150.0),));
+    let button = app.spawn_with(
+        holder,
+        Leaf,
+        (LayoutStyle::default().size(px(40.0), px(40.0)),),
+    );
+    app.tick();
+    take_claims();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Touch(1), p));
+    app.signal(pressed(win, ContactId::Touch(1), p));
+    app.flush();
+    clear_logs();
+
+    app.signal(moved(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
+    app.flush();
+    assert_eq!(take_press_cancelled(), vec![button.id(), win.id()]);
+    assert!(take_claims().is_empty());
+    assert_eq!(
+        app.resource::<Contacts>().claimed(ContactId::Touch(1)),
+        None
+    );
+
+    app.signal(released(win, ContactId::Touch(1), Point::new(40.0, 20.0)));
+    app.flush();
+    assert_eq!(take_release(), vec![holder.id()]);
+    assert_eq!(take_clicked(), vec![holder.id()]);
+}
+
+#[test]
+fn a_grabbed_press_is_signalled_as_claimed() {
+    let mut app = claim_app();
+    app.system(log_claimed);
+    let win = app.spawn(app.root(), a_window());
+    let outer = app.spawn_with(win, Leaf, (at(10.0, 10.0, 150.0, 150.0), GrabPresses(true)));
+    app.tick();
+    take_claims();
+
+    let p = Point::new(20.0, 20.0);
+    app.signal(moved(win, ContactId::Touch(3), p));
+    app.signal(pressed(win, ContactId::Touch(3), p));
+    app.flush();
+    assert_eq!(
+        take_claims(),
+        vec![ContactClaimed {
+            contact: ContactId::Touch(3),
+            by: outer.id(),
+        }]
+    );
+    assert_eq!(
+        app.resource::<Contacts>().claimed(ContactId::Touch(3)),
+        Some(outer.id())
+    );
+}
+
 #[test]
 fn grab_picks_the_outermost() {
     let mut app = claim_app();

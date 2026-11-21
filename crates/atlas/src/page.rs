@@ -7,9 +7,9 @@ use geometry::Rect;
 use crate::{AtlasId, Bitmap, Class};
 
 /// A page's side in pixels.
-pub const PAGE: u32 = 1024;
+pub const PAGE: u32 = 2048;
 /// A dirty cell's side at level 0. It halves per level.
-pub const CELL: u32 = 64;
+pub const CELL: u32 = 128;
 /// Cells per side, at every level.
 pub const CELLS: u32 = 16;
 
@@ -324,23 +324,29 @@ mod tests {
     #[test]
     fn a_full_page_says_so() {
         let mut p = page(Class::Glyph);
-        // 1022 wide content on a 1024 page fills a shelf exactly; 100 tall each.
-        for _ in 0..10 {
-            assert!(p.pack(1022, 100).is_some());
+        // Content PAGE - 2 wide fills a shelf exactly (1 px pad each side);
+        // 100 tall content takes 102 rows.
+        let w = PAGE - 2;
+        let shelves = PAGE / 102;
+        for _ in 0..shelves {
+            assert!(p.pack(w, 100).is_some());
         }
         assert!(
-            p.pack(1022, 100).is_none(),
-            "the eleventh shelf would end at 1122"
+            p.pack(w, 100).is_none(),
+            "one more shelf would end past the page"
+        );
+        assert!(
+            PAGE - shelves * 102 >= 4,
+            "the test needs 4 rows left for the small rect"
         );
         assert!(
             p.pack(2, 2).is_some(),
-            "but a small one opens an eleventh shelf at y 1020, which has \
-             exactly 4 rows of room left on the page"
+            "but a small one opens a last shelf in the rows left"
         );
-        assert!(Page::fits(Class::Glyph, 1022, 1022));
-        assert!(!Page::fits(Class::Glyph, 1023, 1));
-        assert!(Page::fits(Class::Image, 992, 992));
-        assert!(!Page::fits(Class::Image, 993, 16));
+        assert!(Page::fits(Class::Glyph, PAGE - 2, PAGE - 2));
+        assert!(!Page::fits(Class::Glyph, PAGE - 1, 1));
+        assert!(Page::fits(Class::Image, PAGE - 32, PAGE - 32));
+        assert!(!Page::fits(Class::Image, PAGE - 31, 16));
     }
 
     #[test]
@@ -364,7 +370,9 @@ mod tests {
     fn a_rect_across_cell_edges_marks_each_cell() {
         let mut p = page(Class::Glyph);
         p.take_dirty();
-        p.mark(Rect::new(60.0, 120.0, 10.0, 10.0));
+        // 10 px straddling the first column edge and the second row edge.
+        let c = CELL as f32;
+        p.mark(Rect::new(c - 4.0, 2.0 * c - 8.0, 10.0, 10.0));
         let cells: Vec<Cell> = Page::cells(p.take_dirty()).collect();
         assert_eq!(
             cells,
@@ -382,29 +390,31 @@ mod tests {
     fn cell_copies_contiguously_at_any_level() {
         let mut p = page(Class::Image);
         p.take_dirty();
-        // Paint the pixel at (64, 0) red at level 0, and the pixel at (16, 0) at level 2.
+        // Paint the first pixel of cell (1, 0) red at level 0 and green at level 2.
+        let (c0, c2) = (CELL as usize, (CELL >> 2) as usize);
         {
             let l0 = p.level_mut(0);
-            let i = 64 * 4;
+            let i = c0 * 4;
             l0[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
         }
         {
             let l2 = p.level_mut(2);
-            let i = 16 * 4;
+            let i = c2 * 4;
             l2[i..i + 4].copy_from_slice(&[0, 255, 0, 255]);
         }
         let mut out = Vec::new();
         p.cell(0, Cell { col: 1, row: 0 }, &mut out);
-        assert_eq!(out.len(), 64 * 64 * 4);
+        assert_eq!(out.len(), c0 * c0 * 4);
         assert_eq!(
             &out[0..4],
             &[255, 0, 0, 255],
-            "the cell's first pixel is page pixel (64, 0)"
+            "the cell's first pixel is page pixel (CELL, 0)"
         );
         p.cell(2, Cell { col: 1, row: 0 }, &mut out);
-        assert_eq!(out.len(), 16 * 16 * 4, "a cell is 16 wide at level 2");
+        assert_eq!(out.len(), c2 * c2 * 4, "a cell is CELL / 4 wide at level 2");
         assert_eq!(&out[0..4], &[0, 255, 0, 255]);
-        assert_eq!(Page::dims(0), 1024);
-        assert_eq!(Page::dims(4), 64);
+        assert_eq!(Page::dims(0), PAGE);
+        assert_eq!(Page::dims(4), PAGE >> 4);
+        assert_eq!(CELL * CELLS, PAGE, "the dirty grid covers the page");
     }
 }

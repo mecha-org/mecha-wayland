@@ -13,7 +13,7 @@
 //! - Four [`Class`]es of texture over one page implementation. `Glyph`
 //!   and `Icon` pages are `R8` coverage, `Image` pages `Rgba8` straight
 //!   alpha; `External` names a texture the atlas does not hold, a dmabuf
-//!   a producer describes with an [`External`]. Pages are 1024 square.
+//!   a producer describes with an [`External`]. Pages are 2048 square.
 //! - The atlas has a scale, 1 until [`Atlas::set_scale`] says otherwise.
 //!   Pages hold device pixels; everything a caller lays out with is
 //!   logical: [`Glyph`] placement and advance, [`Line`], kerning,

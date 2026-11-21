@@ -1,6 +1,7 @@
 //! The atlas as a caller and a backend see it, end to end.
 
 use atlas::prelude::*;
+use atlas::{CELL, CELLS, PAGE};
 use geometry::Rect;
 
 fn solid(width: u32, height: u32, format: Format, value: u8) -> Bitmap {
@@ -71,17 +72,20 @@ fn insert_rejects_the_wrong_class_or_format_and_too_large() {
         atlas.insert(Class::External, &image(8, 8)),
         Err(Error::Class)
     ));
-    match atlas.insert(Class::Image, &image(1000, 1000)) {
+    // An image keeps a 16 px border each side, so the page takes PAGE - 32.
+    let max = PAGE - 32;
+    let big = max + 8;
+    match atlas.insert(Class::Image, &image(big, big)) {
         Err(Error::TooLarge {
-            width: 1000,
-            height: 1000,
-            max: 992,
-        }) => {}
+            width,
+            height,
+            max: m,
+        }) if (width, height, m) == (big, big, max) => {}
         other => panic!("expected TooLarge, got {other:?}"),
     }
     assert!(
         atlas
-            .insert(Class::Image, &image(1000, 1000).fit(992))
+            .insert(Class::Image, &image(big, big).fit(max))
             .is_ok()
     );
     assert_eq!(
@@ -114,15 +118,16 @@ fn inserts_share_a_page_until_it_is_full_and_earlier_tiles_stay() {
     let (ta, tb) = (atlas.sprite(a).tile, atlas.sprite(b).tile);
     assert_eq!(ta.atlas, tb.atlas);
     assert_ne!(ta.bounds, tb.bounds);
-    // A 64 icon takes a 96 slot: 10 per shelf, 10 shelves, 100 per page.
+    // A 64 icon takes a 96 slot: PAGE / 96 per shelf and as many shelves.
+    let per_page = (PAGE / 96) * (PAGE / 96);
     let mut last = b;
-    for _ in 0..98 {
+    for _ in 0..per_page - 2 {
         last = atlas.insert(Class::Icon, &icon(64)).unwrap();
     }
     assert_eq!(
         atlas.sprite(last).tile.atlas,
         AtlasId(0),
-        "the hundredth fits page 0"
+        "the last of a page fits page 0"
     );
     let spill = atlas.insert(Class::Icon, &icon(64)).unwrap();
     assert_eq!(
@@ -140,7 +145,11 @@ fn drain_dirty_yields_a_new_page_whole_then_only_what_changed() {
     atlas.insert(Class::Image, &image(8, 8)).unwrap();
     let mut seen: Vec<(AtlasId, Cell)> = Vec::new();
     atlas.drain_dirty(|p, c| seen.push((p.id(), c)));
-    assert_eq!(seen.len(), 256, "a new page is all cells");
+    assert_eq!(
+        seen.len(),
+        (CELLS * CELLS) as usize,
+        "a new page is all cells"
+    );
     assert!(seen.iter().all(|(id, _)| *id == AtlasId(0)));
     seen.clear();
     atlas.drain_dirty(|p, c| seen.push((p.id(), c)));
@@ -153,10 +162,11 @@ fn drain_dirty_yields_a_new_page_whole_then_only_what_changed() {
     atlas.drain_dirty(|p, c| seen.push((p.id(), c)));
     assert!(!seen.is_empty());
     for (_, c) in &seen {
-        let cx = c.col as f32 * 64.0;
-        let cy = c.row as f32 * 64.0;
+        let side = CELL as f32;
+        let cx = c.col as f32 * side;
+        let cy = c.row as f32 * side;
         assert!(
-            cx < r.right() && cx + 64.0 > r.x() && cy < r.bottom() && cy + 64.0 > r.y(),
+            cx < r.right() && cx + side > r.x() && cy < r.bottom() && cy + side > r.y(),
             "cell {c:?} touches {r:?}"
         );
     }
@@ -169,12 +179,12 @@ fn a_backend_reads_a_dirty_cell_at_every_level() {
     let r = atlas.sprite(a).tile.bounds; // (16,16) 64x64
     let mut cells = Vec::new();
     atlas.drain_dirty(|p, c| cells.push((p.id(), c)));
-    assert_eq!(cells.len(), 256);
+    assert_eq!(cells.len(), (CELLS * CELLS) as usize);
     let page = atlas.pages().next().unwrap();
     let mut out = Vec::new();
     for k in 0..page.levels() {
         page.cell(k, Cell { col: 0, row: 0 }, &mut out);
-        let side = (64 >> k) as usize;
+        let side = (CELL >> k) as usize;
         assert_eq!(out.len(), side * side * 4, "level {k}");
         // The image's centre in this cell: (48, 48) at level 0, halving per level.
         let cx = (r.x() as usize + 32) >> k;
@@ -242,7 +252,8 @@ fn an_external_is_named_described_and_replaced() {
     let mut cells = 0;
     atlas.drain_dirty(|_, _| cells += 1);
     assert_eq!(
-        cells, 256,
+        cells,
+        (CELLS * CELLS) as usize,
         "only the icon page has cells; an external has none"
     );
 }
@@ -257,7 +268,11 @@ fn a_glyph_miss_dirties_only_the_cells_its_bitmap_crossed() {
     let g = atlas.glyph(inter, a, 14);
     let mut cells = Vec::new();
     atlas.drain_dirty(|_, c| cells.push(c));
-    assert_eq!(cells.len(), 256, "the glyph page is new");
+    assert_eq!(
+        cells.len(),
+        (CELLS * CELLS) as usize,
+        "the glyph page is new"
+    );
     cells.clear();
     let (_, b) = atlas.lookup(&[inter], 'b').unwrap();
     let gb = atlas.glyph(inter, b, 14);
@@ -332,7 +347,11 @@ fn as_a_resource_the_core_signals_a_backend_that_drains_what_a_widget_made() {
         "the build's resource_mut fired the signal"
     );
     let first = UPLOADED.with(|u| std::mem::take(&mut *u.borrow_mut()));
-    assert_eq!(first.len(), 256, "the glyph page, whole");
+    assert_eq!(
+        first.len(),
+        (CELLS * CELLS) as usize,
+        "the glyph page, whole"
+    );
 
     app.tick();
     assert_eq!(
@@ -403,12 +422,25 @@ fn page_finds_a_page_by_id() {
 }
 
 #[test]
-#[should_panic(expected = "larger than a 1024 page")]
 fn a_glyph_larger_than_a_page_panics_with_its_size() {
     let mut atlas = Atlas::new();
     let inter = atlas.add_font(INTER).unwrap();
     let (_, w) = atlas.lookup(&[inter], 'W').unwrap();
-    atlas.glyph(inter, w, 2000);
+    let px = (2 * PAGE) as u16;
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        atlas.glyph(inter, w, px);
+    }))
+    .expect_err("a glyph larger than a page panics");
+    let text = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default();
+    assert!(
+        text.contains(&format!("at {px} px"))
+            && text.contains(&format!("larger than a {PAGE} page")),
+        "{text}"
+    );
 }
 
 #[test]

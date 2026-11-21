@@ -223,16 +223,17 @@ fn dirty_cells_go_up_as_row_runs() {
     };
     atlas.insert(Class::Image, &strip).unwrap();
     d.upload(&atlas);
-    // A new page: every cell dirty, 16 rows, one run a row, five levels.
-    assert_eq!(d.upload_calls(), 16 * 5);
+    // A new page: every cell dirty, CELLS rows, one run a row, five levels.
+    let whole = atlas::CELLS as u64 * 5;
+    assert_eq!(d.upload_calls(), whole);
     // A second strip lands beside the first on the same shelf: one run of
     // cells in row 0, five levels.
     atlas.insert(Class::Image, &strip).unwrap();
     d.upload(&atlas);
-    assert_eq!(d.upload_calls(), 16 * 5 + 5);
+    assert_eq!(d.upload_calls(), whole + 5);
     // Nothing dirty: nothing uploaded.
     d.upload(&atlas);
-    assert_eq!(d.upload_calls(), 16 * 5 + 5);
+    assert_eq!(d.upload_calls(), whole + 5);
 }
 
 #[test]
@@ -246,16 +247,16 @@ fn a_page_past_the_budget_panics_with_the_class_named() {
     .unwrap();
     let mut atlas = Atlas::new();
     let big = Bitmap {
-        width: 600,
-        height: 600,
+        width: BIG,
+        height: BIG,
         format: Format::Rgba8,
-        pixels: vec![10; 600 * 600 * 4],
+        pixels: vec![10; (BIG * BIG * 4) as usize],
     };
     atlas.insert(Class::Image, &big).unwrap();
     atlas.insert(Class::Image, &big).unwrap();
     assert!(
         atlas.pages().count() >= 2,
-        "two 600 px images need two pages"
+        "two images over half a page need two pages"
     );
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| d.upload(&atlas)));
     let msg = r.unwrap_err();
@@ -457,13 +458,16 @@ fn at_scale_two_a_glyph_lands_one_to_one() {
     assert!(ink > 10, "the H has ink");
 }
 
-/// A 600 by 600 opaque image of one colour: too big to share a page.
+/// A side over half a page: two such images never share one.
+const BIG: u32 = atlas::PAGE / 2 + atlas::PAGE / 16;
+
+/// A `BIG` square opaque image of one colour: too big to share a page.
 fn solid(r: u8, g: u8) -> Bitmap {
     Bitmap {
-        width: 600,
-        height: 600,
+        width: BIG,
+        height: BIG,
         format: Format::Rgba8,
-        pixels: [r, g, 0, 255].repeat(600 * 600),
+        pixels: [r, g, 0, 255].repeat((BIG * BIG) as usize),
     }
 }
 

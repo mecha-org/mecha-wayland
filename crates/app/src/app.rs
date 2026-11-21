@@ -797,6 +797,13 @@ impl<W: Widget> Spawner<'_, W> {
         self.app.resource_mut::<R>()
     }
 
+    /// A widget spawned earlier in this build, such as a container
+    /// exposing the slot handles its caller fills. See [`App::widget`]:
+    /// `None` for `me`, whose build is still running.
+    pub fn widget<V: Widget>(&self, id: impl Into<NodeId>) -> Option<&V> {
+        self.app.widget::<V>(id)
+    }
+
     /// See [`App::fetch`]. `id` is `me` or a node spawned earlier in this
     /// build, so it is live; a stale id is a caller bug and panics.
     pub fn fetch<Q: Query>(&mut self, id: impl Into<NodeId>) -> Q::One<'_> {

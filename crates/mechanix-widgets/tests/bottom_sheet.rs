@@ -1,12 +1,14 @@
 //! Integration tests for the Mechanix bottom sheet, through its public
-//! API: layout, theme, setters, and drag-to-close driven by real contacts
-//! through a window.
+//! API: layout, theme, setters, and closing (drag, scrim) driven by real
+//! contacts through a window.
 
 use app::{App, Build, Context, Event, Handle, NodeId, Spawner, Widget};
 use geometry::{Color, Corners, Point, Rect};
 use interactivity::{ContactId, ContactInput, ContactPhase, InteractivityModule, PressCancelled};
 use layout::{ComputedLayout, LayoutStyle, percent, px};
-use mechanix_widgets::bottom_sheet::{DRAG_SLOP, GRIP_HEIGHT, HANDLE_HEIGHT, HANDLE_WIDTH};
+use mechanix_widgets::bottom_sheet::{
+    DRAG_SLOP, GRIP_HEIGHT, HANDLE_HEIGHT, HANDLE_WIDTH, SCRIM_OPACITY,
+};
 use mechanix_widgets::{
     BottomSheet, BottomSheetBuilder, BottomSheetContextExt, ColorSource, FontBook, SheetClosed,
     Text, bottom_sheet,
@@ -807,4 +809,86 @@ fn turning_dismissible_off_mid_drag_returns_to_rest() {
     with_sheet(&mut app, h, |c| c.set_dismissible(false));
     assert_eq!(surface_rect(&app, h), rest);
     assert!(!sheet(&app, h).is_dragging());
+}
+
+// ── header ──────────────────────────────────────────────────────
+
+/// A press and release at `at`.
+fn tap(app: &mut App, win: NodeId, at: Point) {
+    gesture(app, win, at.x, &[(at.y, 1_000)]);
+}
+
+#[test]
+fn the_title_starts_at_the_header_padding() {
+    let (app, _, _, h) = hosted(bottom_sheet().title("Title"));
+    assert_eq!(rect(&app, sheet(&app, h).title()).x(), 24.0);
+}
+
+// ── scrim ───────────────────────────────────────────────────────────
+
+fn sheet_paint(app: &App, h: Handle<BottomSheet>) -> Paint {
+    app.component::<Paint>(h).unwrap().clone()
+}
+
+#[test]
+fn no_scrim_by_default() {
+    let (app, _, _, h) = hosted(bottom_sheet());
+    assert!(!sheet(&app, h).has_scrim());
+    assert_eq!(sheet_paint(&app, h), Paint::None);
+}
+
+#[test]
+fn the_scrim_dims_with_the_theme_scrim_color() {
+    let (app, _, _, h) = hosted(bottom_sheet().scrim(true));
+    let c = app.color(ColorRole::Scrim);
+    assert_eq!(
+        sheet_paint(&app, h),
+        Paint::Quad(Quad::new(c.with_alpha(c.a * SCRIM_OPACITY)))
+    );
+}
+
+#[test]
+fn tapping_the_scrim_closes_and_hides_it() {
+    let (mut app, win, host, h) = hosted(bottom_sheet().scrim(true));
+    tap(&mut app, win, Point::new(W / 2.0, 40.0));
+    assert!(sheet(&app, h).is_closed());
+    assert_eq!(closed(&app, host), 1);
+    assert_eq!(sheet_paint(&app, h), Paint::None, "no scrim while closed");
+
+    with_sheet(&mut app, h, |c| c.open());
+    assert_ne!(sheet_paint(&app, h), Paint::None, "back with the sheet");
+}
+
+#[test]
+fn tapping_the_sheet_itself_is_not_a_scrim_tap() {
+    let (mut app, win, host, h) = hosted(bottom_sheet().scrim(true));
+    let at = centre(&app, sheet(&app, h).body());
+    tap(&mut app, win, at);
+    assert!(!sheet(&app, h).is_closed());
+    assert_eq!(closed(&app, host), 0);
+}
+
+#[test]
+fn the_scrim_does_not_close_a_sheet_that_is_not_dismissible() {
+    let (mut app, win, host, h) = hosted(bottom_sheet().scrim(true).dismissible(false));
+    tap(&mut app, win, Point::new(W / 2.0, 40.0));
+    assert!(!sheet(&app, h).is_closed());
+    assert_eq!(closed(&app, host), 0);
+}
+
+#[test]
+fn without_a_scrim_a_tap_above_the_sheet_does_nothing() {
+    let (mut app, win, host, h) = hosted(bottom_sheet());
+    tap(&mut app, win, Point::new(W / 2.0, 40.0));
+    assert!(!sheet(&app, h).is_closed());
+    assert_eq!(closed(&app, host), 0);
+}
+
+#[test]
+fn set_scrim_turns_it_on_and_off() {
+    let (mut app, _, _, h) = hosted(bottom_sheet());
+    with_sheet(&mut app, h, |c| c.set_scrim(true));
+    assert_ne!(sheet_paint(&app, h), Paint::None);
+    with_sheet(&mut app, h, |c| c.set_scrim(false));
+    assert_eq!(sheet_paint(&app, h), Paint::None);
 }

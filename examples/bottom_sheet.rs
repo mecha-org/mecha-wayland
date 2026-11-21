@@ -1,14 +1,14 @@
-//! A bottom sheet holding a Wi-Fi password field. Drag the handle or the
-//! title down to close it, or use "Close" in the footer; "Show sheet"
-//! brings it back. Run under a Wayland session:
-//! `cargo run --example bottom_sheet`.
+//! A bottom sheet holding a Wi-Fi password field, over a scrim. Close it
+//! by dragging the handle or title down, or tapping the scrim; "Close" in
+//! the footer closes it from code, and "Show sheet" brings it back. Run
+//! under a Wayland session: `cargo run --example bottom_sheet`.
 //!
-//! The shape to copy: spawn the sheet, read its `body()` slot with
-//! `Spawner::widget`, spawn the content into it, and answer
-//! `SheetClosed`, which means the user closed it. A real prompt would
-//! reply "cancelled" and remove the sheet there; when it closes the sheet
-//! itself (the password was accepted), it does its cleanup right after
-//! calling `close()`.
+//! The shape to copy: spawn the sheet, read its `body()` / `footer()`
+//! slots with `Spawner::widget`, spawn the content into them, and answer
+//! `SheetClosed`, which means the user closed it: a real prompt would
+//! reply "cancelled" and remove the sheet there. When the prompt closes
+//! the sheet itself (the password was accepted), it does its cleanup
+//! right after calling `close()`.
 
 use mecha_wayland::mechanix_widgets::prelude::{
     BottomSheet, BottomSheetContextExt, ButtonVariant, FontBook, SheetClosed, TextContextExt,
@@ -51,7 +51,7 @@ impl Widget for Demo {
                 .color(ColorRole::OnSurface),
         );
 
-        let sheet = s.spawn(me, bottom_sheet().title("OfficeWifi 3"));
+        let sheet = s.spawn(me, bottom_sheet().title("OfficeWifi 3").scrim(true));
         let (body, footer) = {
             let w = s.widget::<BottomSheet>(sheet).expect("sheet is built");
             (w.body(), w.footer())
@@ -79,7 +79,7 @@ impl Widget for Demo {
         );
         s.spawn(
             body,
-            text("Drag the handle or the title down to close")
+            text("Drag down or tap outside to close")
                 .variant(TextVariant::BodyMedium)
                 .color(ColorRole::OnSurfaceVariant),
         );
@@ -123,12 +123,12 @@ impl Build for ShellBuilder {
 impl Widget for Shell {
     type Builder = ShellBuilder;
     fn build(b: ShellBuilder, _me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
-        let scrim = s.color(ColorRole::Scrim);
+        let backdrop = s.color(ColorRole::Surface);
         let win = s.spawn(
             b.root,
             window()
                 .title("bottom sheet")
-                .clear(scrim)
+                .clear(backdrop)
                 .layout(LayoutStyle::default().size(px(400.0), px(640.0))),
         );
         s.on::<CloseRequested>(win, |ctx, _| ctx.signal(Stop));

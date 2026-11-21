@@ -5,11 +5,13 @@
 //! title, and leaves two empty slots for the caller to fill:
 //!
 //! ```text
-//! BottomSheet            fills its parent; pins the surface to the bottom
+//! BottomSheet            fills its parent (and draws the scrim, if on);
+//! │                      pins the surface to the bottom
 //! └─ surface             themed background, rounded top corners
 //!    ├─ grip             full-width drag area around the handle
 //!    │  └─ handle        the drag-handle pill
 //!    ├─ header           a row with the title; also a drag area
+//!    │  └─ title
 //!    ├─ body             caller content, padded       ← BottomSheet::body
 //!    └─ footer           caller content, edge to edge ← BottomSheet::footer
 //! ```
@@ -42,8 +44,10 @@
 //!
 //! # Open and close
 //!
-//! A sheet is open once spawned. When the user closes it (by dragging it
-//! down) it emits [`SheetClosed`]: for a prompt, a cancel. The owner can
+//! A sheet is open once spawned. When the user closes it it emits
+//! [`SheetClosed`]: for a prompt, a cancel. The user closes a dismissible
+//! sheet by dragging it down, or by tapping the scrim when there is one.
+//! The owner can
 //! also `close` and `open` it from code; those emit nothing, since the
 //! owner already knows (it closes the sheet itself once a password is
 //! accepted, say). A closed sheet stays below the bottom edge and takes
@@ -52,17 +56,22 @@
 //!
 //! The sheet knows nothing about Wayland surfaces: it fills whatever node
 //! it is spawned under, a window or a layer surface alike.
+//!
+//! The scrim dims and closes, but does not block: input still reaches
+//! whatever else is in the same window behind it. A prompt's sheet has its
+//! own layer surface, where there is nothing behind.
 
 use crate::color::{ColorSource, IntoColorSource};
 use crate::text::{Text, TextContextExt, text};
 use app::{Build, Context, Event, Handle, Spawner, Widget};
 use geometry::{Corners, Insets, Rect};
-use interactivity::{ContactId, ContextClaim, Press, PressCancelled, PressMoved, Release};
+use interactivity::{Clicked, ContactId, ContextClaim, Press, PressCancelled, PressMoved, Release};
+use paint::{Paint, Quad};
 // The scroll crate's fling estimator, so a sheet's flick and a scroll
 // view's fling read a finger the same way.
 use layout::{Align, ComputedLayout, Justify, LayoutStyle, StyleContext, Val, auto, percent, px};
 use scroll::VelocityTracker;
-use theme::{ColorRole, Shape, Spacing, SpawnerThemeExt, TextVariant};
+use theme::{ColorRole, Shape, Spacing, SpawnerThemeExt, TextVariant, ThemeReader};
 use widgets::{Div, DivContext, TextOverflow, div};
 
 /// The drag handle's size, in logical pixels.
@@ -74,6 +83,9 @@ pub const GRIP_HEIGHT: f32 = Spacing::Space100.dp() + HANDLE_HEIGHT + Spacing::S
 
 /// The header row's minimum height, in logical pixels.
 pub const HEADER_MIN_HEIGHT: f32 = 56.0;
+
+/// The scrim's opacity over [`ColorRole::Scrim`].
+pub const SCRIM_OPACITY: f32 = 0.32;
 
 /// How far down, in logical pixels, a press must move before it drags the
 /// sheet. Matches the scroll crate's default slop, so a sheet and a
@@ -162,6 +174,7 @@ pub struct BottomSheetBuilder {
     pub(crate) title: String,
     pub(crate) handle: bool,
     pub(crate) dismissible: bool,
+    pub(crate) scrim: bool,
     pub(crate) size: SheetSize,
     pub(crate) overrides: BottomSheetOverrides,
 }
@@ -178,6 +191,7 @@ impl BottomSheetBuilder {
             title: String::new(),
             handle: true,
             dismissible: true,
+            scrim: false,
             size: SheetSize::default(),
             overrides: BottomSheetOverrides::default(),
         }
@@ -201,6 +215,13 @@ impl BottomSheetBuilder {
     /// answered. The owner can still `close` it either way.
     pub fn dismissible(mut self, dismissible: bool) -> Self {
         self.dismissible = dismissible;
+        self
+    }
+
+    /// Dim the parent behind the sheet with [`ColorRole::Scrim`]. Off by
+    /// default. Tapping it closes a dismissible sheet.
+    pub fn scrim(mut self, scrim: bool) -> Self {
+        self.scrim = scrim;
         self
     }
 
@@ -299,6 +320,7 @@ pub struct BottomSheet {
     pub(crate) size: SheetSize,
     pub(crate) handle_visible: bool,
     pub(crate) dismissible: bool,
+    pub(crate) scrim: bool,
     pub(crate) position: Position,
     pub(crate) drag: Option<Drag>,
     pub(crate) overrides: BottomSheetOverrides,
@@ -352,6 +374,11 @@ impl BottomSheet {
     #[inline]
     pub fn title(&self) -> Handle<Text> {
         self.title
+    }
+
+    #[inline]
+    pub fn has_scrim(&self) -> bool {
+        self.scrim
     }
 
     #[inline]
@@ -483,6 +510,9 @@ impl Widget for BottomSheet {
 
     fn build(b: BottomSheetBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         *s.component_mut::<LayoutStyle>(me).unwrap() = sheet_style();
+        if b.scrim {
+            *s.component_mut::<Paint>(me).unwrap() = Paint::Quad(Quad::new(scrim_color(s)));
+        }
 
         let surface = s.spawn(
             me,
@@ -513,6 +543,7 @@ impl Widget for BottomSheet {
         let footer = s.spawn(surface, div().style(footer_style()));
 
         s.on_theme(me, sync_visuals);
+        s.on::<Clicked>(me, on_scrim_click);
         for area in [grip, header] {
             s.on::<Press>(area, on_press);
             s.on::<PressMoved>(area, on_press_moved);
@@ -528,6 +559,7 @@ impl Widget for BottomSheet {
             size: b.size,
             handle_visible: b.handle,
             dismissible: b.dismissible,
+            scrim: b.scrim,
             position: Position::Rest,
             drag: None,
             overrides: b.overrides,
@@ -646,9 +678,55 @@ fn close(ctx: &mut Context<'_, BottomSheet>) {
     set_position(ctx, Position::Closed);
 }
 
+/// The user asked to close the sheet (a scrim tap): close it and
+/// tell the owner, if it is open and dismissible.
+fn user_close(ctx: &mut Context<'_, BottomSheet>) {
+    let me = ctx.me();
+    if !me.dismissible || me.position == Position::Closed {
+        return;
+    }
+    close(ctx);
+    ctx.emit(SheetClosed {}, ctx.handle());
+}
+
+/// A click on the sheet node: one outside the surface is on the scrim.
+fn on_scrim_click(ctx: &mut Context<'_, BottomSheet>, e: &Clicked) {
+    let (scrim, surface) = {
+        let me = ctx.me();
+        (me.scrim, me.surface)
+    };
+    if !scrim || rect_of(ctx, surface).contains(e.position) {
+        return;
+    }
+    user_close(ctx);
+}
+
+/// The scrim's color: the theme's scrim role, at [`SCRIM_OPACITY`].
+fn scrim_color(reader: &impl ThemeReader) -> geometry::Color {
+    let c = reader.color(ColorRole::Scrim);
+    c.with_alpha(c.a * SCRIM_OPACITY)
+}
+
+/// Paint the scrim while the sheet is open and has one; nothing otherwise.
+fn sync_scrim(ctx: &mut Context<'_, BottomSheet>) {
+    let show = {
+        let me = ctx.me();
+        me.scrim && me.position != Position::Closed
+    };
+    let paint = if show {
+        Paint::Quad(Quad::new(scrim_color(ctx)))
+    } else {
+        Paint::None
+    };
+    if let Some(mut p) = ctx.component_mut::<Paint>() {
+        *p = paint;
+    }
+}
+
 fn set_position(ctx: &mut Context<'_, BottomSheet>, position: Position) {
     ctx.me().position = position;
     apply_size(ctx);
+    sync_scrim(ctx);
 }
 
 /// Write the surface's layout style from the current size and position.
@@ -682,6 +760,7 @@ fn sync_visuals(ctx: &mut Context<'_, BottomSheet>) {
         c.set_background(handle_color);
         c.set_radius(HANDLE_HEIGHT / 2.0);
     }
+    sync_scrim(ctx);
 }
 
 /// Extension trait for mutating a spawned [`BottomSheet`].
@@ -701,6 +780,8 @@ pub trait BottomSheetContextExt {
     /// Nothing happens to a closed sheet. Works whether or not the sheet is
     /// dismissible.
     fn close(&mut self);
+
+    fn set_scrim(&mut self, scrim: bool);
 
     fn set_sheet_width(&mut self, width: Val);
     fn set_sheet_height(&mut self, height: Val);
@@ -753,6 +834,14 @@ impl BottomSheetContextExt for Context<'_, BottomSheet> {
             return;
         }
         close(self);
+    }
+
+    fn set_scrim(&mut self, scrim: bool) {
+        if self.me().scrim == scrim {
+            return;
+        }
+        self.me().scrim = scrim;
+        sync_scrim(self);
     }
 
     fn set_sheet_width(&mut self, width: Val) {

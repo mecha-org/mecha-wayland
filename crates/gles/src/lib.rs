@@ -78,8 +78,8 @@ pub mod prelude {
 }
 
 /// How many atlas pages of each kind the device allocates room for, once,
-/// at open. Pages are 1024 square; the mono array costs about 1.3 MB a
-/// layer with its mips, the color array about 5.6 MB.
+/// at open. Pages are 2048 square; the mono array costs about 5.6 MB a
+/// layer with its mips, the color array about 22.4 MB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
     /// Glyph and icon pages together. Default 4.

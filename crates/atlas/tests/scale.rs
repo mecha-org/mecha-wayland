@@ -2,6 +2,7 @@
 //! and a rebuild on every change that keeps ids and layout.
 
 use atlas::prelude::*;
+use atlas::{CELLS, PAGE};
 use geometry::Size;
 
 const INTER: &[u8] = include_bytes!("fixtures/Inter-Regular.ttf");
@@ -117,7 +118,11 @@ fn set_scale_bumps_the_generation_and_dirties_every_page() {
     assert!(pages >= 2);
     let mut cells = 0;
     atlas.drain_dirty(|_, _| cells += 1);
-    assert_eq!(cells, 256 * pages, "every new page is dirty whole");
+    assert_eq!(
+        cells,
+        (CELLS * CELLS) as usize * pages,
+        "every new page is dirty whole"
+    );
 }
 
 #[cfg(feature = "svg")]
@@ -164,7 +169,8 @@ fn rescaling_many_times_keeps_ids_bounded() {
 #[should_panic(expected = "does not fit a page at scale 2")]
 fn a_sprite_too_large_at_the_new_scale_panics() {
     let mut atlas = Atlas::new();
-    atlas.insert_svg(SQUARE_SVG, 600).unwrap();
+    // Fits a page at scale 1, not at twice the side.
+    atlas.insert_svg(SQUARE_SVG, PAGE / 2 + PAGE / 8).unwrap();
     atlas.set_scale(2.0);
 }
 

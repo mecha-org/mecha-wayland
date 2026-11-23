@@ -146,7 +146,7 @@ fn main() {
         .add_module(AnimationModule)
         .add_module(RenderModule::default())
         .insert_resource(Atlas::new());
-    app.add_module(MechanixTheme::light());
+    app.add_module(MechanixTheme::dark());
     let font = app
         .resource_mut::<Atlas>()
         .add_font(include_bytes!(

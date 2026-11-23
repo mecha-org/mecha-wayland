@@ -6,9 +6,14 @@ use app::{App, Build, Context, Event, Handle, NodeId, Spawner, Widget};
 use geometry::{Color, Corners, Point, Rect};
 use interactivity::{ContactId, ContactInput, ContactPhase, InteractivityModule, PressCancelled};
 use layout::{ComputedLayout, LayoutStyle, percent, px};
-use mechanix_widgets::bottom_sheet::{
-    DRAG_SLOP, GRIP_HEIGHT, HANDLE_HEIGHT, HANDLE_WIDTH, SCRIM_OPACITY,
-};
+use mechanix_widgets::BottomSheetStyle;
+
+const STYLE: BottomSheetStyle = BottomSheetStyle::standard();
+const DRAG_SLOP: f32 = STYLE.drag_slop;
+const GRIP_HEIGHT: f32 = STYLE.grip_height();
+const HANDLE_WIDTH: f32 = STYLE.handle_width;
+const HANDLE_HEIGHT: f32 = STYLE.handle_height;
+const SCRIM_OPACITY: f32 = STYLE.scrim_opacity;
 use mechanix_widgets::{
     BottomSheet, BottomSheetBuilder, BottomSheetContextExt, ColorSource, FontBook, SheetClosed,
     Text, bottom_sheet,
@@ -214,17 +219,14 @@ fn handle_is_a_centered_pill_and_can_be_hidden() {
 // ── colors ──────────────────────────────────────────────────────────
 
 #[test]
-fn surface_takes_theme_colors_and_rounded_top_corners() {
+fn surface_takes_theme_colors_and_square_corners() {
     let (mut app, win) = sheet_app();
     let h = app.spawn(win, bottom_sheet());
     let s = sheet(&app, h).clone();
     let surface = quad(&app, s.surface());
-    assert_eq!(surface.color, app.color(ColorRole::SurfaceContainerHighest));
-    assert_eq!(surface.radii, Corners::new(28.0, 28.0, 0.0, 0.0));
-    assert_eq!(
-        quad(&app, s.handle()).color,
-        app.color(ColorRole::OnSurface)
-    );
+    assert_eq!(surface.color, app.color(ColorRole::SurfaceContainerLow));
+    assert_eq!(surface.radii, Corners::all(0.0));
+    assert_eq!(quad(&app, s.handle()).color, app.color(ColorRole::Outline));
 }
 
 #[test]
@@ -237,8 +239,8 @@ fn theme_change_repaints_the_surface() {
     settle(&mut app);
     let q = quad(&app, surface);
     assert_ne!(q.color, light);
-    assert_eq!(q.color, app.color(ColorRole::SurfaceContainerHighest));
-    assert_eq!(q.radii, Corners::new(28.0, 28.0, 0.0, 0.0));
+    assert_eq!(q.color, app.color(ColorRole::SurfaceContainerLow));
+    assert_eq!(q.radii, Corners::all(0.0));
 }
 
 #[test]
@@ -349,10 +351,7 @@ fn color_setters_repaint_and_none_restores_the_theme() {
         c.set_title_color(ColorRole::Error);
     });
     assert_eq!(quad(&app, s.surface()).color, Color::BLACK);
-    assert_eq!(
-        quad(&app, s.surface()).radii,
-        Corners::new(28.0, 28.0, 0.0, 0.0)
-    );
+    assert_eq!(quad(&app, s.surface()).radii, Corners::all(0.0));
     assert_eq!(quad(&app, s.handle()).color, app.color(ColorRole::Primary));
     let native = app.widget::<Text>(s.title()).unwrap().native();
     assert_eq!(
@@ -363,7 +362,7 @@ fn color_setters_repaint_and_none_restores_the_theme() {
     with_sheet(&mut app, h, |c| c.set_background(None::<ColorSource>));
     assert_eq!(
         quad(&app, s.surface()).color,
-        app.color(ColorRole::SurfaceContainerHighest)
+        app.color(ColorRole::SurfaceContainerLow)
     );
 }
 

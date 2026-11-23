@@ -12,8 +12,8 @@ pub mod state;
 pub mod text;
 
 pub use bottom_sheet::{
-    BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides, SheetClosed,
-    SheetSize, bottom_sheet,
+    BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides, BottomSheetStyle,
+    SheetClosed, SheetSize, bottom_sheet,
 };
 pub use button::{
     Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonSize, ButtonVariant, button,
@@ -41,8 +41,8 @@ pub use widgets::{
 pub mod prelude {
     // Themed widgets & builders
     pub use crate::bottom_sheet::{
-        BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides, SheetClosed,
-        SheetSize, bottom_sheet,
+        BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides,
+        BottomSheetStyle, SheetClosed, SheetSize, bottom_sheet,
     };
     pub use crate::button::{
         Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonSize, ButtonVariant, button,

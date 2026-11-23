@@ -31,6 +31,8 @@ pub struct MatchRule {
     destination: Option<BusName>,
     /// `argN` keys, sorted by `N`: argument `N` must be this string.
     args: Vec<(u8, String)>,
+    /// Argument 0 is this bus name or one below it, at a dot.
+    arg0_namespace: Option<String>,
 }
 
 impl MatchRule {
@@ -80,6 +82,13 @@ impl MatchRule {
         self.args.retain(|(m, _)| *m != n);
         self.args.push((n, value.into()));
         self.args.sort_by_key(|(m, _)| *m);
+        self
+    }
+
+    /// Argument 0 is the bus name `namespace` or one below it, e.g.
+    /// `org.mpris.MediaPlayer2` matches `org.mpris.MediaPlayer2.vlc`.
+    pub fn arg0_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.arg0_namespace = Some(namespace.into());
         self
     }
 
@@ -135,6 +144,9 @@ impl MatchRule {
         }
         for (n, v) in &self.args {
             push(&format!("arg{n}"), v);
+        }
+        if let Some(ns) = &self.arg0_namespace {
+            push("arg0namespace", ns);
         }
         parts.join(",")
     }
@@ -199,6 +211,18 @@ impl MatchRule {
             .is_some_and(|d| msg.destination() != Some(d))
         {
             return false;
+        }
+        if let Some(ns) = &self.arg0_namespace {
+            let Some(arg) = msg.string_arg(0) else {
+                return false;
+            };
+            let inside = arg == *ns
+                || arg
+                    .strip_prefix(ns.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'));
+            if !inside {
+                return false;
+            }
         }
         self.args
             .iter()
@@ -320,5 +344,39 @@ mod tests {
                 .matches(&m, |_| Some(&owner))
         );
         assert!(!MatchRule::signal().destination(":1.1").matches(&m, none));
+    }
+
+    #[test]
+    fn arg0_namespace() {
+        let none = |_: &BusName| None;
+        let rule = MatchRule::signal()
+            .member("NameOwnerChanged")
+            .arg0_namespace("org.mpris.MediaPlayer2");
+        assert_eq!(
+            rule.to_rule_string(),
+            "type='signal',member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'"
+        );
+        let owner_changed = |name: &str| {
+            sig(
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "NameOwnerChanged",
+                "org.freedesktop.DBus",
+            )
+            .with_body(&(name, "", ":1.49"))
+        };
+        assert!(rule.matches(&owner_changed("org.mpris.MediaPlayer2"), none));
+        assert!(rule.matches(&owner_changed("org.mpris.MediaPlayer2.vlc"), none));
+        assert!(rule.matches(
+            &owner_changed("org.mpris.MediaPlayer2.firefox.instance_1_49"),
+            none
+        ));
+        assert!(
+            !rule.matches(&owner_changed("org.mpris.MediaPlayer2Foo"), none),
+            "only at a dot"
+        );
+        assert!(!rule.matches(&owner_changed("org.bluez"), none));
+        let numeric = sig("/a", "a.b", "NameOwnerChanged", ":1.5").with_body(&(3u32,));
+        assert!(!rule.matches(&numeric, none), "arg0 must be a string");
     }
 }

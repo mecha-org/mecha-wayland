@@ -770,6 +770,10 @@ pub trait InputContext {
     /// its text, dimmed, and takes no focus, presses, keys or edits; a
     /// focused field gives the focus up.
     fn set_disabled(&mut self, disabled: bool);
+
+    /// Recolour the caret, e.g. to the error colour while the field's
+    /// text was refused. Shown at once if the field is focused.
+    fn set_caret_color(&mut self, color: Color);
 }
 
 impl InputContext for Context<'_, Input> {
@@ -792,6 +796,14 @@ impl InputContext for Context<'_, Input> {
 
     fn set_hidden(&mut self, hidden: bool) {
         self.me().unmasked = !hidden;
+        sync(self);
+    }
+
+    fn set_caret_color(&mut self, color: Color) {
+        if self.me().caret_color == color {
+            return;
+        }
+        self.me().caret_color = color;
         sync(self);
     }
 

@@ -1352,6 +1352,7 @@ fn on_surface(app: &mut App, e: &WlSurfaceEvent) {
 /// slots and their targets, then the surface. A late event for any of
 /// them finds no owner and is skipped.
 fn on_removed(app: &mut App, _: &Removed) {
+    seat::drop_removed_windows(app);
     let dead: Vec<NodeId> = app
         .resource::<Surfaces>()
         .pending_layer

@@ -2102,6 +2102,34 @@ fn seat_capabilities_requests_pointer_and_touch_objects_once_each() {
 }
 
 #[test]
+fn a_window_removed_under_the_pointer_takes_no_more_input() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = spawn(&mut f, LayoutStyle::default().column());
+    f.requests();
+    let ptr = pointer(&mut f);
+    f.send(ptr, ev::POINTER_ENTER, |w| {
+        w.uint(1);
+        w.object(ObjectId(SURFACE));
+        w.fixed(10.0);
+        w.fixed(20.0);
+    });
+    f.turn();
+
+    f.app.remove(win);
+    f.app.tick();
+    f.turn();
+    log_clear(&mut f);
+    // Before the compositor's next `Enter`, motion still comes.
+    f.send(ptr, ev::POINTER_MOTION, |w| {
+        w.uint(100);
+        w.fixed(11.0);
+        w.fixed(21.0);
+    });
+    f.turn();
+    assert!(log(&f).is_empty(), "{:?}", log(&f));
+}
+
+#[test]
 fn pointer_enter_motion_button_leave_produce_contact_input_at_the_focused_window() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = spawn(&mut f, LayoutStyle::default().column());

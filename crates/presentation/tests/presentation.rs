@@ -198,6 +198,19 @@ fn fake() -> Option<(MutexGuard<'static, ()>, Fake)> {
 /// advertised. Neither is what a compositor bound at version 4 or above
 /// sends: its formats come by feedback instead.
 fn fake_advertising(xrgb: bool, argb: bool) -> Option<(MutexGuard<'static, ()>, Fake)> {
+    fake_from(GLOBALS, xrgb, argb)
+}
+
+/// [`fake`] on a compositor advertising `globals`.
+fn fake_with(globals: &[(&str, u32)]) -> Option<(MutexGuard<'static, ()>, Fake)> {
+    fake_from(globals, true, true)
+}
+
+fn fake_from(
+    globals: &[(&str, u32)],
+    xrgb: bool,
+    argb: bool,
+) -> Option<(MutexGuard<'static, ()>, Fake)> {
     let guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
     match Device::try_open(Budget::default()) {
         Ok(_) => {}
@@ -207,7 +220,7 @@ fn fake_advertising(xrgb: bool, argb: bool) -> Option<(MutexGuard<'static, ()>, 
         }
         Err(e) => panic!("the device did not open: {e:?}"),
     }
-    let mut f = Fake::new(GLOBALS, |m| {
+    let mut f = Fake::new(globals, |m| {
         m.bind::<WlCompositor>()
             .bind::<ZwpLinuxDmabufV1>()
             .bind::<XdgWmBase>()
@@ -701,12 +714,10 @@ fn layer_configure(f: &mut Fake, serial: u32) {
     f.turn();
 }
 
+/// `set_hidden` with the opposite flag: on a compositor without shell
+/// surfaces, as `fake` is, it unmaps and maps.
 fn set_mapped(f: &mut Fake, win: NodeId, mapped: bool) {
-    {
-        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.set_mapped(win, mapped, &mut wl);
-    }
-    f.turn();
+    set_hidden(f, win, !mapped);
 }
 
 #[test]
@@ -723,7 +734,7 @@ fn hiding_before_spawn_suppresses_the_first_draw() {
         .id();
     {
         let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.set_mapped(win, false, &mut wl);
+        surfaces.set_hidden(win, true, &mut wl);
     }
     f.app.tick();
     f.turn();
@@ -943,8 +954,237 @@ fn a_show_hidden_before_its_configure_draws_at_that_configure_next_time() {
     assert_ne!(attach.reader().object(), Some(ObjectId(0)));
 }
 
+/// [`GLOBALS`] with `mx_shell_surface_manager_v1`, which presentation binds
+/// as 9, after the layer shell: the first window is then surface 10, layer
+/// surface 11 and shell surface 12.
+const SHELL_GLOBALS: &[(&str, u32)] = &[
+    ("wl_compositor", 6),
+    ("zwp_linux_dmabuf_v1", 3),
+    ("xdg_wm_base", 7),
+    ("zwlr_layer_shell_v1", 5),
+    ("wl_seat", 9),
+    ("mx_shell_surface_manager_v1", 1),
+];
+const SHELL_MANAGER: u32 = 9;
+const SHELL_WL_SURFACE: u32 = 10;
+const SHELL_LAYER: u32 = 11;
+const SHELL_SURFACE: u32 = 12;
+
+/// `mx_shell_surface_manager_v1.get_shell_surface` and
+/// `mx_shell_surface_v1.set_hidden`.
+const GET_SHELL_SURFACE: u16 = 1;
+const SET_HIDDEN: u16 = 0;
+
+fn set_hidden(f: &mut Fake, win: NodeId, hidden: bool) {
+    {
+        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.set_hidden(win, hidden, &mut wl);
+    }
+    f.turn();
+}
+
+/// A layer window on a compositor with shell surfaces, configured and
+/// drawn, requests drained.
+fn drawn_shell_layer(f: &mut Fake) -> NodeId {
+    let root = f.app.root();
+    let win = f
+        .app
+        .spawn_with(
+            root,
+            window().layout(LayoutStyle::default().column()),
+            (layer_role(),),
+        )
+        .id();
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    let get = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(SHELL_MANAGER) && r.opcode == GET_SHELL_SURFACE)
+        .expect("every layer window gets a shell surface");
+    let mut a = get.reader();
+    assert_eq!(a.object(), Some(ObjectId(SHELL_SURFACE)));
+    assert_eq!(a.object(), Some(ObjectId(SHELL_LAYER)));
+    f.send(SHELL_LAYER, ev::LAYER_CONFIGURE, |w| {
+        w.uint(3);
+        w.uint(800);
+        w.uint(32);
+    });
+    f.turn();
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    assert!(
+        reqs.iter()
+            .any(|r| r.sender == ObjectId(SHELL_WL_SURFACE) && r.opcode == op::ATTACH),
+        "drawn"
+    );
+    win
+}
+
+/// Hidden in place: one flag and a commit, no null buffer, and nothing
+/// drawn while hidden.
 #[test]
-fn set_mapped_on_a_toplevel_does_nothing() {
+fn hiding_with_shell_surfaces_flags_and_commits_in_place() {
+    let Some((_gpu, mut f)) = fake_with(SHELL_GLOBALS) else {
+        return;
+    };
+    let win = drawn_shell_layer(&mut f);
+    set_hidden(&mut f, win, true);
+    let reqs = f.requests();
+    let shape: Vec<(u32, u16)> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
+    assert_eq!(
+        shape,
+        vec![(SHELL_SURFACE, SET_HIDDEN), (SHELL_WL_SURFACE, op::COMMIT)],
+        "{reqs:?}"
+    );
+    assert_eq!(reqs[0].reader().uint(), Some(1));
+    assert!(f.app.resource::<Surfaces>().is_configured(win), "kept");
+
+    repaint(&mut f, win);
+    f.turn();
+    assert!(
+        !f.requests()
+            .iter()
+            .any(|r| r.sender == ObjectId(SHELL_WL_SURFACE) && r.opcode == op::ATTACH),
+        "a hidden window draws nothing"
+    );
+}
+
+/// Hidden before spawn, a window starts flagged hidden, draws nothing at
+/// its configure, and its show clears the flag in the commit that draws.
+#[test]
+fn hidden_before_spawn_starts_flagged_and_its_show_clears_the_flag() {
+    let Some((_gpu, mut f)) = fake_with(SHELL_GLOBALS) else {
+        return;
+    };
+    let root = f.app.root();
+    let win = f
+        .app
+        .spawn_with(
+            root,
+            window().layout(LayoutStyle::default().column()),
+            (layer_role(),),
+        )
+        .id();
+    {
+        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.set_hidden(win, true, &mut wl);
+    }
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    let hide = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(SHELL_SURFACE) && r.opcode == SET_HIDDEN)
+        .expect("flagged hidden at spawn");
+    assert_eq!(hide.reader().uint(), Some(1));
+    f.send(SHELL_LAYER, ev::LAYER_CONFIGURE, |w| {
+        w.uint(3);
+        w.uint(800);
+        w.uint(32);
+    });
+    f.turn();
+    f.app.tick();
+    f.turn();
+    assert!(
+        !f.requests()
+            .iter()
+            .any(|r| r.sender == ObjectId(SHELL_WL_SURFACE) && r.opcode == op::ATTACH),
+        "a hidden window draws nothing"
+    );
+
+    set_hidden(&mut f, win, false);
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    let shape: Vec<(u32, u16)> = reqs
+        .iter()
+        .map(|r| (r.sender.0, r.opcode))
+        .filter(|&(s, o)| {
+            (s, o) == (SHELL_SURFACE, SET_HIDDEN)
+                || (s, o) == (SHELL_WL_SURFACE, op::ATTACH)
+                || (s, o) == (SHELL_WL_SURFACE, op::COMMIT)
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (SHELL_WL_SURFACE, op::ATTACH),
+            (SHELL_SURFACE, SET_HIDDEN),
+            (SHELL_WL_SURFACE, op::COMMIT),
+        ],
+        "the show goes with the first buffer: {reqs:?}"
+    );
+    let show = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(SHELL_SURFACE) && r.opcode == SET_HIDDEN)
+        .unwrap();
+    assert_eq!(show.reader().uint(), Some(0));
+}
+
+/// The show waits for the next frame, and goes in the one commit that
+/// attaches it, with the zone set while hidden.
+#[test]
+fn a_show_goes_with_the_next_frame_in_one_commit() {
+    let Some((_gpu, mut f)) = fake_with(SHELL_GLOBALS) else {
+        return;
+    };
+    let win = drawn_shell_layer(&mut f);
+    set_hidden(&mut f, win, true);
+    f.requests();
+    {
+        let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
+        surfaces.set_exclusive_zone(win, 40, &mut wl);
+    }
+    f.turn();
+    assert!(f.requests().is_empty(), "a zone while hidden waits");
+
+    repaint(&mut f, win);
+    set_hidden(&mut f, win, false);
+    assert!(f.requests().is_empty(), "the show waits for its frame");
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    let at = |sender: u32, opcode: u16| {
+        reqs.iter()
+            .position(|r| r.sender == ObjectId(sender) && r.opcode == opcode)
+    };
+    let show = at(SHELL_SURFACE, SET_HIDDEN).expect("shown");
+    assert_eq!(reqs[show].reader().uint(), Some(0));
+    let zone = at(SHELL_LAYER, op::LAYER_SET_ZONE).expect("with the zone");
+    assert_eq!(reqs[zone].reader().int(), Some(40));
+    let attach = at(SHELL_WL_SURFACE, op::ATTACH).expect("and the frame");
+    let commit = at(SHELL_WL_SURFACE, op::COMMIT).expect("committed");
+    assert!(
+        show < commit && zone < commit && attach < commit,
+        "{reqs:?}"
+    );
+    assert_eq!(
+        reqs.iter()
+            .filter(|r| r.sender == ObjectId(SHELL_WL_SURFACE) && r.opcode == op::COMMIT)
+            .count(),
+        1,
+        "one commit: {reqs:?}"
+    );
+}
+
+/// Without shell surfaces, hiding falls back to unmapping.
+#[test]
+fn without_shell_surfaces_hiding_unmaps() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_hidden(&mut f, win, true);
+    let reqs = f.requests();
+    let attach = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::ATTACH)
+        .expect("unmapped");
+    assert_eq!(attach.reader().object(), Some(ObjectId(0)));
+}
+
+#[test]
+fn set_hidden_on_a_toplevel_does_nothing() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = configured(&mut f, 320, 200);
     f.requests();
@@ -1559,7 +1799,7 @@ fn show_on_configure(app: &mut App, _: &ZwlrLayerSurfaceV1Event) {
         return;
     };
     let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-    surfaces.set_mapped(win, true, &mut wl);
+    surfaces.set_hidden(win, false, &mut wl);
 }
 
 #[test]
@@ -2447,7 +2687,7 @@ fn showing_a_window_hidden_before_its_first_buffer_draws_without_a_new_configure
         .id();
     {
         let (mut surfaces, mut wl) = f.app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.set_mapped(win, false, &mut wl);
+        surfaces.set_hidden(win, true, &mut wl);
     }
     f.app.tick();
     f.turn();

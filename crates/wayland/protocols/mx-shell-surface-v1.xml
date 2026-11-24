@@ -43,12 +43,13 @@
       2. edge
       3. bar
       4. osd
-      5. osk
-      6. view
-      7. overlay-layer surfaces without a role
-      8. a fullscreen toplevel and its dialogs
-      9. top-layer surfaces
-      10. other toplevels, then the bottom and background layers
+      5. panel
+      6. osk
+      7. view
+      8. overlay-layer surfaces without a role
+      9. a fullscreen toplevel and its dialogs
+      10. top-layer surfaces
+      11. other toplevels, then the bottom and background layers
 
       The one exception is osk: while a prompt surface has keyboard focus, osk
       stacks above prompts instead, so the prompt can be typed into. Several
@@ -84,23 +85,23 @@
       </entry>
       <entry name="view" value="1" summary="full-screen shell screen">
         <description summary="full-screen shell screen">
-          A screen of the shell that covers the apps, such as a home screen,
-          an app switcher or a settings panel. It stacks above every toplevel,
-          a fullscreen one included, and below every other role. Input reaches
-          it as layer shell defines.
+          A screen of the shell that covers the apps, such as a home screen
+          or an app switcher. It stacks above every toplevel, a fullscreen one
+          included, and below every other role. Input reaches it as layer
+          shell defines.
         </description>
       </entry>
       <entry name="osk" value="2" summary="on-screen keyboard">
         <description summary="on-screen keyboard">
-          An on-screen keyboard. It stacks above views and below OSDs, except
-          while a prompt surface has keyboard focus: then it stacks above
-          prompts, so the prompt can be typed into.
+          An on-screen keyboard. It stacks above views and below panels,
+          except while a prompt surface has keyboard focus: then it stacks
+          above prompts, so the prompt can be typed into.
         </description>
       </entry>
       <entry name="osd" value="3" summary="on-screen display">
         <description summary="on-screen display">
           Short-lived feedback such as a volume or brightness indicator. It
-          stacks above the keyboard and views, below bars.
+          stacks above panels, the keyboard and views, below bars.
         </description>
       </entry>
       <entry name="bar" value="4" summary="status bar">
@@ -133,6 +134,15 @@
           A question from the system that the user must answer, such as a
           power menu or a password dialog. It stacks above every other role,
           except the keyboard while a prompt has keyboard focus.
+        </description>
+      </entry>
+      <entry name="panel" value="7" summary="shell panel over everything else">
+        <description summary="shell panel over everything else">
+          A shell surface that slides over whatever is shown, such as quick
+          settings or a notification shade. It stacks above the keyboard,
+          views and every toplevel, and below OSDs, bars, edge regions and
+          prompts, so the status bar stays in view over it. Input reaches it
+          as layer shell defines.
         </description>
       </entry>
     </enum>

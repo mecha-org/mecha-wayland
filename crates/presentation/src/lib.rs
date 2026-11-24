@@ -203,6 +203,11 @@ struct Entry {
     commit_wanted: bool,
     /// The shell's latest configure, until the next `Tick` settles it.
     configure: Option<Configure>,
+    /// A buffer is attached at the compositor: the surface is mapped there.
+    attached: bool,
+    /// [`Surfaces::set_mapped`] unmapped the surface, which reset the
+    /// compositor's state: the next show sends a fresh initial commit.
+    unmapped: bool,
 }
 
 /// A configure from the shell, held until the next `Tick` settles it.
@@ -361,17 +366,19 @@ impl Surfaces {
     /// Map or unmap a layer window without despawning it, so its place in
     /// the compositor's stacking is kept. No-op for a toplevel.
     ///
-    /// Hiding a surface that has shown a buffer attaches null and
-    /// commits, which unmaps it and resets the compositor's configure
-    /// state; the outstanding frame callback is dropped and every slot
-    /// forgets what it drew. While hidden, configures are acked and
-    /// settled but nothing is drawn. Showing it again commits empty so
-    /// the compositor sends a fresh initial configure, whose settle draws
-    /// the whole window. The unmap also resets the compositor's layer
-    /// state (layer, anchor, zone, keyboard, size), so the show sends it again
-    /// first. A configure that arrives while hidden does not
-    /// change this: it was sent before the unmap. A window hidden before
-    /// its first buffer is kicked at the end of the tick (`PostTick`).
+    /// Hiding a surface with a buffer attached attaches null and commits,
+    /// which unmaps it and resets the compositor's configure state; the
+    /// outstanding frame callback is dropped and every slot forgets what
+    /// it drew. While hidden, configures are acked and settled but nothing
+    /// is drawn. Showing it again after such an unmap commits empty so the
+    /// compositor sends a fresh initial configure, whose settle draws the
+    /// whole window. The unmap also resets the compositor's layer state
+    /// (layer, anchor, zone, keyboard, size), so the show sends it again
+    /// first. A configure that arrives while hidden does not change this:
+    /// it was sent before the unmap. A window hidden with no buffer
+    /// attached (before its first, or shown and hidden again before its
+    /// configure came) was not unmapped: its show is kicked at the end of
+    /// the tick (`PostTick`), and draws at the configure it has or gets.
     /// Hiding a window whose entry does not exist yet (it was spawned this
     /// tick) makes the entry start hidden.
     pub fn set_mapped(&mut self, window: NodeId, mapped: bool, wl: &mut Wayland) {
@@ -388,9 +395,14 @@ impl Surfaces {
         }
         entry.hidden = !mapped;
         if !mapped {
-            if entry.frames > 0 {
+            // Only a surface with a buffer attached is unmapped by a null
+            // one: one shown and hidden again before its configure came has
+            // none, and the compositor keeps its state.
+            if entry.attached {
                 entry.surface.attach(wl, None, 0, 0);
                 entry.surface.commit(wl);
+                entry.attached = false;
+                entry.unmapped = true;
                 // An ack after this unmap may name a serial the shell has
                 // dropped; the next initial commit gets a fresh configure.
                 entry.configure = None;
@@ -404,11 +416,10 @@ impl Surfaces {
             }
         } else {
             entry.wanting = true;
-            // Every hide of a drawn window attached null, so the window
-            // needs a fresh initial commit even if a configure sent before
-            // the unmap arrived while hidden and marked it configured, or is
-            // still held.
-            if entry.frames > 0 {
+            // An unmap reset the compositor's state, so the window needs a
+            // fresh initial commit even if a configure sent before the unmap
+            // arrived while hidden and marked it configured, or is still held.
+            if std::mem::take(&mut entry.unmapped) {
                 entry.configure = None;
                 entry.configured = false;
                 if let (Shell::Layer(ls), Some((l, size))) = (&entry.shell, &entry.layer) {
@@ -822,6 +833,8 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             transparent,
             commit_wanted: false,
             configure: None,
+            attached: false,
+            unmapped: false,
         },
     );
 }
@@ -1225,6 +1238,7 @@ fn on_frame(app: &mut App, f: &Frame) {
         entry.scale_sent = entry.scale;
     }
     entry.surface.attach(&mut wl, Some(slot.buffer), 0, 0);
+    entry.attached = true;
     // A shift moved everything in its area; a redraw changed its scissor.
     let shifted_area = shifted.map(|(sh, _)| [sh.area]);
     for &r in shifted_area.as_ref().map_or(&queue.scissor[..], |a| &a[..]) {

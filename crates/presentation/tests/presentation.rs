@@ -906,6 +906,43 @@ fn a_configure_in_flight_across_the_unmap_does_not_skip_the_remap_commit() {
     assert!(ack < attach);
 }
 
+/// Shown and hidden again before the remap's configure came: no buffer is
+/// attached, so the hide unmaps nothing and the compositor keeps the
+/// configure it sent. The next show draws at it rather than asking again.
+#[test]
+fn a_show_hidden_before_its_configure_draws_at_that_configure_next_time() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = drawn_layer(&mut f);
+    set_mapped(&mut f, win, false);
+    set_mapped(&mut f, win, true);
+    f.requests();
+    set_mapped(&mut f, win, false);
+    let reqs = f.requests();
+    assert!(
+        !reqs.iter().any(|r| r.sender == ObjectId(SURFACE)),
+        "nothing to unmap: {reqs:?}"
+    );
+
+    // The remap's configure, delivered while hidden: acked and settled.
+    layer_configure(&mut f, 4);
+    f.requests();
+    set_mapped(&mut f, win, true);
+    f.app.tick();
+    f.turn();
+    let reqs = f.requests();
+    assert!(
+        !reqs
+            .iter()
+            .any(|r| r.sender == ObjectId(XDG) && r.opcode == op::LAYER_SET_LAYER),
+        "no fresh initial commit: {reqs:?}"
+    );
+    let attach = reqs
+        .iter()
+        .find(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::ATTACH)
+        .expect("the show draws at the configure it has");
+    assert_ne!(attach.reader().object(), Some(ObjectId(0)));
+}
+
 #[test]
 fn set_mapped_on_a_toplevel_does_nothing() {
     let Some((_gpu, mut f)) = fake() else { return };

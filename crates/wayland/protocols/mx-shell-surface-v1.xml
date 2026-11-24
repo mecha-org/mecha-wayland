@@ -178,7 +178,9 @@
     <description summary="a layer surface's shell state">
       The role and visibility of one zwlr_layer_surface_v1. If the layer
       surface is destroyed, the shell surface becomes inert: its requests do
-      nothing, and the client should destroy it.
+      nothing, and the client should destroy it. The shell state goes with
+      the layer surface: a new layer surface on the same wl_surface starts
+      shown, without a role, and may get a shell surface of its own.
     </description>
 
     <request name="set_hidden">
@@ -188,7 +190,9 @@
         such as a new buffer.
 
         While hidden, the surface is not shown. It receives no pointer, touch
-        or keyboard input and cannot have keyboard focus. Its exclusive zone
+        or keyboard input and cannot have keyboard focus: touch sequences and
+        pointer grabs that began on it, or on its popups or subsurfaces, are
+        cancelled by the commit that hides it. Its exclusive zone
         is ignored: other surfaces and toplevels are placed as if it had none.
         Frame callbacks requested while hidden are not done until the surface
         is shown and a frame of it has been displayed.

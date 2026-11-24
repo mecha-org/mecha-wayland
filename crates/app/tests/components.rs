@@ -598,3 +598,57 @@ fn a_builder_spawns_a_child_with_initial_values() {
         vec![child.id()]
     );
 }
+
+// ── widgets read during a build ─────────────────────────────────────────
+
+/// Exposes a slot: a child its parent is meant to spawn into.
+struct Slotted {
+    slot: Handle<Leaf>,
+}
+struct SlottedBuilder;
+impl Build for SlottedBuilder {
+    type Widget = Slotted;
+}
+impl Widget for Slotted {
+    type Builder = SlottedBuilder;
+    fn build(_b: SlottedBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        Slotted {
+            slot: s.spawn(me, Leaf),
+        }
+    }
+}
+
+/// Spawns a `Slotted`, reads its slot handle and fills it; also records
+/// what reading itself mid-build returned.
+struct Filler {
+    filled: Handle<Leaf>,
+    self_seen: bool,
+}
+struct FillerBuilder;
+impl Build for FillerBuilder {
+    type Widget = Filler;
+}
+impl Widget for Filler {
+    type Builder = FillerBuilder;
+    fn build(_b: FillerBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        let slotted = s.spawn(me, SlottedBuilder);
+        let slot = s.widget::<Slotted>(slotted).expect("built child").slot;
+        let filled = s.spawn(slot, Leaf);
+        Filler {
+            filled,
+            self_seen: s.widget::<Filler>(me).is_some(),
+        }
+    }
+}
+
+#[test]
+fn spawner_reads_a_child_built_earlier_in_the_same_build() {
+    let mut app = app();
+    let filler = app.spawn(app.root(), FillerBuilder);
+    let f = app.widget::<Filler>(filler).unwrap();
+    let (filled, self_seen) = (f.filled, f.self_seen);
+    let slotted = app.children(filler).unwrap()[0];
+    let slot = app.widget::<Slotted>(slotted).unwrap().slot;
+    assert_eq!(app.parent(filled), Some(slot.into()));
+    assert!(!self_seen, "me is not readable while its build runs");
+}

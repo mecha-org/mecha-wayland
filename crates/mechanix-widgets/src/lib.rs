@@ -2,6 +2,7 @@
 //!
 //! Provides theme-aware widgets built on top of `widgets` and `theme`.
 
+pub mod bottom_sheet;
 pub mod button;
 pub mod clock;
 pub mod color;
@@ -10,6 +11,10 @@ pub mod slider;
 pub mod state;
 pub mod text;
 
+pub use bottom_sheet::{
+    BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides, BottomSheetStyle,
+    SheetClosed, SheetSize, bottom_sheet,
+};
 pub use button::{
     Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonSize, ButtonVariant, button,
 };
@@ -35,6 +40,10 @@ pub use widgets::{
 
 pub mod prelude {
     // Themed widgets & builders
+    pub use crate::bottom_sheet::{
+        BottomSheet, BottomSheetBuilder, BottomSheetContextExt, BottomSheetOverrides,
+        BottomSheetStyle, SheetClosed, SheetSize, bottom_sheet,
+    };
     pub use crate::button::{
         Button, ButtonBuilder, ButtonContextExt, ButtonOverrides, ButtonSize, ButtonVariant, button,
     };

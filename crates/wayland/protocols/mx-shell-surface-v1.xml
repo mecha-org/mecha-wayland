@@ -136,8 +136,8 @@
           except the keyboard while a prompt has keyboard focus.
         </description>
       </entry>
-      <entry name="panel" value="7" summary="shell panel over everything else">
-        <description summary="shell panel over everything else">
+      <entry name="panel" value="7" summary="shell panel over apps and the keyboard">
+        <description summary="shell panel over apps and the keyboard">
           A shell surface that slides over whatever is shown, such as quick
           settings or a notification shade. It stacks above the keyboard,
           views and every toplevel, and below OSDs, bars, edge regions and
@@ -214,5 +214,34 @@
         the first.
       </description>
     </request>
+
+    <request name="set_showing_home">
+      <description summary="show home on the surface's output">
+        Show home on the output this surface is on (non-zero), or stop
+        (zero). Home is what the shell shows on the bottom and background
+        layers, as this surface; showing it hides what covers it. Not
+        double-buffered: it takes effect at once.
+
+        While an output shows home, the compositor shows no toplevel on it:
+        they are not drawn, receive no input and cannot have keyboard focus,
+        and none is activated (xdg_toplevel.activated). It may suspend them
+        (xdg_toplevel.suspended), except those it shows by other means, such
+        as a thumbnail. Layer surfaces are not affected.
+
+        The output stops showing home by itself when a toplevel on it is
+        activated, or a new one is mapped and takes focus. A request for the
+        state the output is already in does nothing.
+      </description>
+      <arg name="showing" type="uint"/>
+    </request>
+
+    <event name="showing_home">
+      <description summary="whether the surface's output shows home">
+        Sent to a shell surface that has made a set_showing_home request,
+        whenever its output starts or stops showing home, by request or by
+        itself.
+      </description>
+      <arg name="showing" type="uint"/>
+    </event>
   </interface>
 </protocol>

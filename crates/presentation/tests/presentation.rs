@@ -995,6 +995,53 @@ const SHELL_SURFACE: u32 = 12;
 /// `mx_shell_surface_v1.set_hidden`.
 const GET_SHELL_SURFACE: u16 = 1;
 const SET_HIDDEN: u16 = 0;
+/// `mx_shell_surface_v1.set_showing_home`, and the `showing_home` event.
+const SET_SHOWING_HOME: u16 = 2;
+const EV_SHOWING_HOME: u16 = 0;
+
+/// The `ShowingHome`s a window heard.
+#[derive(Default)]
+struct Homes(Vec<bool>);
+impl Resource for Homes {}
+
+/// Showing home is asked once, and the compositor's word on it comes back
+/// as `ShowingHome`; once it stopped by itself, asking again goes.
+#[test]
+fn showing_home_is_asked_once_and_heard_back() {
+    let Some((_gpu, mut f)) = fake_with(SHELL_GLOBALS) else {
+        return;
+    };
+    let win = drawn_shell_layer(&mut f);
+    f.app
+        .init_resource::<Homes>()
+        .system(|app: &mut App, e: &Emitted<ShowingHome>| {
+            app.resource_mut::<Homes>().0.push(e.event.showing);
+        });
+    with_surfaces(&mut f, |surfaces, wl| {
+        surfaces.set_showing_home(win, true, wl);
+        surfaces.set_showing_home(win, true, wl);
+    });
+    let reqs = f.requests();
+    let asked: Vec<_> = sent(&reqs, SHELL_SURFACE, SET_SHOWING_HOME)
+        .map(|r| r.reader().uint())
+        .collect();
+    assert_eq!(asked, [Some(1)], "asked once");
+
+    // An app came to the front.
+    f.send(SHELL_SURFACE, EV_SHOWING_HOME, |w| w.uint(0));
+    f.turn();
+    f.app.tick();
+    assert_eq!(f.app.resource::<Homes>().0, [false]);
+
+    with_surfaces(&mut f, |surfaces, wl| {
+        surfaces.set_showing_home(win, true, wl)
+    });
+    assert_eq!(
+        sent(&f.requests(), SHELL_SURFACE, SET_SHOWING_HOME).count(),
+        1,
+        "asked again"
+    );
+}
 
 fn set_hidden(f: &mut Fake, win: NodeId, hidden: bool) {
     {

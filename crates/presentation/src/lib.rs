@@ -131,9 +131,18 @@ pub mod prelude {
     pub use crate::{
         Anchor, BUFFERS, DEFAULT_SIZE, KeyboardInteractivity, Layer, LayerRole, LockState,
         PresentationModule, Role, SessionLock, SessionLockFinished, SessionLocked, ShellRole,
-        Surfaces,
+        ShowingHome, Surfaces,
     };
 }
+
+/// Emitted at a layer window that asked to show home
+/// ([`Surfaces::set_showing_home`]) when its output starts or stops
+/// showing it, as asked or by itself: an app came to the front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowingHome {
+    pub showing: bool,
+}
+impl Event for ShowingHome {}
 
 /// The size of a toplevel the compositor leaves to us when the window
 /// has no content to size it.
@@ -228,6 +237,8 @@ struct InPlace {
     /// [`Surfaces::set_hidden`] showed it, and the next frame's commit
     /// carries that.
     show_pending: bool,
+    /// Its output shows home, as last asked or told.
+    showing_home: bool,
 }
 
 impl InPlace {
@@ -296,6 +307,8 @@ pub struct Surfaces {
     pending_hidden: HashSet<NodeId>,
     /// The layer wanted for windows whose entry does not exist yet.
     pending_layer: HashMap<NodeId, Layer>,
+    /// Windows asked to show home before `on_spawned` made their entry.
+    pending_showing_home: HashMap<NodeId, bool>,
     /// Windows shown without a fresh initial commit: their frame is asked
     /// for at `on_post_tick`, which has the `App`.
     to_kick: Vec<NodeId>,
@@ -546,6 +559,33 @@ impl Surfaces {
         }
     }
 
+    /// Show home on the output layer window `window` is on, or stop: with
+    /// `mx_shell_surface_v1.set_showing_home`, which hides the toplevels
+    /// covering what the shell shows below them, `window` among it. Not
+    /// double-buffered: it goes at once. The compositor also stops by itself
+    /// when an app comes to the front; [`ShowingHome`] is emitted at
+    /// `window` whenever it starts or stops.
+    ///
+    /// Asking for the state the output is in, as last asked or told, sends
+    /// nothing. Asking before the window's entry exists (it was spawned this
+    /// tick) asks once it does. No-op for a toplevel, and where the
+    /// compositor offers no shell surfaces.
+    pub fn set_showing_home(&mut self, window: NodeId, showing: bool, wl: &mut Wayland) {
+        let Some(entry) = self.entries.get_mut(&window) else {
+            self.pending_showing_home.insert(window, showing);
+            return;
+        };
+        let Some(in_place) = entry.in_place.as_mut() else {
+            return;
+        };
+        if in_place.showing_home != showing {
+            in_place.showing_home = showing;
+            in_place
+                .shell_surface
+                .set_showing_home(wl, u32::from(showing));
+        }
+    }
+
     /// Move a layer window to `layer`: sends
     /// `zwlr_layer_surface_v1.set_layer` and commits; while hidden by
     /// unmapping, only kept for the show. The same layer sends nothing. A
@@ -763,6 +803,7 @@ impl Module for PresentationModule {
             entries: HashMap::new(),
             pending_hidden: HashSet::new(),
             pending_layer: HashMap::new(),
+            pending_showing_home: HashMap::new(),
             to_kick: Vec::new(),
             rescale: Rescale::Settled,
             owner: HashMap::new(),
@@ -788,6 +829,7 @@ impl Module for PresentationModule {
             .system(on_xdg_surface)
             .system(on_toplevel)
             .system(on_layer_surface)
+            .system(on_shell_surface)
             .system(on_settle)
             .system(on_surface)
             .system(on_frame_requested)
@@ -900,9 +942,15 @@ fn on_spawned(app: &mut App, s: &Spawned) {
                 if hidden {
                     shell_surface.set_hidden(&mut wl, 1);
                 }
+                let showing_home = surfaces.pending_showing_home.remove(&s.id) == Some(true);
+                if showing_home {
+                    shell_surface.set_showing_home(&mut wl, 1);
+                }
+                surfaces.owner.insert(shell_surface.id(), s.id);
                 in_place = Some(InPlace {
                     shell_surface,
                     show_pending: false,
+                    showing_home,
                 });
             }
             ls.set_anchor(&mut wl, l.anchor);
@@ -1185,6 +1233,31 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
             }
         }
     }
+}
+
+/// The compositor says whether a window's output shows home: kept, and
+/// emitted at the window as [`ShowingHome`].
+fn on_shell_surface(app: &mut App, e: &MxShellSurfaceV1Event) {
+    let MxShellSurfaceV1Event::ShowingHome {
+        shell_surface,
+        showing,
+    } = e;
+    let showing = *showing != 0;
+    let window = {
+        let mut surfaces = app.resource_mut::<Surfaces>();
+        let Some(w) = surfaces.owner.get(&shell_surface.id()).copied() else {
+            return;
+        };
+        if let Some(in_place) = surfaces
+            .entries
+            .get_mut(&w)
+            .and_then(|e| e.in_place.as_mut())
+        {
+            in_place.showing_home = showing;
+        }
+        w
+    };
+    app.emit(ShowingHome { showing }, window);
 }
 
 fn on_lock_surface(app: &mut App, e: &ExtSessionLockSurfaceV1Event) {
@@ -1505,6 +1578,7 @@ fn on_removed(app: &mut App, _: &Removed) {
             .pending_layer
             .keys()
             .chain(&surfaces.pending_hidden)
+            .chain(surfaces.pending_showing_home.keys())
             .copied()
             .filter(|&w| !app.is_live(w))
             .collect()
@@ -1514,6 +1588,7 @@ fn on_removed(app: &mut App, _: &Removed) {
         for w in dead {
             surfaces.pending_layer.remove(&w);
             surfaces.pending_hidden.remove(&w);
+            surfaces.pending_showing_home.remove(&w);
         }
     }
     let gone: Vec<NodeId> = {
@@ -1544,6 +1619,7 @@ fn on_removed(app: &mut App, _: &Removed) {
                 // Its add-on goes first.
                 if let Some(in_place) = &entry.in_place {
                     in_place.shell_surface.destroy(&mut wl);
+                    s.owner.remove(&in_place.shell_surface.id());
                 }
                 ls.destroy(&mut wl);
                 s.owner.remove(&ls.id());

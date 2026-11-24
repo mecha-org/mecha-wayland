@@ -90,6 +90,7 @@ const OP_GET_INFO: u16 = 1;
 const OP_INFO_DESTROY: u16 = 0;
 const EV_PID: u16 = 0;
 const EV_MODAL: u16 = 1;
+const EV_ACTIVATION_TOKEN: u16 = 2;
 
 #[test]
 fn pid_and_modal_come_with_the_handles_done() {
@@ -125,6 +126,28 @@ fn pid_and_modal_come_with_the_handles_done() {
     f.send(A, EV_CLOSED, |_| {});
     settle(&mut f);
     f.expect(info, OP_INFO_DESTROY);
+}
+
+#[test]
+fn the_activation_token_comes_with_the_handles_done() {
+    let mut f = fake_with(&[
+        ("wl_seat", 9),
+        ("zwlr_foreign_toplevel_manager_v1", 3),
+        ("mx_foreign_toplevel_info_manager_v1", 1),
+    ]);
+    open(&mut f, A);
+    f.turn();
+    let info = f.expect(INFO_MANAGER, OP_GET_INFO).reader().uint().unwrap();
+    done(&mut f, A);
+    settle(&mut f);
+    assert_eq!(get(&f, A).activation_token, None);
+
+    f.send(info, EV_ACTIVATION_TOKEN, |w| w.string("abc"));
+    settle(&mut f);
+    assert_eq!(get(&f, A).activation_token, None);
+    done(&mut f, A);
+    settle(&mut f);
+    assert_eq!(get(&f, A).activation_token.as_deref(), Some("abc"));
 }
 
 #[test]

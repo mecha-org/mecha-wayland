@@ -77,23 +77,33 @@ macro_rules! name {
 
 name!(
     /// An object path: `/org/freedesktop/NetworkManager`.
-    ObjectPath, "object path", valid_path
+    ObjectPath,
+    "object path",
+    valid_path
 );
 name!(
     /// A unique (`:1.42`) or well-known (`org.bluez`) bus name.
-    BusName, "bus name", valid_bus_name
+    BusName,
+    "bus name",
+    valid_bus_name
 );
 name!(
     /// `org.freedesktop.NetworkManager`
-    InterfaceName, "interface name", valid_interface
+    InterfaceName,
+    "interface name",
+    valid_interface
 );
 name!(
     /// A method or signal name: `GetDevices`.
-    MemberName, "member name", valid_member
+    MemberName,
+    "member name",
+    valid_member
 );
 name!(
     /// `org.freedesktop.DBus.Error.AccessDenied`
-    ErrorName, "error name", valid_interface
+    ErrorName,
+    "error name",
+    valid_interface
 );
 
 impl BusName {

@@ -234,8 +234,8 @@ pub struct Surfaces {
     pending_hidden: HashSet<NodeId>,
     /// The layer wanted for windows whose entry does not exist yet.
     pending_layer: HashMap<NodeId, Layer>,
-    /// Windows shown while still configured; `kick` needs the `App`, so
-    /// `on_post_tick` kicks them.
+    /// Windows shown while still configured; asking a frame needs the
+    /// `App`, so `on_post_tick` asks for them.
     to_kick: Vec<NodeId>,
     rescale: Rescale,
     owner: HashMap<ObjectId, NodeId>,
@@ -1283,8 +1283,8 @@ fn on_callback(app: &mut App, e: &WlCallbackEvent) {
     kick(app, w);
 }
 
-/// Kick the windows `set_mapped` showed while they were still configured,
-/// and after a rebuild queue [`Drained`] behind paint's drain.
+/// Ask frames for the windows `set_mapped` showed while they were still
+/// configured, and after a rebuild queue [`Drained`] behind paint's drain.
 fn on_post_tick(app: &mut App, _: &PostTick) {
     let (windows, drain) = {
         let mut surfaces = app.resource_mut::<Surfaces>();
@@ -1294,8 +1294,16 @@ fn on_post_tick(app: &mut App, _: &PostTick) {
         }
         (std::mem::take(&mut surfaces.to_kick), drain)
     };
+    // Asked for, not kicked: a `Frame` signalled here would run before the
+    // signals this tick's changes raise (animation's `Layout` copy among
+    // them), and draw what they have yet to update. A request takes the
+    // way every frame does, after them. `window` lets it through though
+    // one is out, as `wanting` holds that one.
     for w in windows {
-        kick(app, w);
+        if let Some(window) = app.widget_mut::<Window>(w) {
+            window.reopen();
+        }
+        app.signal(RequestFrame(w));
     }
     if drain {
         app.emit(Drained, Vec::new());

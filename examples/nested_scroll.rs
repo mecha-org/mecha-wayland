@@ -66,6 +66,7 @@ impl Widget for Shell {
             exclusive_zone: -1,
             namespace: "nested_scroll".into(),
             keyboard_interactivity: KeyboardInteractivity::None,
+            shell_role: None,
         });
         let win = s.spawn_with(
             b.root,

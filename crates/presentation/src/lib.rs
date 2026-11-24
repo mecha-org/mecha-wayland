@@ -579,9 +579,9 @@ impl Surfaces {
         self.entries.get(&window).is_some_and(|e| e.configured)
     }
 
-    /// The window that owns `surface`, if any. `seat.rs`'s pointer/touch
-    /// reducer needs no other part of an entry.
-    pub(crate) fn window_of(&self, surface: ObjectId) -> Option<NodeId> {
+    /// The window that owns `surface`, if any: for whatever gets surface
+    /// focus events, like `seat.rs`'s pointer/touch reducer.
+    pub fn window_of(&self, surface: ObjectId) -> Option<NodeId> {
         self.owner.get(&surface).copied()
     }
 

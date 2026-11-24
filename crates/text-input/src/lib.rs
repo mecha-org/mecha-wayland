@@ -32,7 +32,12 @@
 //!   compositor's business: a `Leave` only resets (the compositor
 //!   ignores our requests until the next `Enter` anyway) — and, not
 //!   being double-buffered, clears the widget's preedit immediately —
-//!   and that `Enter` re-enables for whichever widget is still focused.
+//!   and an `Enter` re-enables for the widget still focused if it is in
+//!   the entered surface's window, and blurs it if it is in another: a
+//!   field in a window the user left, or one now hidden, does not take
+//!   the input method from the window they went to. Without
+//!   presentation's `Surfaces` there is no telling which window a
+//!   surface is, and every `Enter` re-enables.
 //! - An edit is everything one `done` carries. The `preedit_string`,
 //!   `commit_string` and `delete_surrounding_text` events since the last
 //!   `done` accumulate in [`TextInput`]; the `done` emits one
@@ -91,8 +96,10 @@
 
 use app::prelude::*;
 use interactivity::{KeyboardFocus, Press};
+use presentation::Surfaces;
 use wayland::prelude::*;
 use widgets::{ContentHint, ContentPurpose, Input, InputEdit, InputFocus};
+use window::InWindow;
 
 pub mod prelude {
     pub use crate::{TextInput, TextInputModule};
@@ -371,19 +378,36 @@ fn report(app: &mut App, w: NodeId, cause: ZwpTextInputV3ChangeCause) {
     ti.input.commit(&mut wl);
 }
 
+/// Whether `w` is in the window that owns `surface`. True without
+/// presentation's `Surfaces`, which alone knows a surface's window.
+fn in_window_of(app: &App, w: NodeId, surface: ObjectId) -> bool {
+    if !app.has_resource::<Surfaces>() {
+        return true;
+    }
+    app.component::<InWindow>(w)
+        .and_then(|i| i.0)
+        .is_some_and(|window| app.resource::<Surfaces>().window_of(surface) == Some(window))
+}
+
 /// The protocol's events. The edit events accumulate; `done` hands them
 /// to the focused widget as one `InputEdit`.
 fn on_text_input(app: &mut App, e: &ZwpTextInputV3Event) {
     match e {
-        ZwpTextInputV3Event::Enter { .. } => {
+        ZwpTextInputV3Event::Enter { surface, .. } => {
             let w = {
                 let mut ti = app.resource_mut::<TextInput>();
                 ti.entered = true;
                 ti.pending = None;
                 ti.focused.filter(|_| !ti.enabled)
             };
-            if let Some(w) = w {
+            let Some(w) = w else {
+                return;
+            };
+            if in_window_of(app, w, surface.id()) {
                 focus(app, w);
+            } else {
+                // Through the widget's own handler, as any move off it.
+                app.emit(InputFocus { focused: false }, w);
             }
         }
         ZwpTextInputV3Event::Leave { .. } => {

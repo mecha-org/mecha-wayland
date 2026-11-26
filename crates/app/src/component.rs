@@ -109,6 +109,14 @@ impl<C: Component> Column<C> {
             })
     }
 
+    /// Whether a write is waiting for the drain.
+    pub fn has_changes(&self) -> bool {
+        let list = self.list.take();
+        let changed = !list.is_empty();
+        self.list.set(list);
+        changed
+    }
+
     /// Drain the changed list. See [`Changed`].
     pub fn take_changed<'a>(&'a mut self, slots: &'a Slots) -> Changed<'a> {
         Changed {

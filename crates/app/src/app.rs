@@ -42,6 +42,10 @@ pub struct App {
     events: VecDeque<Job>,
     /// Signals wait here. One runs per round of `flush`.
     signals: VecDeque<Job>,
+    /// What [`App::has_pending_work`] asks: one check per component, one
+    /// per resource (counting only while a system listens for it), and the
+    /// ones modules add with [`App::pending_check`].
+    pending: Vec<fn(&App) -> bool>,
     /// Set by a module that owns the loop. `None` means the default
     /// runner, which ticks forever.
     runner: Option<fn(App)>,
@@ -65,6 +69,7 @@ impl App {
             handlers: HandlerColumns::new(),
             events: VecDeque::new(),
             signals: VecDeque::new(),
+            pending: Vec::new(),
             runner: None,
         };
         let column = app.widgets.column::<Root>(0);
@@ -334,6 +339,7 @@ impl App {
     /// If `C` is already registered.
     pub fn register_component<C: Component>(&mut self) -> &mut Self {
         self.components.register::<C>(self.slots.len());
+        self.pending.push(component_pending::<C>);
         self.system::<PostTick>(drain_changed::<C>)
     }
 
@@ -478,6 +484,7 @@ impl App {
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> Option<R> {
         let old = self.resources.insert(value);
         if old.is_none() {
+            self.pending.push(resource_pending::<R>);
             self.system::<PostTick>(drain_resource_changed::<R>);
         }
         old
@@ -490,6 +497,7 @@ impl App {
     /// [`App::insert_resource`] when it inserts.
     pub fn init_resource<R: Resource + Default>(&mut self) -> &mut Self {
         if self.resources.init::<R>() {
+            self.pending.push(resource_pending::<R>);
             self.system::<PostTick>(drain_resource_changed::<R>);
         }
         self
@@ -606,6 +614,24 @@ impl App {
 
     // ── tick and runner ──────────────────────────────────────────────────
 
+    /// Whether work is left for another tick: a component written since
+    /// its drain, a resource written since its drain that a system
+    /// listens for, or anything a [`App::pending_check`] reports. A
+    /// runner ticks again rather than wait while this holds, so work that
+    /// comes after its drain or its flush in one tick is not left until
+    /// the next wake.
+    pub fn has_pending_work(&self) -> bool {
+        self.pending.iter().any(|pending| pending(self))
+    }
+
+    /// Have [`App::has_pending_work`] also ask `pending`: for a module
+    /// whose deferred work is outside the component and resource
+    /// records, such as requests buffered but not yet sent.
+    pub fn pending_check(&mut self, pending: fn(&App) -> bool) -> &mut Self {
+        self.pending.push(pending);
+        self
+    }
+
     /// One step of the loop: queue [`Tick`], queue [`PostTick`], flush.
     /// `Tick`'s systems run, then everything they caused, then `PostTick`'s
     /// systems, then everything those caused.
@@ -691,6 +717,17 @@ fn drain_changed<C: Component>(app: &mut App, _: &PostTick) {
     if !ids.is_empty() {
         app.emit(OnChanged::<C>::new(), ids);
     }
+}
+
+/// Whether `C` was written since its drain.
+fn component_pending<C: Component>(app: &App) -> bool {
+    app.components.column::<C>().has_changes()
+}
+
+/// Whether `R` was written since its drain and a system listens for it.
+/// Unheard, its drain delivers nothing, so the write leaves no work.
+fn resource_pending<R: Resource>(app: &App) -> bool {
+    app.systems.has::<OnChanged<R>>() && app.resources.is_changed::<R>()
 }
 
 /// The `PostTick` system behind `OnChanged<R>`: clear the record and, if

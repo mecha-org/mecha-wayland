@@ -27,7 +27,8 @@
     <description summary="more about the toplevels a shell lists">
       This interface lets a privileged shell client learn more about the
       toplevels zwlr_foreign_toplevel_manager_v1 lists: which process each
-      belongs to and whether it is a modal dialog.
+      belongs to, whether it is a modal dialog and which of the client's
+      activation tokens it was activated with.
     </description>
 
     <request name="destroy" type="destructor">
@@ -72,6 +73,17 @@
         input to its parent, as xdg_dialog_v1.set_modal asks.
       </description>
       <arg name="modal" type="uint" summary="1 if modal, 0 if not"/>
+    </event>
+
+    <event name="activation_token">
+      <description summary="the token the toplevel was activated with">
+        The xdg_activation_v1 token the toplevel last asked to be activated
+        with, when this client is the one that got that token. Sent at
+        creation if there is one, and whenever the toplevel asks with
+        another such token. A launcher that passes a token to an app it
+        starts learns by it which toplevel the app opened.
+      </description>
+      <arg name="token" type="string" summary="the activation token"/>
     </event>
   </interface>
 </protocol>

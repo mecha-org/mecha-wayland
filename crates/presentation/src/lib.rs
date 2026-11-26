@@ -9,9 +9,11 @@
 //!   [`Role::Lock`] (see [`lock`]). The role is read once.
 //! - A toplevel or layer surface is committed empty at once, for its first
 //!   configure; a lock surface is not (see [`lock`]).
-//! - The shell's configure is acked and settled: the shell's size where
-//!   it gave one, else the window's `Layout`, else [`DEFAULT_SIZE`]; the
-//!   window hears `Resized`. `preferred_buffer_scale` becomes
+//! - Of the configures a window gets between ticks, only the last is acked
+//!   and settled, at the next `Tick`, before that tick's layout: at the
+//!   shell's size where it gave one, else the window's `Layout`, else
+//!   [`DEFAULT_SIZE`]; the window hears `Resized`, and its frame draws the
+//!   new layout. `preferred_buffer_scale` becomes
 //!   `ScaleFactorChanged`; `close` and `closed` become `CloseRequested`,
 //!   which this module only reports.
 //! - The frame loop: `FrameRequested` marks the window wanting; when it
@@ -26,14 +28,19 @@
 //! - A configure settles the size and, when the device size changed,
 //!   replaces the two slots and drops the outstanding callback (a hidden
 //!   surface may never get its `done`, and the new size must still be
-//!   committed), and always kicks. It must: `window` lets one
+//!   committed), and always asks for a frame. It must: `window` lets one
 //!   frame request stand until a `Frame` answers it, so a configure that
-//!   declined would strand the request the window's own content raised
-//!   before the compositor ever configured it, and nothing would ever
-//!   draw. A `Frame` whose queue is still the old size draws nothing and
-//!   wants again; the layout the `Resized` causes then opens the next
-//!   cycle, which draws at the new size. A preferred scale change
-//!   replaces the slots and kicks.
+//!   asked for none would strand the request the window's own content
+//!   raised before the compositor ever configured it, and nothing would
+//!   ever draw. The window's pending request is let through for it
+//!   (`Window::reopen`), as `wanting` holds it already. A new size asks
+//!   through the relayout the `Resized` causes, after it; the same size
+//!   asks at once. A preferred scale change replaces the slots and kicks.
+//! - A layer window is hidden and shown with [`Surfaces::set_hidden`]: in
+//!   place where the compositor offers shell surfaces, else by unmapping.
+//!   Its layer state (layer, anchors, zone, keyboard interactivity, size)
+//!   goes to the compositor as it is set, except while unmapped, when the
+//!   compositor has dropped it; the show then sends all of it again.
 //! - The atlas is uploaded on `OnChanged<Atlas>`, which the core queues
 //!   at `PostTick` ahead of any frame request the same tick raises.
 //! - A rescale rebuilds the atlas, and every tile a displayed paint holds
@@ -124,9 +131,18 @@ pub mod prelude {
     pub use crate::{
         Anchor, BUFFERS, DEFAULT_SIZE, KeyboardInteractivity, Layer, LayerRole, LockState,
         PresentationModule, Role, SessionLock, SessionLockFinished, SessionLocked, ShellRole,
-        Surfaces,
+        ShowingHome, Surfaces,
     };
 }
+
+/// Emitted at a layer window that asked to show home
+/// ([`Surfaces::set_showing_home`]) when its output starts or stops
+/// showing it, as asked or by itself: an app came to the front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowingHome {
+    pub showing: bool,
+}
+impl Event for ShowingHome {}
 
 /// The size of a toplevel the compositor leaves to us when the window
 /// has no content to size it.
@@ -187,8 +203,8 @@ struct Entry {
     wanting: bool,
     slots: Option<Slots>,
     frames: u64,
-    /// Hidden by [`Surfaces::set_mapped`]: configures are acked and
-    /// settled but nothing is drawn.
+    /// Hidden by [`Surfaces::set_hidden`] or [`Surfaces::set_mapped`]:
+    /// configures are acked and settled but nothing is drawn.
     hidden: bool,
     /// A layer window's role and requested size: the compositor resets
     /// the layer state when the surface is unmapped, so a remap sends it
@@ -199,6 +215,47 @@ struct Entry {
     /// [`Surfaces::request_commit`]: the next `Frame` commits even with
     /// nothing to draw.
     commit_wanted: bool,
+    /// The shell's latest configure, until the next `Tick` settles it.
+    configure: Option<Configure>,
+    /// A buffer is attached at the compositor: the surface is mapped there.
+    attached: bool,
+    /// [`Surfaces::set_mapped`] unmapped the surface, which reset the
+    /// compositor's state: the next show sends a fresh initial commit.
+    unmapped: bool,
+    /// How a layer window hides in place, when the compositor offers shell
+    /// surfaces.
+    in_place: Option<InPlace>,
+    /// Layer state was set while it could not go ([`Entry::send_or_hold`]):
+    /// the show sends it.
+    layer_held: bool,
+}
+
+/// A layer window's `mx_shell_surface_v1`: its role, and the way
+/// [`Surfaces::set_hidden`] hides it in place.
+struct InPlace {
+    shell_surface: MxShellSurfaceV1,
+    /// [`Surfaces::set_hidden`] showed it, and the next frame's commit
+    /// carries that.
+    show_pending: bool,
+    /// Its output shows home, as last asked or told.
+    showing_home: bool,
+}
+
+impl InPlace {
+    /// Send the show the window waits for, if it does, for the commit that
+    /// follows.
+    fn send_pending_show(&mut self, wl: &mut Wayland) {
+        if std::mem::take(&mut self.show_pending) {
+            self.shell_surface.set_hidden(wl, 0);
+        }
+    }
+}
+
+/// A configure from the shell, held until the next `Tick` settles it.
+#[derive(Debug, Clone, Copy)]
+struct Configure {
+    serial: u32,
+    size: (i32, i32),
 }
 
 impl Entry {
@@ -206,6 +263,38 @@ impl Entry {
     fn drop_callback(&mut self, owner: &mut HashMap<ObjectId, NodeId>) {
         if let Some(callback) = self.callback.take() {
             owner.remove(&callback.id());
+        }
+    }
+
+    /// Send layer state just set, with `send`, and commit: while shown, and
+    /// while hidden in place, where the compositor keeps it and a hidden
+    /// surface's counts for nothing until the show. While hidden by
+    /// unmapping, where the compositor dropped it, or, before the first
+    /// buffer, would count it for a surface not on screen, it is held, and
+    /// the show sends it ([`Entry::send_layer_state`]).
+    fn send_or_hold(
+        &mut self,
+        wl: &mut Wayland,
+        send: impl FnOnce(&ZwlrLayerSurfaceV1, &mut Wayland),
+    ) {
+        match self.shell {
+            Shell::Layer(ls) if !self.hidden || self.in_place.is_some() => {
+                send(&ls, wl);
+                self.surface.commit(wl);
+            }
+            Shell::Layer(_) => self.layer_held = true,
+            _ => {}
+        }
+    }
+
+    /// Send all of a layer window's state, for the commit that follows.
+    fn send_layer_state(&self, wl: &mut Wayland) {
+        if let (Shell::Layer(ls), Some((l, size))) = (&self.shell, &self.layer) {
+            ls.set_layer(wl, l.layer);
+            ls.set_anchor(wl, l.anchor);
+            ls.set_exclusive_zone(wl, l.exclusive_zone);
+            ls.set_keyboard_interactivity(wl, l.keyboard_interactivity);
+            ls.set_size(wl, size.0, size.1);
         }
     }
 }
@@ -218,8 +307,10 @@ pub struct Surfaces {
     pending_hidden: HashSet<NodeId>,
     /// The layer wanted for windows whose entry does not exist yet.
     pending_layer: HashMap<NodeId, Layer>,
-    /// Windows shown while still configured; `kick` needs the `App`, so
-    /// `on_post_tick` kicks them.
+    /// Windows asked to show home before `on_spawned` made their entry.
+    pending_showing_home: HashMap<NodeId, bool>,
+    /// Windows shown without a fresh initial commit: their frame is asked
+    /// for at `on_post_tick`, which has the `App`.
     to_kick: Vec<NodeId>,
     rescale: Rescale,
     owner: HashMap<ObjectId, NodeId>,
@@ -318,8 +409,9 @@ impl Surfaces {
     /// new width/height. `0` defers to the compositor on that axis (e.g. a
     /// width of `0` with left+right anchored stretches full-width). The
     /// compositor answers with a `Configure`; `settle` then reports `Resized`
-    /// and the window's layout updates to the new size. No-op for a toplevel
-    /// or an unknown window.
+    /// and the window's layout updates to the new size. While hidden by
+    /// unmapping, the size is only kept, for the show to send. No-op for a
+    /// toplevel or an unknown window.
     ///
     /// This is the dynamic-resize path that [`on_spawned`](#) only opens at
     /// surface creation: call it whenever the window's desired size changes
@@ -335,41 +427,35 @@ impl Surfaces {
         let Some(entry) = self.entries.get_mut(&window) else {
             return;
         };
-        let Shell::Layer(ls) = &entry.shell else {
+        let Some((_, size)) = entry.layer.as_mut() else {
             return;
         };
-        let ls = *ls;
-        let surface = entry.surface;
-        if let Some((_, size)) = entry.layer.as_mut() {
-            *size = (width, height);
-        }
-        ls.set_size(wl, width, height);
-        surface.commit(wl);
+        *size = (width, height);
+        entry.send_or_hold(wl, |ls, wl| ls.set_size(wl, width, height));
     }
 
     /// Map or unmap a layer window without despawning it, so its place in
-    /// the compositor's stacking is kept. No-op for a toplevel.
+    /// the compositor's stacking is kept: how [`Surfaces::set_hidden`] hides
+    /// one where the compositor offers no shell surfaces. No-op for a
+    /// toplevel or an unknown window.
     ///
-    /// Hiding a surface that has shown a buffer attaches null and
-    /// commits, which unmaps it and resets the compositor's configure
-    /// state; the outstanding frame callback is dropped and every slot
-    /// forgets what it drew. While hidden, configures are acked and
-    /// settled but nothing is drawn. Showing it again commits empty so
-    /// the compositor sends a fresh initial configure, whose settle draws
-    /// the whole window. The unmap also resets the compositor's layer
-    /// state (layer, anchor, zone, keyboard, size), so the show sends it again
-    /// first. A configure that arrives while hidden does not
-    /// change this: it was sent before the unmap. A window hidden before
-    /// its first buffer is kicked at the end of the tick (`PostTick`).
-    /// Hiding a window whose entry does not exist yet (it was spawned this
-    /// tick) makes the entry start hidden.
-    pub fn set_mapped(&mut self, window: NodeId, mapped: bool, wl: &mut Wayland) {
+    /// Hiding a surface with a buffer attached attaches null and commits,
+    /// which unmaps it and resets the compositor's configure state; the
+    /// outstanding frame callback is dropped and every slot forgets what
+    /// it drew. While hidden, configures are acked and settled but nothing
+    /// is drawn, and layer state set is only kept. Showing it again after
+    /// such an unmap commits empty so the compositor sends a fresh initial
+    /// configure, whose settle draws the whole window. The unmap also resets
+    /// the compositor's layer state (layer, anchor, zone, keyboard, size),
+    /// so the show sends all of it first. A configure that arrives while
+    /// hidden does not change this: it was sent before the unmap. A window
+    /// hidden with no buffer attached (before its first, or shown and
+    /// hidden again before its configure came) was not unmapped: its show
+    /// sends the layer state kept meanwhile, and its frame is asked for at
+    /// the end of the tick (`PostTick`), drawing at the configure it has or
+    /// gets.
+    fn set_mapped(&mut self, window: NodeId, mapped: bool, wl: &mut Wayland) {
         let Some(entry) = self.entries.get_mut(&window) else {
-            if mapped {
-                self.pending_hidden.remove(&window);
-            } else {
-                self.pending_hidden.insert(window);
-            }
             return;
         };
         if !matches!(entry.shell, Shell::Layer(_)) || entry.hidden == !mapped {
@@ -377,9 +463,17 @@ impl Surfaces {
         }
         entry.hidden = !mapped;
         if !mapped {
-            if entry.frames > 0 {
+            // Only a surface with a buffer attached is unmapped by a null
+            // one: one shown and hidden again before its configure came has
+            // none, and the compositor keeps its state.
+            if entry.attached {
                 entry.surface.attach(wl, None, 0, 0);
                 entry.surface.commit(wl);
+                entry.attached = false;
+                entry.unmapped = true;
+                // An ack after this unmap may name a serial the shell has
+                // dropped; the next initial commit gets a fresh configure.
+                entry.configure = None;
                 entry.configured = false;
                 entry.drop_callback(&mut self.owner);
                 if let Some(slots) = entry.slots.as_mut() {
@@ -389,74 +483,153 @@ impl Surfaces {
                 }
             }
         } else {
-            entry.wanting = true;
-            // Every hide of a drawn window attached null, so the window
-            // needs a fresh initial commit even if a configure sent before
-            // the unmap arrived while hidden and marked it configured.
-            if entry.frames > 0 {
+            let held = std::mem::take(&mut entry.layer_held);
+            // An unmap reset the compositor's state, so the window needs all
+            // of it again and a fresh initial commit, even if a configure sent
+            // before the unmap arrived while hidden and marked it configured,
+            // or is still held. Without an unmap, only state kept while
+            // hidden goes, and the frame is asked for.
+            if std::mem::take(&mut entry.unmapped) {
+                entry.configure = None;
                 entry.configured = false;
-                if let (Shell::Layer(ls), Some((l, size))) = (&entry.shell, &entry.layer) {
-                    ls.set_layer(wl, l.layer);
-                    ls.set_anchor(wl, l.anchor);
-                    ls.set_exclusive_zone(wl, l.exclusive_zone);
-                    ls.set_keyboard_interactivity(wl, l.keyboard_interactivity);
-                    ls.set_size(wl, size.0, size.1);
-                }
+                entry.send_layer_state(wl);
                 entry.surface.commit(wl);
             } else {
+                if held {
+                    entry.send_layer_state(wl);
+                    entry.surface.commit(wl);
+                }
                 self.to_kick.push(window);
             }
         }
     }
 
-    /// Move a layer window to `layer` without unmapping it: sends
-    /// `zwlr_layer_surface_v1.set_layer` and commits. This is the way to
-    /// hide a layer window without [`Surfaces::set_mapped`]: park it in
-    /// `Layer::Background` (under whatever covers the screen) and move it
-    /// back to its own layer to show it. The surface stays mapped, so
-    /// nothing is torn down and no new configure is needed, and the
-    /// compositor keeps the window's place in its stacking order.
+    /// Hide or show a layer window, keeping its surface: with
+    /// `mx_shell_surface_v1.set_hidden` where the compositor offers shell
+    /// surfaces, else by unmapping it: attaching null, which resets the
+    /// compositor's state for it, so its show waits for a fresh configure
+    /// and draws the whole window.
     ///
-    /// The same layer sends nothing. A window whose entry does not exist
-    /// yet (spawned this tick) starts in `layer` instead of the layer in
-    /// its [`Role`]. No-op for a toplevel.
+    /// Hidden in place, the window keeps its buffer, configure state and
+    /// slots, and the compositor neither shows it, gives it input nor counts
+    /// its exclusive zone. The hide is sent and committed at once, and the
+    /// outstanding frame callback is dropped: the compositor answers none
+    /// while the window is hidden, and the show must not wait on one. Layer
+    /// state set while hidden goes at once: the compositor keeps it and
+    /// counts it from the show. The show is not sent at once: the next frame,
+    /// asked for at the next `PostTick`, carries it with the frame's buffer,
+    /// in one commit. A commit with the show before that would show the
+    /// buffer the window was hidden with, as the compositor applies one that
+    /// attaches a fresh buffer only once that is drawn. Its slots kept what
+    /// they drew, so the frame redraws only what changed.
+    ///
+    /// Hiding a window whose entry does not exist yet (it was spawned this
+    /// tick) makes the entry start hidden. No-op for a toplevel.
+    pub fn set_hidden(&mut self, window: NodeId, hidden: bool, wl: &mut Wayland) {
+        let Some(entry) = self.entries.get_mut(&window) else {
+            if hidden {
+                self.pending_hidden.insert(window);
+            } else {
+                self.pending_hidden.remove(&window);
+            }
+            return;
+        };
+        let Some(in_place) = entry.in_place.as_mut() else {
+            self.set_mapped(window, !hidden, wl);
+            return;
+        };
+        if entry.hidden == hidden {
+            return;
+        }
+        entry.hidden = hidden;
+        if !hidden {
+            in_place.show_pending = true;
+            entry.commit_wanted = true;
+            // Not wanting yet: the frame asked for at `PostTick` comes after
+            // this tick's layout, where an earlier `kick` (a buffer released
+            // meanwhile) would draw what it has yet to update.
+            self.to_kick.push(window);
+            return;
+        }
+        // Hidden again before the frame that would show it: nothing was sent.
+        if !std::mem::take(&mut in_place.show_pending) {
+            in_place.shell_surface.set_hidden(wl, 1);
+            entry.surface.commit(wl);
+            entry.drop_callback(&mut self.owner);
+        }
+    }
+
+    /// Show home on the output layer window `window` is on, or stop: with
+    /// `mx_shell_surface_v1.set_showing_home`, which hides the toplevels
+    /// covering what the shell shows below them, `window` among it. Not
+    /// double-buffered: it goes at once. The compositor also stops by itself
+    /// when an app comes to the front; [`ShowingHome`] is emitted at
+    /// `window` whenever it starts or stops.
+    ///
+    /// Asking for the state the output is in, as last asked or told, sends
+    /// nothing. Asking before the window's entry exists (it was spawned this
+    /// tick) asks once it does. No-op for a toplevel, and where the
+    /// compositor offers no shell surfaces.
+    pub fn set_showing_home(&mut self, window: NodeId, showing: bool, wl: &mut Wayland) {
+        let Some(entry) = self.entries.get_mut(&window) else {
+            self.pending_showing_home.insert(window, showing);
+            return;
+        };
+        let Some(in_place) = entry.in_place.as_mut() else {
+            return;
+        };
+        if in_place.showing_home != showing {
+            in_place.showing_home = showing;
+            in_place
+                .shell_surface
+                .set_showing_home(wl, u32::from(showing));
+        }
+    }
+
+    /// Move a layer window to `layer`: sends
+    /// `zwlr_layer_surface_v1.set_layer` and commits; while hidden by
+    /// unmapping, only kept for the show. The same layer sends nothing. A
+    /// window whose entry does not exist yet (spawned this tick) starts in
+    /// `layer` instead of the layer in its [`Role`]. No-op for a toplevel.
     pub fn set_layer(&mut self, window: NodeId, layer: Layer, wl: &mut Wayland) {
         let Some(entry) = self.entries.get_mut(&window) else {
             self.pending_layer.insert(window, layer);
             return;
         };
-        let (Shell::Layer(ls), Some((role, _))) = (&entry.shell, entry.layer.as_mut()) else {
+        let Some((role, _)) = entry.layer.as_mut() else {
             return;
         };
         if role.layer == layer {
             return;
         }
         role.layer = layer;
-        ls.set_layer(wl, layer);
-        entry.surface.commit(wl);
+        entry.send_or_hold(wl, |ls, wl| ls.set_layer(wl, layer));
     }
 
     /// Change a layer window's exclusive zone: sends
-    /// `zwlr_layer_surface_v1.set_exclusive_zone` and commits. The zone is
-    /// kept, so a remap after [`Surfaces::set_mapped`] sends it again;
-    /// while hidden it is only kept. The same zone sends nothing. No-op
-    /// for a toplevel or an unknown window.
+    /// `zwlr_layer_surface_v1.set_exclusive_zone` and commits; while hidden
+    /// by unmapping, only kept for the show. Hidden in place, it goes at
+    /// once, and the compositor counts it from the show. The same zone sends
+    /// nothing. No-op for a toplevel or an unknown window.
     pub fn set_exclusive_zone(&mut self, window: NodeId, zone: i32, wl: &mut Wayland) {
         let Some(entry) = self.entries.get_mut(&window) else {
             return;
         };
-        let (Shell::Layer(ls), Some((role, _))) = (&entry.shell, entry.layer.as_mut()) else {
+        let Some((role, _)) = entry.layer.as_mut() else {
             return;
         };
         if role.exclusive_zone == zone {
             return;
         }
         role.exclusive_zone = zone;
-        if entry.hidden {
-            return;
-        }
-        ls.set_exclusive_zone(wl, zone);
-        entry.surface.commit(wl);
+        entry.send_or_hold(wl, |ls, wl| ls.set_exclusive_zone(wl, zone));
+    }
+
+    /// Whether [`Surfaces::set_hidden`] hides layer windows in place, as the
+    /// compositor offers shell surfaces, rather than unmapping them. Hidden
+    /// in place, a surface keeps its layer state, anchors included.
+    pub fn hides_in_place(&self) -> bool {
+        self.shell_surface_mgr.is_some()
     }
 
     /// The current exclusive zone of a known layer window; `None` for a
@@ -470,10 +643,10 @@ impl Surfaces {
     }
 
     /// Change a layer window's keyboard interactivity: sends
-    /// `zwlr_layer_surface_v1.set_keyboard_interactivity` and commits. The
-    /// value is kept, so a remap after [`Surfaces::set_mapped`] sends it
-    /// again; while hidden it is only kept. The same value sends nothing.
-    /// No-op for a toplevel or an unknown window.
+    /// `zwlr_layer_surface_v1.set_keyboard_interactivity` and commits; while
+    /// hidden by unmapping, only kept for the show. Hidden in place, it goes
+    /// at once, and the compositor counts it from the show. The same value
+    /// sends nothing. No-op for a toplevel or an unknown window.
     pub fn set_keyboard_interactivity(
         &mut self,
         window: NodeId,
@@ -483,18 +656,14 @@ impl Surfaces {
         let Some(entry) = self.entries.get_mut(&window) else {
             return;
         };
-        let (Shell::Layer(ls), Some((role, _))) = (&entry.shell, entry.layer.as_mut()) else {
+        let Some((role, _)) = entry.layer.as_mut() else {
             return;
         };
         if role.keyboard_interactivity == ki {
             return;
         }
         role.keyboard_interactivity = ki;
-        if entry.hidden {
-            return;
-        }
-        ls.set_keyboard_interactivity(wl, ki);
-        entry.surface.commit(wl);
+        entry.send_or_hold(wl, |ls, wl| ls.set_keyboard_interactivity(wl, ki));
     }
 
     /// The current keyboard interactivity of a known layer window; `None`
@@ -543,7 +712,7 @@ impl Surfaces {
         surface.commit(wl);
     }
 
-    /// Whether `window` has an entry and is not hidden by [`Surfaces::set_mapped`].
+    /// Whether `window` has an entry and is not hidden by [`Surfaces::set_hidden`].
     pub fn is_mapped(&self, window: NodeId) -> bool {
         self.entries.get(&window).is_some_and(|e| !e.hidden)
     }
@@ -552,9 +721,9 @@ impl Surfaces {
         self.entries.get(&window).is_some_and(|e| e.configured)
     }
 
-    /// The window that owns `surface`, if any. `seat.rs`'s pointer/touch
-    /// reducer needs no other part of an entry.
-    pub(crate) fn window_of(&self, surface: ObjectId) -> Option<NodeId> {
+    /// The window that owns `surface`, if any: for whatever gets surface
+    /// focus events, like `seat.rs`'s pointer/touch reducer.
+    pub fn window_of(&self, surface: ObjectId) -> Option<NodeId> {
         self.owner.get(&surface).copied()
     }
 
@@ -634,6 +803,7 @@ impl Module for PresentationModule {
             entries: HashMap::new(),
             pending_hidden: HashSet::new(),
             pending_layer: HashMap::new(),
+            pending_showing_home: HashMap::new(),
             to_kick: Vec::new(),
             rescale: Rescale::Settled,
             owner: HashMap::new(),
@@ -659,6 +829,8 @@ impl Module for PresentationModule {
             .system(on_xdg_surface)
             .system(on_toplevel)
             .system(on_layer_surface)
+            .system(on_shell_surface)
+            .system(on_settle)
             .system(on_surface)
             .system(on_frame_requested)
             .system(on_atlas_changed)
@@ -743,6 +915,8 @@ fn on_spawned(app: &mut App, s: &Spawned) {
         }
         Role::Toplevel | Role::Lock(_) => None,
     };
+    let hidden = surfaces.pending_hidden.remove(&s.id) && matches!(role, Role::Layer(_));
+    let mut in_place = None;
     let shell = match role {
         Role::Toplevel => {
             let xdg = wm_base.get_xdg_surface(&mut wl, surface);
@@ -759,8 +933,25 @@ fn on_spawned(app: &mut App, s: &Spawned) {
                 "presentation: a Role::Layer window needs zwlr_layer_shell_v1, which the compositor does not offer",
             );
             let ls = shell.get_layer_surface(&mut wl, surface, None, l.layer, &l.namespace);
-            if let (Some(mgr), Some(shell_role)) = (surfaces.shell_surface_mgr, l.shell_role) {
-                mgr.set_role(&mut wl, ls, shell_role);
+            // Every layer window gets one, with or without a role: it is
+            // also how the window hides in place. Both apply on the
+            // initial commit below.
+            if let Some(mgr) = surfaces.shell_surface_mgr {
+                let role = l.shell_role.unwrap_or(ShellRole::None);
+                let shell_surface = mgr.get_shell_surface(&mut wl, ls, role);
+                if hidden {
+                    shell_surface.set_hidden(&mut wl, 1);
+                }
+                let showing_home = surfaces.pending_showing_home.remove(&s.id) == Some(true);
+                if showing_home {
+                    shell_surface.set_showing_home(&mut wl, 1);
+                }
+                surfaces.owner.insert(shell_surface.id(), s.id);
+                in_place = Some(InPlace {
+                    shell_surface,
+                    show_pending: false,
+                    showing_home,
+                });
             }
             ls.set_anchor(&mut wl, l.anchor);
             ls.set_exclusive_zone(&mut wl, l.exclusive_zone);
@@ -784,7 +975,6 @@ fn on_spawned(app: &mut App, s: &Spawned) {
     if !matches!(shell, Shell::Lock(_)) {
         surface.commit(&mut wl);
     }
-    let hidden = surfaces.pending_hidden.remove(&s.id) && matches!(shell, Shell::Layer(_));
     surfaces.owner.insert(surface.id(), s.id);
     surfaces.entries.insert(
         s.id,
@@ -804,6 +994,11 @@ fn on_spawned(app: &mut App, s: &Spawned) {
             layer,
             transparent,
             commit_wanted: false,
+            configure: None,
+            attached: false,
+            unmapped: false,
+            in_place,
+            layer_held: false,
         },
     );
 }
@@ -858,7 +1053,7 @@ fn replace_slots(
 }
 
 /// The shell configured `w`: settle the size, make slots if the device
-/// size changed, report `Resized`, and kick.
+/// size changed, report `Resized`, and have a frame follow.
 ///
 /// A new device size also drops the outstanding frame callback: the
 /// configure must be answered with a buffer of the new size, and a
@@ -867,14 +1062,13 @@ fn replace_slots(
 /// the window drawn, and hit-tested, at its old size forever. A dropped
 /// callback that fires after all has no owner and is ignored.
 ///
-/// The kick is unconditional
-/// because `window` swallows every `RequestFrame` while one is pending
-/// and only a `Frame` clears that bit: the request a window raises for
-/// its own content arrives before the first configure, so a configure
-/// that declined to kick would leave it pending forever. When the size
-/// the queue was built at is not yet the slots', `on_frame` declines to
-/// draw and wants again, and the relayout this `Resized` causes requests
-/// the frame that fits.
+/// A frame always follows, and only one. A new size relayouts, and that
+/// relayout's own `RequestFrame` asks for the frame, after everything the
+/// layout change set off has run; an unchanged size asks for it here.
+/// `window` swallows every `RequestFrame` while one is pending, and a
+/// window often is (the request it raised for its own content comes
+/// before its first configure): its pending bit is cleared, as `wanting`
+/// already holds that request, so the next one gets through.
 fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
     let layout = app
         .component::<ComputedLayout>(w)
@@ -921,12 +1115,18 @@ fn settle(app: &mut App, w: NodeId, proposed: (i32, i32)) {
         entry.wanting = true;
     }
     app.emit(Resized { size }, w);
-    kick(app, w);
+    // Its standing request is wanted already; the frame is asked for below.
+    if let Some(window) = app.widget_mut::<Window>(w) {
+        window.reopen();
+    }
+    if size == layout {
+        app.signal(RequestFrame(w));
+    }
 }
 
-/// The one decision: configured, no callback outstanding, a slot free
-/// and wanting gives `Frame(w)`. Otherwise the next configure, `done` or
-/// `release` kicks again.
+/// The one decision: configured, not hidden, no callback outstanding, a
+/// slot free and wanting gives `Frame(w)`. Otherwise the next request,
+/// `done`, `release` or show kicks again.
 fn kick(app: &mut App, w: NodeId) {
     let ready = app.resource::<Surfaces>().entries.get(&w).is_some_and(|e| {
         e.configured
@@ -973,30 +1173,40 @@ fn on_toplevel(app: &mut App, e: &XdgToplevelEvent) {
 
 fn on_xdg_surface(app: &mut App, e: &XdgSurfaceEvent) {
     let XdgSurfaceEvent::Configure { surface, serial } = e;
-    let found = {
-        let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.entry_of(surface.id()).map(|(w, entry)| {
-            surface.ack_configure(&mut wl, *serial);
-            (w, entry.proposed)
-        })
-    };
-    if let Some((w, proposed)) = found {
-        settle(app, w, proposed);
+    hold(app, surface.id(), *serial, None);
+}
+
+/// Hold a configure of ours for the next `Tick`, over any held. `None` is
+/// a toplevel's: its size came in the `xdg_toplevel.configure` before.
+fn hold(app: &mut App, role: ObjectId, serial: u32, size: Option<(u32, u32)>) {
+    let mut surfaces = app.resource_mut::<Surfaces>();
+    if let Some((_, entry)) = surfaces.entry_of(role) {
+        let size = size.map_or(entry.proposed, |(w, h)| (w as i32, h as i32));
+        entry.configure = Some(Configure { serial, size });
     }
 }
 
-/// A layer or lock surface's configure: if the role object is one of
-/// ours, `ack` it and settle its window at `size`.
-fn ack_and_settle(app: &mut App, role: ObjectId, size: (u32, u32), ack: impl FnOnce(&mut Wayland)) {
-    let found = {
+/// Ack and settle every held configure. Every shell protocol here lets a
+/// client ack only the latest of several. At `Tick`, before `PostTick`'s
+/// layout, so the frame a settle asks for draws the new layout.
+fn on_settle(app: &mut App, _: &Tick) {
+    let mut held = Vec::new();
+    {
         let (mut surfaces, mut wl) = app.query::<(ResMut<Surfaces>, ResMut<Wayland>)>();
-        surfaces.entry_of(role).map(|(w, _)| {
-            ack(&mut wl);
-            w
-        })
-    };
-    if let Some(w) = found {
-        settle(app, w, (size.0 as i32, size.1 as i32));
+        for (&w, entry) in &mut surfaces.entries {
+            let Some(Configure { serial, size }) = entry.configure.take() else {
+                continue;
+            };
+            match &entry.shell {
+                Shell::Toplevel { xdg, .. } => xdg.ack_configure(&mut wl, serial),
+                Shell::Layer(ls) => ls.ack_configure(&mut wl, serial),
+                Shell::Lock(ls) => ls.ack_configure(&mut wl, serial),
+            }
+            held.push((w, size));
+        }
+    }
+    for (w, size) in held {
+        settle(app, w, size);
     }
 }
 
@@ -1007,9 +1217,7 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
             serial,
             width,
             height,
-        } => ack_and_settle(app, layer_surface.id(), (*width, *height), |wl| {
-            layer_surface.ack_configure(wl, *serial)
-        }),
+        } => hold(app, layer_surface.id(), *serial, Some((*width, *height))),
         // FIXME: the compositor closes a layer surface when its output goes
         // away, or when there is none. Most windows ignore `CloseRequested`,
         // so they stay without a surface. Drop the dead surface but keep the
@@ -1027,6 +1235,31 @@ fn on_layer_surface(app: &mut App, e: &ZwlrLayerSurfaceV1Event) {
     }
 }
 
+/// The compositor says whether a window's output shows home: kept, and
+/// emitted at the window as [`ShowingHome`].
+fn on_shell_surface(app: &mut App, e: &MxShellSurfaceV1Event) {
+    let MxShellSurfaceV1Event::ShowingHome {
+        shell_surface,
+        showing,
+    } = e;
+    let showing = *showing != 0;
+    let window = {
+        let mut surfaces = app.resource_mut::<Surfaces>();
+        let Some(w) = surfaces.owner.get(&shell_surface.id()).copied() else {
+            return;
+        };
+        if let Some(in_place) = surfaces
+            .entries
+            .get_mut(&w)
+            .and_then(|e| e.in_place.as_mut())
+        {
+            in_place.showing_home = showing;
+        }
+        w
+    };
+    app.emit(ShowingHome { showing }, window);
+}
+
 fn on_lock_surface(app: &mut App, e: &ExtSessionLockSurfaceV1Event) {
     let ExtSessionLockSurfaceV1Event::Configure {
         session_lock_surface,
@@ -1034,9 +1267,12 @@ fn on_lock_surface(app: &mut App, e: &ExtSessionLockSurfaceV1Event) {
         width,
         height,
     } = e;
-    ack_and_settle(app, session_lock_surface.id(), (*width, *height), |wl| {
-        session_lock_surface.ack_configure(wl, *serial)
-    });
+    hold(
+        app,
+        session_lock_surface.id(),
+        *serial,
+        Some((*width, *height)),
+    );
 }
 
 fn on_frame_requested(app: &mut App, r: &FrameRequested) {
@@ -1153,6 +1389,9 @@ fn on_frame(app: &mut App, f: &Frame) {
         // Nothing to draw. A requested commit goes out bare: the current
         // buffer stays, and the compositor applies what was pending.
         if std::mem::take(&mut entry.commit_wanted) {
+            if let Some(in_place) = &mut entry.in_place {
+                in_place.send_pending_show(&mut wl);
+            }
             entry.surface.commit(&mut wl);
         }
         return;
@@ -1191,6 +1430,7 @@ fn on_frame(app: &mut App, f: &Frame) {
         entry.scale_sent = entry.scale;
     }
     entry.surface.attach(&mut wl, Some(slot.buffer), 0, 0);
+    entry.attached = true;
     // A shift moved everything in its area; a redraw changed its scissor.
     let shifted_area = shifted.map(|(sh, _)| [sh.area]);
     for &r in shifted_area.as_ref().map_or(&queue.scissor[..], |a| &a[..]) {
@@ -1200,6 +1440,10 @@ fn on_frame(app: &mut App, f: &Frame) {
     let callback = entry.surface.frame(&mut wl);
     s.owner.insert(callback.id(), w);
     entry.callback = Some(callback);
+    // A show goes with the buffer it shows.
+    if let Some(in_place) = &mut entry.in_place {
+        in_place.send_pending_show(&mut wl);
+    }
     entry.surface.commit(&mut wl);
     entry.commit_wanted = false;
     slot.held = true;
@@ -1235,8 +1479,8 @@ fn on_callback(app: &mut App, e: &WlCallbackEvent) {
     kick(app, w);
 }
 
-/// Kick the windows `set_mapped` showed while they were still configured,
-/// and after a rebuild queue [`Drained`] behind paint's drain.
+/// Ask frames for the windows `set_hidden` showed while they were still
+/// configured, and after a rebuild queue [`Drained`] behind paint's drain.
 fn on_post_tick(app: &mut App, _: &PostTick) {
     let (windows, drain) = {
         let mut surfaces = app.resource_mut::<Surfaces>();
@@ -1246,8 +1490,16 @@ fn on_post_tick(app: &mut App, _: &PostTick) {
         }
         (std::mem::take(&mut surfaces.to_kick), drain)
     };
+    // Asked for, not kicked: a `Frame` signalled here would run before the
+    // signals this tick's changes raise (animation's `Layout` copy among
+    // them), and draw what they have yet to update. A request takes the
+    // way every frame does, after them. `window` lets it through though
+    // one is out, as `wanting` holds that one.
     for w in windows {
-        kick(app, w);
+        if let Some(window) = app.widget_mut::<Window>(w) {
+            window.reopen();
+        }
+        app.signal(RequestFrame(w));
     }
     if drain {
         app.emit(Drained, Vec::new());
@@ -1318,15 +1570,26 @@ fn on_surface(app: &mut App, e: &WlSurfaceEvent) {
 /// slots and their targets, then the surface. A late event for any of
 /// them finds no owner and is skipped.
 fn on_removed(app: &mut App, _: &Removed) {
-    let dead: Vec<NodeId> = app
-        .resource::<Surfaces>()
-        .pending_layer
-        .keys()
-        .copied()
-        .filter(|&w| !app.is_live(w))
-        .collect();
-    for w in dead {
-        app.resource_mut::<Surfaces>().pending_layer.remove(&w);
+    seat::drop_removed_windows(app);
+    // What was asked for windows removed before they had an entry.
+    let dead: Vec<NodeId> = {
+        let surfaces = app.resource::<Surfaces>();
+        surfaces
+            .pending_layer
+            .keys()
+            .chain(&surfaces.pending_hidden)
+            .chain(surfaces.pending_showing_home.keys())
+            .copied()
+            .filter(|&w| !app.is_live(w))
+            .collect()
+    };
+    {
+        let mut surfaces = app.resource_mut::<Surfaces>();
+        for w in dead {
+            surfaces.pending_layer.remove(&w);
+            surfaces.pending_hidden.remove(&w);
+            surfaces.pending_showing_home.remove(&w);
+        }
     }
     let gone: Vec<NodeId> = {
         let surfaces = app.resource::<Surfaces>();
@@ -1353,6 +1616,11 @@ fn on_removed(app: &mut App, _: &Removed) {
                 s.owner.remove(&xdg.id());
             }
             Shell::Layer(ls) => {
+                // Its add-on goes first.
+                if let Some(in_place) = &entry.in_place {
+                    in_place.shell_surface.destroy(&mut wl);
+                    s.owner.remove(&in_place.shell_surface.id());
+                }
                 ls.destroy(&mut wl);
                 s.owner.remove(&ls.id());
             }

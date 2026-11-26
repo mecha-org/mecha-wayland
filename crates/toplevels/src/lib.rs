@@ -20,8 +20,9 @@
 //!
 //! `mx_thumbnail_view_manager_v1` is bound too, when offered, for live
 //! window previews: see [`Thumbnail`](prelude::Thumbnail). So is
-//! `mx_foreign_toplevel_info_manager_v1`, for each toplevel's pid and modal
-//! hint; without it, the pid is `None` and nothing is modal. And so is
+//! `mx_foreign_toplevel_info_manager_v1`, for each toplevel's pid, modal
+//! hint and the activation token of ours it used; without it, the pid and
+//! token are `None` and nothing is modal. And so is
 //! `xdg_activation_v1`, for tokens that let a started app's window take
 //! focus: see [`Toplevels::request_activation_token`].
 
@@ -67,6 +68,10 @@ pub struct ToplevelInfo {
     pub pid: Option<u32>,
     /// A modal dialog: it blocks input to its parent.
     pub modal: bool,
+    /// The activation token it last asked to be activated with, when it
+    /// is one we got (see [`Toplevels::request_activation_token`]): the
+    /// window an app we started with that token opened.
+    pub activation_token: Option<String>,
     /// A counter bumped at each `done` that newly reports `activated`;
     /// 0 means never activated.
     pub last_activated: u64,
@@ -87,6 +92,7 @@ struct Pending {
     parent: Option<ToplevelId>,
     pid: Option<u32>,
     modal: bool,
+    activation_token: Option<String>,
 }
 
 struct Entry {
@@ -217,6 +223,7 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     parent: None,
                     pid: None,
                     modal: false,
+                    activation_token: None,
                     last_activated: 0,
                 },
                 pending: Pending {
@@ -227,6 +234,7 @@ fn on_manager(app: &mut App, e: &ZwlrForeignToplevelManagerV1Event) {
                     parent: None,
                     pid: None,
                     modal: false,
+                    activation_token: None,
                 },
                 extra,
                 mapped: false,
@@ -322,6 +330,7 @@ fn on_handle(app: &mut App, e: &ZwlrForeignToplevelHandleV1Event) {
                     parent: p.parent,
                     pid: p.pid,
                     modal: p.modal,
+                    activation_token: p.activation_token.clone(),
                     last_activated: if newly { stamp } else { e.info.last_activated },
                 };
                 if !e.mapped || next != e.info {
@@ -369,6 +378,10 @@ fn on_info(app: &mut App, e: &MxForeignToplevelInfoV1Event) {
         | E::Modal {
             foreign_toplevel_info: i,
             ..
+        }
+        | E::ActivationToken {
+            foreign_toplevel_info: i,
+            ..
         } => *i,
     };
     let Some(entry) = t.entries.iter_mut().find(|e| e.extra == Some(from)) else {
@@ -377,5 +390,6 @@ fn on_info(app: &mut App, e: &MxForeignToplevelInfoV1Event) {
     match e {
         E::Pid { pid, .. } => entry.pending.pid = u32::try_from(*pid).ok().filter(|&p| p > 0),
         E::Modal { modal, .. } => entry.pending.modal = *modal != 0,
+        E::ActivationToken { token, .. } => entry.pending.activation_token = Some(token.clone()),
     }
 }

@@ -212,8 +212,37 @@ fn a_lock_surface_configure_is_acked_and_sizes_the_window() {
         w.uint(620);
     });
     f.turn();
+    f.app.tick();
+    f.turn();
     let ack = f.expect(LOCK_SURFACE, op::LOCK_SURFACE_ACK);
     assert_eq!(ack.reader().uint(), Some(5));
+    assert_eq!(log(&mut f), vec!["resized 540x620".to_string()]);
+}
+
+#[test]
+fn a_burst_of_lock_surface_configures_settles_once_at_the_last() {
+    let Some((_gpu, mut f)) = fake() else { return };
+    lock(&mut f);
+    spawn_lock_window(&mut f);
+    f.requests();
+    log(&mut f);
+    for (serial, height) in [(5, 600), (6, 610), (7, 620)] {
+        f.send(LOCK_SURFACE, ev::LOCK_CONFIGURE, |w| {
+            w.uint(serial);
+            w.uint(540);
+            w.uint(height);
+        });
+    }
+    f.turn();
+    f.app.tick();
+    f.turn();
+    let acks: Vec<u32> = f
+        .requests()
+        .iter()
+        .filter(|r| r.sender == ObjectId(LOCK_SURFACE) && r.opcode == op::LOCK_SURFACE_ACK)
+        .map(|r| r.reader().uint().unwrap())
+        .collect();
+    assert_eq!(acks, vec![7]);
     assert_eq!(log(&mut f), vec!["resized 540x620".to_string()]);
 }
 

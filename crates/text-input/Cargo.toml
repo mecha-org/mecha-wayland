@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 app.workspace = true
 interactivity.workspace = true
+presentation.workspace = true
 wayland.workspace = true
 widgets.workspace = true
 window.workspace = true

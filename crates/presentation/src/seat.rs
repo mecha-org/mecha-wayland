@@ -107,6 +107,22 @@ impl Seat {
     }
 }
 
+/// Drop the pointer focus and touches held on removed windows. Their
+/// surfaces are destroyed, so whatever the compositor still sends for
+/// them (motion before the next `Enter`, a touch's `Up`) would name a
+/// window that no longer exists.
+pub(crate) fn drop_removed_windows(app: &mut App) {
+    let (pointer, mut touches) = {
+        let mut seat = app.resource_mut::<Seat>();
+        (seat.pointer_focus.take(), std::mem::take(&mut seat.touches))
+    };
+    touches.retain(|_, (w, _)| app.is_live(*w));
+    let pointer = pointer.filter(|(w, _)| app.is_live(*w));
+    let mut seat = app.resource_mut::<Seat>();
+    seat.pointer_focus = pointer;
+    seat.touches = touches;
+}
+
 /// The seat's capabilities changed (or were reported for the first
 /// time): request a pointer/touch object the first time each bit is
 /// seen. Never released — capability loss at runtime is out of scope,

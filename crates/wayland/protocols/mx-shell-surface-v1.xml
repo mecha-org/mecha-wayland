@@ -24,17 +24,18 @@
   </copyright>
 
   <interface name="mx_shell_surface_manager_v1" version="1">
-    <description summary="assign shell roles to layer surfaces">
-      This interface lets a shell tell the compositor what each of its
-      zwlr_layer_surface_v1 surfaces is for. Layer shell alone orders
-      surfaces only by layer; a role places a surface among the shell's other
-      surfaces and the apps, and for some roles changes how input reaches it.
-      Everything else about the surface (anchors, size, exclusive zone,
-      keyboard interactivity) stays as layer shell defines it.
+    <description summary="give shell roles and visibility to layer surfaces">
+      This interface lets a shell give its zwlr_layer_surface_v1 surfaces
+      shell state: a role, which says what the surface is for, and whether it
+      is hidden. Layer shell alone orders surfaces only by layer; a role
+      places a surface among the shell's other surfaces and the apps, and for
+      some roles changes how input reaches it. Everything else about the
+      surface (anchors, size, exclusive zone, keyboard interactivity) stays
+      as layer shell defines it, except while it is hidden.
 
-      A role takes effect only while the surface is on the top or overlay
-      layer. On the bottom or background layer it has no effect, and the
-      surface stacks as layer shell defines.
+      A role takes effect only while the surface is on the overlay layer. On
+      any other layer it has no effect, and the surface stacks as layer shell
+      defines. Hiding works on every layer, with or without a role.
 
       While in effect, surfaces stack front to back by role, in this order:
 
@@ -42,25 +43,32 @@
       2. edge
       3. bar
       4. osd
-      5. osk
-      6. view
-      7. overlay-layer surfaces without a role
-      8. a fullscreen toplevel and its dialogs
-      9. top-layer surfaces without a role
-      10. other toplevels, then the bottom and background layers
+      5. panel
+      6. osk
+      7. view
+      8. overlay-layer surfaces without a role
+      9. a fullscreen toplevel and its dialogs
+      10. top-layer surfaces
+      11. other toplevels, then the bottom and background layers
 
       The one exception is osk: while a prompt surface has keyboard focus, osk
       stacks above prompts instead, so the prompt can be typed into. Several
       surfaces with one role stack among themselves newest first.
 
       The compositor may offer this interface to privileged clients only. It
-      may also give a layer surface without a role one by its own means, such
-      as treating the namespace "osk" as the osk role.
+      may also give a layer surface without a role one by its own means, on
+      the top layer as well as the overlay layer, such as treating the
+      namespace "osk" as the osk role. It gives none the osk role this way
+      while some surface has that role through this interface, hidden or
+      not.
     </description>
 
     <enum name="error">
       <entry name="invalid_role" value="0" summary="role value is invalid"/>
-      <entry name="already_set" value="1" summary="layer_surface already has a role or was already configured"/>
+      <entry name="already_constructed" value="1"
+             summary="the layer surface already has a shell surface"/>
+      <entry name="already_configured" value="2"
+             summary="the layer surface was already configured"/>
     </enum>
 
     <enum name="role">
@@ -69,25 +77,31 @@
         stacks and how input reaches it; see the interface description for the
         whole order.
       </description>
+      <entry name="none" value="0" summary="no role">
+        <description summary="no role">
+          The surface stacks and takes input as layer shell defines. For a
+          surface that needs only the other shell state, such as hiding.
+        </description>
+      </entry>
       <entry name="view" value="1" summary="full-screen shell screen">
         <description summary="full-screen shell screen">
-          A screen of the shell that covers the apps, such as a home screen,
-          an app switcher or a settings panel. It stacks above every toplevel,
-          a fullscreen one included, and below every other role. Input reaches
-          it as layer shell defines.
+          A screen of the shell that covers the apps, such as a home screen
+          or an app switcher. It stacks above every toplevel, a fullscreen one
+          included, and below every other role. Input reaches it as layer
+          shell defines.
         </description>
       </entry>
       <entry name="osk" value="2" summary="on-screen keyboard">
         <description summary="on-screen keyboard">
-          An on-screen keyboard. It stacks above views and below OSDs, except
-          while a prompt surface has keyboard focus: then it stacks above
-          prompts, so the prompt can be typed into.
+          An on-screen keyboard. It stacks above views and below panels,
+          except while a prompt surface has keyboard focus: then it stacks
+          above prompts, so the prompt can be typed into.
         </description>
       </entry>
       <entry name="osd" value="3" summary="on-screen display">
         <description summary="on-screen display">
           Short-lived feedback such as a volume or brightness indicator. It
-          stacks above the keyboard and views, below bars.
+          stacks above panels, the keyboard and views, below bars.
         </description>
       </entry>
       <entry name="bar" value="4" summary="status bar">
@@ -122,28 +136,112 @@
           except the keyboard while a prompt has keyboard focus.
         </description>
       </entry>
+      <entry name="panel" value="7" summary="shell panel over apps and the keyboard">
+        <description summary="shell panel over apps and the keyboard">
+          A shell surface that slides over whatever is shown, such as quick
+          settings or a notification shade. It stacks above the keyboard,
+          views and every toplevel, and below OSDs, bars, edge regions and
+          prompts, so the status bar stays in view over it. Input reaches it
+          as layer shell defines.
+        </description>
+      </entry>
     </enum>
 
     <request name="destroy" type="destructor">
       <description summary="destroy the manager">
-        Destroy the manager object. Roles assigned through this interface
+        Destroy the manager object. Shell surfaces already created from it
         remain valid.
       </description>
     </request>
 
-    <request name="set_role">
-      <description summary="assign a role to a layer surface">
-        Assign a shell role to a zwlr_layer_surface_v1. The surface keeps it
-        for as long as it exists.
+    <request name="get_shell_surface">
+      <description summary="extend a layer surface with shell state">
+        Create an add-on object for a zwlr_layer_surface_v1 that gives it a
+        role and lets it be hidden.
 
-        This request must be made before the initial wl_surface.commit that
-        precedes the first zwlr_layer_surface_v1.configure event. Calling it
-        after the surface has been configured or calling it more than once on
-        the same zwlr_layer_surface_v1 raises the already_set protocol error.
-        A role value this version doesn't define raises invalid_role.
+        It must be made before the initial wl_surface.commit that precedes the
+        first zwlr_layer_surface_v1.configure event; after that it raises
+        already_configured. A layer surface has at most one shell surface at a
+        time; a second raises already_constructed. A role value this version
+        does not define raises invalid_role.
+
+        The role applies from the layer surface's next commit, and cannot
+        change while the shell surface exists.
       </description>
+      <arg name="id" type="new_id" interface="mx_shell_surface_v1"/>
       <arg name="layer_surface" type="object" interface="zwlr_layer_surface_v1"/>
       <arg name="role" type="uint" enum="role"/>
     </request>
+  </interface>
+
+  <interface name="mx_shell_surface_v1" version="1">
+    <description summary="a layer surface's shell state">
+      The role and visibility of one zwlr_layer_surface_v1. If the layer
+      surface is destroyed, the shell surface becomes inert: its requests do
+      nothing, and the client should destroy it. The shell state goes with
+      the layer surface: a new layer surface on the same wl_surface starts
+      shown, without a role, and may get a shell surface of its own.
+    </description>
+
+    <request name="set_hidden">
+      <description summary="hide or show the surface">
+        Hide (non-zero) or show (zero) the surface. Double-buffered: it
+        applies on the next wl_surface.commit, with the rest of that commit,
+        such as a new buffer.
+
+        While hidden, the surface is not shown. It receives no pointer, touch
+        or keyboard input and cannot have keyboard focus: touch sequences and
+        pointer grabs that began on it, or on its popups or subsurfaces, are
+        cancelled by the commit that hides it. Its exclusive zone
+        is ignored: other surfaces and toplevels are placed as if it had none.
+        Frame callbacks requested while hidden are not done until the surface
+        is shown and a frame of it has been displayed.
+
+        The surface keeps its buffer, role, layer, exclusive zone and other
+        layer surface state, and still receives configure events. All of it
+        takes effect again from the commit that shows it.
+
+        A surface starts shown, and may be hidden before its first buffer.
+      </description>
+      <arg name="hidden" type="uint"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the shell state">
+        Destroy the shell surface. From the layer surface's next commit, it is
+        shown and has no role, and stacks as layer shell defines. A new shell
+        surface may be created for it only before its first configure, as for
+        the first.
+      </description>
+    </request>
+
+    <request name="set_showing_home">
+      <description summary="show home on the surface's output">
+        Show home on the output this surface is on (non-zero), or stop
+        (zero). Home is what the shell shows on the bottom and background
+        layers, as this surface; showing it hides what covers it. Not
+        double-buffered: it takes effect at once.
+
+        While an output shows home, the compositor shows no toplevel on it:
+        they are not drawn, receive no input and cannot have keyboard focus,
+        and none is activated (xdg_toplevel.activated). It may suspend them
+        (xdg_toplevel.suspended), except those it shows by other means, such
+        as a thumbnail. Layer surfaces are not affected.
+
+        The output stops showing home by itself when a toplevel on it is
+        activated, or a new one is mapped and takes focus. A request for the
+        state the output is already in does nothing.
+      </description>
+      <arg name="showing" type="uint"/>
+    </request>
+
+    <event name="showing_home">
+      <description summary="whether the surface's output shows home">
+        Sent to a shell surface that has made a set_showing_home request,
+        whenever its output starts or stops showing home, by request or by
+        itself.
+      </description>
+      <arg name="showing" type="uint"/>
+    </event>
   </interface>
 </protocol>

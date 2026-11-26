@@ -1597,6 +1597,70 @@ fn none_resets_the_input_region() {
 
 // ── the frame loop ─────────────────────────────────────────────────────
 
+/// A transition on a node that draws nothing still waits for the
+/// compositor's refresh: its frames find nothing to draw, but don't run
+/// again on every round in between.
+#[test]
+fn an_undrawn_transition_is_paced_by_the_refresh() {
+    use animation::prelude::{AnimationTime, Easing, LayoutAnimationSettings};
+    struct Blank;
+    impl Build for Blank {
+        type Widget = Blank;
+    }
+    impl Widget for Blank {
+        type Builder = Blank;
+        fn build(b: Blank, _: Handle<Self>, _: &mut Spawner<'_, Self>) -> Self {
+            b
+        }
+    }
+    let Some((_gpu, mut f)) = fake() else { return };
+    let win = configured(&mut f, 320, 200);
+    f.send(CALLBACK, ev::DONE, |w| w.uint(1));
+    f.turn();
+    // No paint: its layout changes damage nothing.
+    let blank = f
+        .app
+        .spawn_with(
+            win,
+            Blank,
+            (
+                LayoutStyle::default().size(px(10.0), px(10.0)),
+                LayoutAnimationSettings::new(
+                    AnimationTime::Duration(std::time::Duration::from_secs(1)),
+                    Easing::Linear,
+                ),
+            ),
+        )
+        .id();
+    f.app.tick();
+    f.turn();
+    // Answer every frame callback asked for so far: none is outstanding.
+    let callbacks: Vec<u32> = f
+        .requests()
+        .iter()
+        .filter(|r| r.sender == ObjectId(SURFACE) && r.opcode == op::FRAME)
+        .map(|r| r.reader().object().unwrap().0)
+        .collect();
+    for callback in callbacks {
+        f.send(callback, ev::DONE, |w| w.uint(2));
+    }
+    // And every buffer back, as a compositor showing the next frame does.
+    f.send(BUF_A, ev::RELEASE, |_| {});
+    f.send(BUF_B, ev::RELEASE, |_| {});
+    f.turn();
+    *f.app.component_mut::<LayoutStyle>(blank).unwrap() =
+        LayoutStyle::default().size(px(100.0), px(100.0));
+    f.requests();
+    log_clear(&mut f);
+    // The compositor sends no frame callback meanwhile.
+    for _ in 0..10 {
+        f.app.tick();
+        f.turn();
+    }
+    let frames = log(&f).iter().filter(|l| l.starts_with("Frame")).count();
+    assert!(frames <= 1, "{frames} frames in ten rounds with no refresh");
+}
+
 #[test]
 fn frames_are_throttled_by_the_callback() {
     let Some((_gpu, mut f)) = fake() else { return };
@@ -1903,7 +1967,7 @@ fn a_configure_held_across_a_remap_is_dropped_for_a_fresh_one() {
 }
 
 #[test]
-fn a_frame_with_nothing_changed_commits_nothing() {
+fn a_frame_with_nothing_changed_commits_bare() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = configured(&mut f, 320, 200);
     f.requests();
@@ -1915,7 +1979,8 @@ fn a_frame_with_nothing_changed_commits_nothing() {
     f.send(BUF_A, ev::RELEASE, |_| {});
     f.turn();
     // A second configure of the same size asks for a Frame; render's
-    // scissor is empty, so nothing is attached or committed.
+    // scissor is empty, so nothing is attached: the commit goes out bare,
+    // asking for the next refresh.
     f.send(TOPLEVEL, ev::TOPLEVEL_CONFIGURE, |w| {
         w.int(320);
         w.int(200);
@@ -1926,7 +1991,14 @@ fn a_frame_with_nothing_changed_commits_nothing() {
     f.app.tick();
     f.turn();
     let s = shape(&mut f);
-    assert_eq!(s, vec![(XDG, op::ACK_CONFIGURE)]);
+    assert_eq!(
+        s,
+        vec![
+            (XDG, op::ACK_CONFIGURE),
+            (SURFACE, op::FRAME),
+            (SURFACE, op::COMMIT)
+        ]
+    );
     assert!(log(&f).contains(&format!("Frame {win:?}")), "{:?}", log(&f));
 }
 
@@ -2843,7 +2915,7 @@ fn a_transparent_window_draws_into_argb_buffers_when_no_format_is_listed() {
 
 /// A drawn toplevel whose callback and buffer came back: idle, nothing
 /// wanted, and its next frame reuses the drawn slot at age 1 (see
-/// `a_frame_with_nothing_changed_commits_nothing`).
+/// `a_frame_with_nothing_changed_commits_bare`).
 fn idle(f: &mut Fake) -> NodeId {
     let win = configured(f, 320, 200);
     f.send(CALLBACK, ev::DONE, |w| w.uint(1));
@@ -2853,32 +2925,43 @@ fn idle(f: &mut Fake) -> NodeId {
     win
 }
 
+/// The callback a bare commit just asked for.
+fn bare_callback(f: &mut Fake) -> u32 {
+    let reqs = f.requests();
+    let shape: Vec<_> = reqs.iter().map(|r| (r.sender.0, r.opcode)).collect();
+    assert_eq!(shape, vec![(SURFACE, op::FRAME), (SURFACE, op::COMMIT)]);
+    reqs[0].reader().object().unwrap().0
+}
+
 #[test]
-fn a_frame_with_nothing_to_draw_commits_nothing() {
+fn a_frame_with_nothing_to_draw_waits_for_the_next_refresh() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = idle(&mut f);
     f.app.signal(RequestFrame(win));
     f.app.tick();
     f.turn();
-    assert!(log(&f).iter().filter(|l| l.starts_with("Frame")).count() >= 2);
-    assert!(shape(&mut f).is_empty());
+    let callback = bare_callback(&mut f);
+
+    // Wanted again before the refresh: it waits for it.
+    f.app.signal(RequestFrame(win));
+    f.app.tick();
+    f.turn();
+    assert!(shape(&mut f).is_empty(), "nothing until the refresh");
+
+    f.send(callback, ev::DONE, |w| w.uint(2));
+    f.turn();
+    bare_callback(&mut f);
 }
 
 #[test]
-fn a_requested_commit_is_sent_bare_on_a_frame_with_nothing_to_draw() {
+fn a_requested_commit_goes_with_a_frame_with_nothing_to_draw() {
     let Some((_gpu, mut f)) = fake() else { return };
     let win = idle(&mut f);
     f.app.resource_mut::<Surfaces>().request_commit(win);
     f.app.signal(RequestFrame(win));
     f.app.tick();
     f.turn();
-    assert_eq!(shape(&mut f), vec![(SURFACE, op::COMMIT)]);
-
-    // Honoured once.
-    f.app.signal(RequestFrame(win));
-    f.app.tick();
-    f.turn();
-    assert!(shape(&mut f).is_empty());
+    bare_callback(&mut f);
 }
 
 #[test]

@@ -22,9 +22,11 @@
 //!   asks `Scenes::queue` for the free slot's age, draws the queue into
 //!   the slot's dmabuf through `gles`, attaches, damages each rect of the
 //!   queue's scissor, asks for the callback and commits. An empty scissor
-//!   commits nothing, unless [`Surfaces::request_commit`] asked for one:
-//!   then it commits bare. The callback's `done` and a buffer's `release` each
-//!   try again.
+//!   commits bare, still asking for the callback, so a window that keeps
+//!   wanting frames without drawing waits for the next refresh too; a
+//!   surface with no buffer at the compositor has no refresh to wait for,
+//!   and commits bare only when [`Surfaces::request_commit`] asked. The
+//!   callback's `done` and a buffer's `release` each try again.
 //! - A configure settles the size and, when the device size changed,
 //!   replaces the two slots and drops the outstanding callback (a hidden
 //!   surface may never get its `done`, and the new size must still be
@@ -1386,14 +1388,24 @@ fn on_frame(app: &mut App, f: &Frame) {
         None => scenes.queue(w, age),
     };
     let Some(queue) = queue.filter(|q| !q.scissor.is_empty()) else {
-        // Nothing to draw. A requested commit goes out bare: the current
-        // buffer stays, and the compositor applies what was pending.
-        if std::mem::take(&mut entry.commit_wanted) {
-            if let Some(in_place) = &mut entry.in_place {
-                in_place.send_pending_show(&mut wl);
-            }
-            entry.surface.commit(&mut wl);
+        // Nothing to draw. The commit goes out bare: the current buffer
+        // stays, and the compositor applies what was pending. It still asks
+        // for the next refresh, so a window that keeps wanting frames (a
+        // transition on something that draws nothing) waits for it rather
+        // than running again at once. With no buffer at the compositor
+        // there is no refresh to wait for: only a requested commit goes.
+        let wanted = std::mem::take(&mut entry.commit_wanted);
+        if entry.attached {
+            let callback = entry.surface.frame(&mut wl);
+            s.owner.insert(callback.id(), w);
+            entry.callback = Some(callback);
+        } else if !wanted {
+            return;
         }
+        if let Some(in_place) = &mut entry.in_place {
+            in_place.send_pending_show(&mut wl);
+        }
+        entry.surface.commit(&mut wl);
         return;
     };
     // Two roundings of the same size must agree: the slots' came from

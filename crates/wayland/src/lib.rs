@@ -282,6 +282,12 @@ impl Wayland {
         !self.out.is_empty() || self.sending.is_some()
     }
 
+    /// Whether requests are buffered with no send in flight to wait on:
+    /// the next `BeforeWait` sends them.
+    pub(crate) fn has_unsent(&self) -> bool {
+        !self.out.is_empty() && self.sending.is_none()
+    }
+
     /// Arm the one receive. `buf` should have 64 KiB of capacity; it is
     /// the buffer the last read gave back.
     pub fn arm_read(&mut self, ring: &mut Ring, buf: Vec<u8>) {
@@ -590,7 +596,8 @@ impl Module for WaylandModule {
             .system(on_io)
             .system(on_display)
             .system(on_callback)
-            .system(on_registry);
+            .system(on_registry)
+            .pending_check(|app| app.resource::<Wayland>().has_unsent());
         let display = wl.display();
         let registry = display.get_registry(&mut wl);
         wl.sync = Some(display.sync(&mut wl));

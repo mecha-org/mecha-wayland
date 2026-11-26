@@ -1,5 +1,5 @@
 //! The `DBus` resource, the `Bus` view over one connection, the module
-//! that installs them, and the two systems that drive the I/O.
+//! that installs them, and the systems that drive the I/O.
 
 use std::ops::BitOr;
 use std::os::unix::net::UnixStream;
@@ -105,12 +105,23 @@ impl DBus {
         self.conns.iter().any(|c| c.has_pending_output())
     }
 
-    pub(crate) fn before_wait(&mut self, ring: &mut Ring) -> Vec<Out> {
-        let mut outs = Vec::new();
+    /// Whether work is left on any bus, for the next tick or `BeforeWait`.
+    pub(crate) fn has_work(&self) -> bool {
+        self.conns.iter().any(|c| c.has_work())
+    }
+
+    /// The replies of calls that failed before being sent, on any bus.
+    pub(crate) fn take_deferred(&mut self) -> Vec<Out> {
+        self.conns
+            .iter_mut()
+            .flat_map(|c| c.take_deferred())
+            .collect()
+    }
+
+    pub(crate) fn before_wait(&mut self, ring: &mut Ring) {
         for c in &mut self.conns {
-            outs.extend(c.before_wait(ring));
+            c.before_wait(ring);
         }
-        outs
     }
 }
 
@@ -327,7 +338,10 @@ impl Module for DBusModule {
             app.has_resource::<Ring>(),
             "dbus: DBusModule installs after RingModule"
         );
-        app.system(on_before_wait).system(on_io);
+        app.system(on_tick)
+            .system(on_before_wait)
+            .system(on_io)
+            .pending_check(|app| app.resource::<DBus>().has_work());
         let uid = auth::effective_uid().expect("dbus: read the effective uid");
         let mut conns: Vec<Connection> = Vec::new();
         for (id, source) in self.buses {
@@ -368,12 +382,15 @@ impl Module for DBusModule {
     }
 }
 
-fn on_before_wait(app: &mut App, _: &BeforeWait) {
-    let outs = {
-        let (mut dbus, mut ring) = app.query::<(ResMut<DBus>, ResMut<Ring>)>();
-        dbus.before_wait(&mut ring)
-    };
+/// Raise the replies of calls that failed before being sent.
+fn on_tick(app: &mut App, _: &Tick) {
+    let outs = app.resource_mut::<DBus>().take_deferred();
     emit(app, outs);
+}
+
+fn on_before_wait(app: &mut App, _: &BeforeWait) {
+    let (mut dbus, mut ring) = app.query::<(ResMut<DBus>, ResMut<Ring>)>();
+    dbus.before_wait(&mut ring);
 }
 
 fn on_io(app: &mut App, e: &IoEvent) {

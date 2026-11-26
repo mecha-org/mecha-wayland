@@ -219,6 +219,12 @@ fn greeting(settings: &Settings) -> Option<String> {
         .and_then(|v| v.as_str().map(str::to_string))
 }
 
+/// A turn, then the tick after it, which raises what the turn took.
+fn round(app: &mut App) {
+    Ring::turn(app);
+    app.tick();
+}
+
 #[test]
 fn a_local_open_answers_on_the_next_turn() {
     let dir = tree();
@@ -228,7 +234,7 @@ fn a_local_open_answers_on_the_next_turn() {
         app.resource::<Log>().opened.is_empty(),
         "nothing runs until a turn"
     );
-    Ring::turn(&mut app);
+    round(&mut app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     let settings = opened.into_iter().next().unwrap().unwrap();
     assert_eq!(greeting(&settings).as_deref(), Some("hi"));
@@ -243,7 +249,7 @@ fn a_local_open_answers_on_the_next_turn() {
 /// Request `Test` and run the turn that opens it.
 fn open_local(app: &mut App) -> Settings {
     app.resource_mut::<Config>().request::<Test>();
-    Ring::turn(app);
+    round(app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     opened.into_iter().next().expect("opened").unwrap()
 }
@@ -257,7 +263,7 @@ fn an_edited_file_is_a_typed_change() {
     fs::write(user_file(dir.path()), "greeting = \"hello\"\n").unwrap();
     // The armed read may return the file's creation before its write.
     for _ in 0..5 {
-        Ring::turn(&mut app);
+        round(&mut app);
         if !app.resource::<Log>().changed.is_empty() {
             break;
         }
@@ -275,7 +281,7 @@ fn a_write_arrives_as_a_change() {
     let settings = open_local(&mut app);
     let edit = mxconfig::Edit::set("greeting", Value::String("yo".into()));
     settings.write(&[edit]);
-    Ring::turn(&mut app);
+    round(&mut app);
     let log = std::mem::take(&mut *app.resource_mut::<Log>());
     assert!(log.failed.is_empty(), "{:?}", log.failed);
     assert_eq!(
@@ -284,6 +290,37 @@ fn a_write_arrives_as_a_change() {
     );
     let file = fs::read_to_string(user_file(dir.path())).unwrap();
     assert!(file.contains("yo"), "the file holds the write: {file}");
+}
+
+fn write_on_open(_app: &mut App, ConfigEvent(event): &ConfigEvent<Test>) {
+    if let Event::Opened(client) = event {
+        let edit = mxconfig::Edit::set("greeting", Value::String("yo".into()));
+        client.settings().write(&[edit]);
+    }
+}
+
+#[test]
+fn a_write_from_an_event_handler_is_work_left_for_the_next_tick() {
+    let dir = tree();
+    let mut app = local_app(dir.path());
+    app.system(write_on_open);
+    app.resource_mut::<Config>().request::<Test>();
+    // The turn takes the open; the tick raises it, and the handler writes.
+    round(&mut app);
+    assert_eq!(app.resource::<Log>().opened.len(), 1);
+    // `BeforeWait` takes the write's outcome and raises nothing: it is
+    // work left, so the runner goes round instead of blocking.
+    app.signal(BeforeWait);
+    app.flush();
+    assert!(app.resource::<Log>().changed.is_empty());
+    assert!(app.has_pending_work());
+    app.tick();
+    let yo = Some(Value::String("yo".into()));
+    assert_eq!(
+        app.resource::<Log>().changed,
+        [("greeting".to_string(), yo)]
+    );
+    assert!(!app.has_pending_work());
 }
 
 #[test]
@@ -296,7 +333,7 @@ fn without_dbus_a_shared_namespace_stays_on_its_defaults() {
     let mut app = local_app(dir.path());
     listen::<Shared>(&mut app);
     app.resource_mut::<Config>().request::<Shared>();
-    Ring::turn(&mut app);
+    round(&mut app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     let settings = opened.into_iter().next().expect("opened").unwrap();
     assert_eq!(settings.state(), State::Defaults(Unserved::NoBus));
@@ -304,7 +341,7 @@ fn without_dbus_a_shared_namespace_stays_on_its_defaults() {
 
     let edit = mxconfig::Edit::set("greeting", Value::String("yo".into()));
     settings.write(&[edit]);
-    Ring::turn(&mut app);
+    round(&mut app);
     let log = std::mem::take(&mut *app.resource_mut::<Log>());
     let hi = Some(Value::String("hi".into()));
     let still = vec![("greeting".to_string(), hi)];
@@ -324,14 +361,14 @@ fn every_client_type_of_a_namespace_gets_its_signals() {
     listen::<Second>(&mut app);
     app.resource_mut::<Config>().request::<Test>();
     app.resource_mut::<Config>().request::<Second>();
-    Ring::turn(&mut app);
+    round(&mut app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     assert_eq!(opened.len(), 2, "one open each");
     let settings = opened.into_iter().next().unwrap().unwrap();
 
     let edit = mxconfig::Edit::set("greeting", Value::String("yo".into()));
     settings.write(&[edit]);
-    Ring::turn(&mut app);
+    round(&mut app);
     let log = std::mem::take(&mut *app.resource_mut::<Log>());
     assert_eq!(log.changed.len(), 2);
 }
@@ -503,7 +540,7 @@ fn a_daemon_open_without_dbus_fails_at_once() {
         .add_module(ConfigModule::new().with_source(source));
     listen::<Remote>(&mut app);
     app.resource_mut::<Config>().request::<Remote>();
-    Ring::turn(&mut app);
+    round(&mut app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     assert!(opened[0].is_err(), "{:?}", opened[0].as_ref().err());
 }
@@ -516,7 +553,7 @@ fn a_failed_open_answers_only_its_own_request() {
     listen::<Remote>(&mut app);
     app.resource_mut::<Config>().request::<Remote>();
     app.resource_mut::<Config>().request::<Test>();
-    Ring::turn(&mut app);
+    round(&mut app);
     let opened = std::mem::take(&mut app.resource_mut::<Log>().opened);
     let failed = opened.iter().filter(|o| o.is_err()).count();
     assert_eq!((opened.len(), failed), (2, 1), "{opened:?}");
@@ -555,7 +592,7 @@ fn a_write_in_flight_when_the_bus_goes_is_unconfirmed() {
     f.turn();
     f.expect_call("Apply");
     let mut app = f.hang_up();
-    Ring::turn(&mut app);
+    round(&mut app);
     let log = app.resource::<Log>();
     let [(e, current)] = &log.failed[..] else {
         panic!("{:?}", log.failed)

@@ -11,11 +11,16 @@
 //! - Every completion is one [`IoEvent`] signal. The module that owns
 //!   the token finishes it; every other module ignores it.
 //! - [`Ring::turn`] is one pass: [`BeforeWait`] (the last chance to
-//!   submit), block for at least one completion, one `IoEvent` each,
-//!   flush. The runner [`RingModule`] sets is tick, turn, repeat, until
-//!   a [`Stop`] signal.
-//! - A turn with no op in flight blocks forever: the Wayland read is
-//!   always armed, so an app with `WaylandModule` never waits on
+//!   submit), then block for at least one completion, or, while work is
+//!   left ([`App::has_pending_work`]), take only the completions already
+//!   in; one `IoEvent` each, flush. The runner [`RingModule`] sets is
+//!   tick, turn, repeat, until a [`Stop`] signal.
+//! - `BeforeWait` submits and raises nothing. The work left is asked once
+//!   its systems are done, so nothing may run after them: a module with
+//!   something to raise keeps it, reports it as work left, and raises it
+//!   in the next tick.
+//! - A blocking turn with no op in flight blocks forever: the Wayland
+//!   read is always armed, so an app with `WaylandModule` never waits on
 //!   nothing.
 //!
 //! This is the one crate in the workspace that allows unsafe code, in
@@ -82,7 +87,9 @@ pub struct IoEvent {
 }
 impl Signal for IoEvent {}
 
-/// The last chance to submit before the runner blocks.
+/// The last chance to submit before the runner blocks. Its systems
+/// submit and raise nothing: what they have to raise waits for the next
+/// tick, as work left.
 #[derive(Debug, Clone, Copy)]
 pub struct BeforeWait;
 impl Signal for BeforeWait {}
@@ -222,6 +229,29 @@ impl Ring {
                 Err(e) => panic!("io_uring submit_and_wait: {e}"),
             }
         }
+        self.completions()
+    }
+
+    /// Submit, and return the completions already in without waiting for
+    /// any, in completion order. `EINTR` is retried.
+    ///
+    /// # Panics
+    ///
+    /// If the kernel refuses `submit` with anything other than `EINTR`,
+    /// as [`Ring::wait`] does.
+    pub fn ready(&mut self) -> Vec<IoEvent> {
+        loop {
+            match self.uring.submit() {
+                Ok(_) => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => panic!("io_uring submit: {e}"),
+            }
+        }
+        self.completions()
+    }
+
+    /// Every completion in the queue, recorded on its op.
+    fn completions(&mut self) -> Vec<IoEvent> {
         let mut out = std::mem::take(&mut self.done);
         for cqe in self.uring.completion() {
             let token = cqe.user_data();
@@ -302,13 +332,19 @@ impl Drop for Ring {
 }
 
 impl Ring {
-    /// One turn: signal [`BeforeWait`] and flush; submit and block for at
-    /// least one completion; signal one [`IoEvent`] per completion, in
-    /// completion order; flush. Blocks forever if no op is in flight.
+    /// One turn: signal [`BeforeWait`] and flush; submit, then block for
+    /// at least one completion, or, while work is left
+    /// ([`App::has_pending_work`]), take only the completions already in;
+    /// signal one [`IoEvent`] per completion, in completion order; flush.
+    /// A blocking turn with no op in flight blocks forever.
     pub fn turn(app: &mut App) {
         app.signal(BeforeWait);
         app.flush();
-        let mut events = app.resource_mut::<Ring>().wait();
+        let busy = app.has_pending_work();
+        let mut events = {
+            let mut ring = app.resource_mut::<Ring>();
+            if busy { ring.ready() } else { ring.wait() }
+        };
         for e in events.drain(..) {
             app.signal(e);
         }
@@ -322,10 +358,12 @@ fn on_stop(app: &mut App, _: &Stop) {
 }
 
 /// Tick, turn, and stop when told. The runner every presentation module
-/// relies on: a tick per wake, nothing between wakes. Stops after a turn
-/// or after a tick that raised [`Stop`] — a tick-time stop must not fall
-/// into the turn's block, which waits for a completion that an app on
-/// its way out may never get.
+/// relies on: a tick per turn, and a turn blocks only when no work is left
+/// ([`App::has_pending_work`]), so what a tick leaves after its drains or
+/// its flushes gets the next tick at once, with whatever I/O is ready.
+/// Stops after a turn or after a tick that raised [`Stop`] — a tick-time
+/// stop must not fall into the turn's block, which waits for a completion
+/// that an app on its way out may never get.
 fn run(mut app: App) {
     loop {
         app.tick();

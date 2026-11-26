@@ -129,6 +129,11 @@ impl Timers {
         true
     }
 
+    /// Whether a timer is waiting for its op to be submitted.
+    pub(crate) fn needs_submit(&self) -> bool {
+        self.timers.values().any(|e| e.needs_submit)
+    }
+
     /// Every timer waiting for an op, with how long from `now` it is due.
     pub(crate) fn take_submissions(&mut self, now: Instant) -> Vec<(TimerId, Duration)> {
         self.timers

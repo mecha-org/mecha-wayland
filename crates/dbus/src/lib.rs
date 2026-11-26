@@ -15,9 +15,11 @@
 //!   authenticates (blocking, `EXTERNAL`), says `Hello` and turns the
 //!   ring until every bus has its unique name.
 //! - Ordinary sending belongs in `Tick` systems and in handlers. A
-//!   `BeforeWait` system ordered after [`DBusModule`] sends on the next
-//!   wake of the ring: D-Bus has already flushed by then, and it only
-//!   arranges a wake when it raised signals itself.
+//!   `BeforeWait` system ordered after [`DBusModule`] sends a round
+//!   later: D-Bus has already flushed by then, and leaves the send as
+//!   work left.
+//! - A call that fails before it is sent, on a dead bus or with fds the
+//!   bus refuses, gets its [`MethodReply`] in the next tick.
 //! - Nothing is a callback or a future. Every result is a signal:
 //!   [`MethodReply`] for a [`CallId`], [`SignalReceived`] for the
 //!   [`MatchId`]s a signal satisfies, [`MethodCallReceived`] and

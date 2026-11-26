@@ -7,7 +7,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use ring::{Completed, IoEvent, Ring, Token};
 
@@ -71,10 +71,7 @@ pub(crate) struct Connection {
     deadlines: BinaryHeap<Reverse<(Instant, u32)>>,
     /// Ring timeouts in flight, and the deadline each was armed for.
     timers: Vec<(Token, Instant)>,
-    /// A zero-length timeout in flight so the ring wakes after a
-    /// `BeforeWait` that raised signals whose handlers may have sent.
-    wake: Option<Token>,
-    /// Calls that failed before being sent; answered at `BeforeWait`.
+    /// Calls that failed before being sent; answered in the next tick.
     deferred: Vec<(u32, CallError)>,
     pub(crate) matches: Matches,
     pub(crate) server: Server,
@@ -106,7 +103,6 @@ impl Connection {
             pending: HashMap::new(),
             deadlines: BinaryHeap::new(),
             timers: Vec::new(),
-            wake: None,
             deferred: Vec::new(),
             matches: Matches::default(),
             server: Server::default(),
@@ -146,6 +142,16 @@ impl Connection {
         !self.dead && (!self.outbox.is_empty() || self.sending.is_some())
     }
 
+    /// Whether work is left: for the next `BeforeWait`, a send to start,
+    /// a dropped call to answer or a property change to signal; for the
+    /// next tick, a deferred reply to raise.
+    pub(crate) fn has_work(&self) -> bool {
+        (!self.dead && !self.outbox.is_empty() && self.sending.is_none())
+            || !self.server.unanswered.borrow().is_empty()
+            || self.server.exports.values().any(|e| !e.changed.is_empty())
+            || !self.deferred.is_empty()
+    }
+
     /// Send what is queued in one `sendmsg`, if none is in flight, cut
     /// at a message boundary so no send carries more than [`MAX_FDS`].
     pub(crate) fn flush(&mut self, ring: &mut Ring) {
@@ -168,11 +174,24 @@ impl Connection {
     pub(crate) fn owns(&self, t: Token) -> bool {
         self.reading == Some(t)
             || self.sending == Some(t)
-            || self.wake == Some(t)
             || self.timers.iter().any(|&(tt, _)| tt == t)
     }
 
-    pub(crate) fn before_wait(&mut self, ring: &mut Ring) -> Vec<Out> {
+    /// The replies of calls that failed before being sent.
+    pub(crate) fn take_deferred(&mut self) -> Vec<Out> {
+        let bus = self.id;
+        self.deferred
+            .drain(..)
+            .map(|(serial, e)| {
+                out(MethodReply {
+                    call: CallId { bus, serial },
+                    result: Err(e),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn before_wait(&mut self, ring: &mut Ring) {
         let dropped: Vec<_> = self.server.unanswered.borrow_mut().drain(..).collect();
         for (sender, serial) in dropped {
             let m = Message::error(
@@ -207,25 +226,8 @@ impl Connection {
         for m in changes {
             self.queue(&m);
         }
-        let bus = self.id;
-        let outs: Vec<Out> = self
-            .deferred
-            .drain(..)
-            .map(|(serial, e)| {
-                out(MethodReply {
-                    call: CallId { bus, serial },
-                    result: Err(e),
-                })
-            })
-            .collect();
         self.flush(ring);
         self.arm_timer(ring);
-        // The handlers of `outs` run after this returns; anything they
-        // send waits in the outbox, so wake the ring to flush it.
-        if !outs.is_empty() && self.wake.is_none() {
-            self.wake = Some(ring.timeout(Duration::ZERO));
-        }
-        outs
     }
 
     pub(crate) fn export(
@@ -611,10 +613,6 @@ impl Connection {
     }
 
     pub(crate) fn on_io(&mut self, e: &IoEvent, done: Completed, ring: &mut Ring) -> Vec<Out> {
-        if self.wake == Some(e.token) {
-            self.wake = None;
-            return Vec::new();
-        }
         if let Some(i) = self.timers.iter().position(|&(t, _)| t == e.token) {
             self.timers.swap_remove(i);
             return self.expire();

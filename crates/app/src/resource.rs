@@ -177,6 +177,12 @@ impl Resources {
         ResourceMut::new(self.entry_mut::<R>())
     }
 
+    /// Whether `R` was written since its last drain. Panics if `R` is not
+    /// inserted.
+    pub fn is_changed<R: Resource>(&self) -> bool {
+        self.entry::<R>().changed
+    }
+
     /// Clear the bit and return what it was. Panics if `R` is not
     /// inserted.
     pub fn take_changed<R: Resource>(&mut self) -> bool {

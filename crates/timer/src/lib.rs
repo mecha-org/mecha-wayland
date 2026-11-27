@@ -102,6 +102,7 @@ impl Module for TimerModule {
         app.insert_resource(Timers::default());
         app.system(systems::submit)
             .system(systems::complete)
-            .system(systems::removed);
+            .system(systems::removed)
+            .pending_check(|app| app.resource::<Timers>().needs_submit());
     }
 }

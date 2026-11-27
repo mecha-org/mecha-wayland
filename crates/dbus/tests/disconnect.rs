@@ -42,9 +42,10 @@ fn call(app: &mut App) -> CallId {
         .call(NM, "GetDevices", &())
 }
 
-/// Raise `BeforeWait` without blocking: a dead bus has no read armed,
-/// so a `Ring::turn` could wait forever.
-fn before_wait(app: &mut App) {
+/// A tick and a `BeforeWait`, without blocking: a dead bus has no read
+/// armed, so a `Ring::turn` could wait forever.
+fn round_without_waiting(app: &mut App) {
+    app.tick();
     app.signal(BeforeWait);
     app.flush();
 }
@@ -69,7 +70,7 @@ fn a_hang_up_fails_pending_calls_and_signals_once() {
     assert!(!app.resource_mut::<DBus>().session().is_connected());
 
     let later = call(&mut app);
-    before_wait(&mut app);
+    round_without_waiting(&mut app);
     let log = app.resource::<Log>();
     assert_eq!(log.gone, 1, "raised once");
     assert_eq!(log.replies.len(), 2);
@@ -103,7 +104,7 @@ fn replying_after_the_bus_died_does_nothing() {
     let kept = app.resource_mut::<Log>().kept.pop().unwrap();
     app.resource_mut::<DBus>().reply(&kept, &());
     drop(kept);
-    before_wait(&mut app);
+    round_without_waiting(&mut app);
     assert_eq!(app.resource::<Log>().gone, 1);
 }
 

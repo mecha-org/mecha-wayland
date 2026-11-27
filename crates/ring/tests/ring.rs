@@ -203,6 +203,53 @@ fn one_turn_delivers_every_completion_it_finds() {
     assert!(seen.contains(&second), "the second send: seen {seen:?}");
 }
 
+/// Work left that only an app's own check sees.
+struct Busy;
+impl Resource for Busy {}
+
+/// An app whose [`App::has_pending_work`] always holds.
+fn busy_app() -> App {
+    let mut app = App::new();
+    app.add_module(RingModule::default())
+        .init_resource::<Log>()
+        .system(log)
+        .pending_check(|app| app.has_resource::<Busy>());
+    app.insert_resource(Busy);
+    app
+}
+
+#[test]
+fn a_turn_with_work_left_does_not_block() {
+    // No op is armed, so a blocking turn would wait forever. Built on a
+    // watched thread, as the app is not `Send`.
+    let (done, waited) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut app = busy_app();
+        Ring::turn(&mut app);
+        let _ = done.send(());
+    });
+    waited
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the turn returned without blocking");
+}
+
+#[test]
+fn a_turn_with_work_left_still_delivers_ready_io() {
+    // Work left never starves I/O: what is ready comes in on the turns
+    // that don't block.
+    const POLLIN: u32 = 0x1;
+    let (a, mut b) = UnixStream::pair().unwrap();
+    b.write_all(b"x").unwrap();
+    let mut app = busy_app();
+    let token = app.resource_mut::<Ring>().poll(a.as_fd(), POLLIN);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !app.resource::<Log>().0.iter().any(|e| e.token == token) {
+        assert!(Instant::now() < deadline, "the ready poll never came in");
+        Ring::turn(&mut app);
+    }
+    app.resource_mut::<Ring>().finish(token);
+}
+
 fn stop_on_first_wait(app: &mut App, _: &BeforeWait) {
     app.signal(Stop);
 }

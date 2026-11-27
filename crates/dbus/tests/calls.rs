@@ -277,7 +277,7 @@ fn resend_on_fds_unsupported(app: &mut App, e: &MethodReply) {
 }
 
 #[test]
-fn a_send_from_a_before_wait_handler_wakes_the_ring() {
+fn a_call_failed_before_sending_is_answered_in_the_next_tick() {
     let mut f = with_log(FakeBus::without_fds());
     f.app.system(resend_on_fds_unsupported);
     f.turn();
@@ -286,11 +286,51 @@ fn a_send_from_a_before_wait_handler_wakes_the_ring() {
         .resource_mut::<DBus>()
         .session()
         .send(MethodCall::new(NM, NM_PATH, NM, "TakeFd").body(&(UnixFd::new(r.into()),)));
-    // This turn raises BeforeWait itself; the handler's send lands after
-    // D-Bus flushed, and only the wake completes the turn.
-    Ring::turn(&mut f.app);
+    // `BeforeWait` raises nothing: the reply is work left for the tick.
+    f.app.signal(BeforeWait);
+    f.app.flush();
+    assert!(replies(&mut f).is_empty());
+    assert!(f.app.has_pending_work());
+    f.app.tick();
+    let r = replies(&mut f);
+    assert!(matches!(
+        r[..],
+        [MethodReply {
+            result: Err(CallError::FdsUnsupported),
+            ..
+        }]
+    ));
+    // The handler's send goes out with the round.
     f.turn();
     f.expect_call("Second");
+}
+
+fn stop_on_fds_unsupported(app: &mut App, e: &MethodReply) {
+    if matches!(e.result, Err(CallError::FdsUnsupported)) {
+        app.signal(Stop);
+    }
+}
+
+#[test]
+fn a_stop_on_a_call_failed_before_sending_ends_the_run() {
+    // The bus stays up and idle, so a turn that blocked would never
+    // return. The app is not `Send`: it is built on the watched thread.
+    let (done, waited) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut f = FakeBus::without_fds();
+        f.app.system(stop_on_fds_unsupported);
+        let (r, _w) = std::io::pipe().unwrap();
+        f.app
+            .resource_mut::<DBus>()
+            .session()
+            .send(MethodCall::new(NM, NM_PATH, NM, "TakeFd").body(&(UnixFd::new(r.into()),)));
+        let app = std::mem::replace(&mut f.app, App::new());
+        app.run();
+        let _ = done.send(());
+    });
+    waited
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the run did not end on the reply's Stop");
 }
 
 #[test]

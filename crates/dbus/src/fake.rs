@@ -192,24 +192,30 @@ impl FakeBus {
         BusName::new(&sender).expect("fake: a valid sender")
     }
 
-    /// Run both sides until quiet. Each round writes what is queued and
-    /// raises the app's `BeforeWait` (which queues anything deferred:
-    /// failed calls, `NoReply`s, `PropertiesChanged`). If either side then
-    /// has something in flight, one `Ring::turn` and another round;
-    /// otherwise read what the app sent, answer daemon calls, and stop
-    /// once there were none. A `Ring::turn` is only made when a
-    /// completion is certain, so this never blocks forever.
+    /// Run both sides until quiet. Each round writes what is queued,
+    /// ticks the app (which raises the replies of calls that failed
+    /// before being sent) and raises its `BeforeWait` (which queues
+    /// `NoReply`s and `PropertiesChanged`). If either side then has
+    /// something in flight, one `Ring::turn` and another round; if the
+    /// app has work left, another round; otherwise read what the app
+    /// sent, answer daemon calls, and stop once there were none. A
+    /// `Ring::turn` is only made when a completion is certain, so this
+    /// never blocks forever.
     pub fn turn(&mut self) {
         let mut rounds = 0;
         loop {
             rounds += 1;
             assert!(rounds < 64, "fake: the fake and the app keep talking");
             self.flush_outbox();
+            self.app.tick();
             self.app.signal(BeforeWait);
             self.app.flush();
             if self.wrote || self.app.resource::<DBus>().has_pending_output() {
                 self.wrote = false;
                 Ring::turn(&mut self.app);
+                continue;
+            }
+            if self.app.has_pending_work() {
                 continue;
             }
             self.read_peer();

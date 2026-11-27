@@ -25,8 +25,8 @@
 //! - A host of several app namespaces, or none, names itself with
 //!   [`ConfigModule::app`].
 //! - Local files are watched by one inotify read kept armed on the ring.
-//!   Like `dbus`, it arranges a wake when it sent calls or raised signals
-//!   in `BeforeWait`.
+//! - `BeforeWait` sends the source's calls and takes its outcomes; the
+//!   next tick raises them, so the runner goes round while any wait.
 //!
 //! # Failure
 //!
@@ -73,7 +73,6 @@
 use std::any::TypeId;
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
-use std::time::Duration;
 
 use app::prelude::*;
 use dbus::{BusDisconnected, DBus, MethodReply, SignalReceived};
@@ -122,8 +121,8 @@ pub struct Config {
     inotify: Option<OwnedFd>,
     reading: Option<Token>,
     buf: Vec<u8>,
-    /// A zero timeout in flight, so the ring turns again.
-    wake: Option<Token>,
+    /// Outcomes taken from the source, for the next tick to raise.
+    outcomes: Vec<Outcome>,
     links: Vec<Link>,
 }
 impl Resource for Config {}
@@ -179,11 +178,6 @@ impl Config {
 
     /// Handle a completion. Returns whether it was our read.
     fn complete(&mut self, ring: &mut Ring, e: &IoEvent) -> bool {
-        if self.wake == Some(e.token) {
-            self.wake = None;
-            ring.finish(e.token);
-            return false;
-        }
         if self.reading != Some(e.token) {
             return false;
         }
@@ -223,35 +217,36 @@ fn raise<T: Namespace + Clone + 'static>(app: &mut App, outcome: &Outcome) {
     app.signal(ConfigEvent::<T>(event));
 }
 
-/// Send queued requests and raise signals. Returns whether anything happened.
-fn pump(app: &mut App) -> bool {
-    let mut sent = false;
+/// Send the source's queued calls, and take its outcomes for the next
+/// tick to raise.
+fn pump(app: &mut App) {
     if !app.resource::<Config>().links.is_empty() {
         let (mut config, mut dbus) = app.query::<(ResMut<Config>, ResMut<DBus>)>();
         let config = &mut *config;
         for link in &mut config.links {
-            sent |= link.send(&config.source, &mut dbus);
+            link.send(&config.source, &mut dbus);
         }
     }
-    let outcomes = app.resource_mut::<Config>().source.outcomes();
-    let raised = !outcomes.is_empty();
+    let mut config = app.resource_mut::<Config>();
+    let outcomes = config.source.outcomes();
+    config.outcomes.extend(outcomes);
+}
+
+/// Raise the outcomes taken from the source.
+fn on_tick(app: &mut App, _: &Tick) {
+    let outcomes = std::mem::take(&mut app.resource_mut::<Config>().outcomes);
     for outcome in outcomes {
         let raisers = app.resource_mut::<Config>().raisers(&outcome);
         for raise in raisers {
             raise(app, &outcome);
         }
     }
-    sent || raised
 }
 
 fn on_before_wait(app: &mut App, _: &BeforeWait) {
-    // Wake the ring to flush calls just sent and handle events just raised.
-    let wake = pump(app);
+    pump(app);
     let (mut config, mut ring) = app.query::<(ResMut<Config>, ResMut<Ring>)>();
     config.arm(&mut ring);
-    if wake && config.wake.is_none() {
-        config.wake = Some(ring.timeout(Duration::ZERO));
-    }
 }
 
 fn on_io(app: &mut App, e: &IoEvent) {
@@ -264,7 +259,7 @@ fn on_io(app: &mut App, e: &IoEvent) {
     }
 }
 
-/// Run `f` on `Config`, then raise signals if it handled something.
+/// Run `f` on `Config`, then pump if it handled something.
 fn handle(app: &mut App, f: impl FnOnce(&mut Config) -> bool) {
     if f(&mut app.resource_mut::<Config>()) {
         pump(app);
@@ -341,10 +336,13 @@ impl Module for ConfigModule {
             inotify,
             reading: None,
             buf: Vec::with_capacity(INOTIFY_BUFFER),
-            wake: None,
+            outcomes: Vec::new(),
             links,
         });
-        app.system(on_before_wait).system(on_io);
+        app.system(on_tick)
+            .system(on_before_wait)
+            .system(on_io)
+            .pending_check(|app| !app.resource::<Config>().outcomes.is_empty());
         if dbus {
             app.system(on_reply)
                 .system(on_signal)
